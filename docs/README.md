@@ -22,6 +22,8 @@
 | `ARCHITECTURE_DECISIONS.md` | The ADR log — every major engineering decision across Sprint 1 and 2, with context, decision, and alternatives considered. Update this every sprint. |
 | `MISSION_ENGINE.md` | The canonical Mission Engine spec — lifecycle, state machine enforcement, event bus, retry/failure handling, worker architecture, queue, approval flow, logging. Honest about what's built vs. stubbed. |
 | `VISION_GUARDRAILS.md` | The non-technical product-identity boundary — what Obsidian OS never becomes and always is. Check every future feature proposal against it. |
+| `CHATGPT_ARCHITECTURE_REVIEW.md` | External architecture review (ChatGPT, acting as Chief Product & Systems Architect) of Sprint 2 — status APPROVED. Kept verbatim as the review artifact. |
+| `FOUNDER_DIRECTIVE.md` | The authoritative post-Sprint-2 product direction doc from the founder — canonical source for product identity, architecture principles, and the sprint roadmap. Kept verbatim. |
 | `SPRINT_2_REVIEW.md` | The Sprint 2 Architecture Review Gate deliverable — schema, mission engine, decision memory, multi-tenancy, build validation evidence, technical debt, Sprint 3 recommendation, and a self-critical CTO assessment. This gate now happens after every sprint, before merge. |
 | `SPRINT_STATUS.md` | Sprint-by-sprint status tracking — what's actually done, what's next. Update this every sprint. |
 | `VISION.md` | Superseded — now a short pointer to `01-Product-Vision.md`, kept only so existing links don't break. |
