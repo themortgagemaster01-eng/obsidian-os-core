@@ -25,6 +25,7 @@
 | `CHATGPT_ARCHITECTURE_REVIEW.md` | External architecture review (ChatGPT, acting as Chief Product & Systems Architect) of Sprint 2 — status APPROVED. Kept verbatim as the review artifact. |
 | `FOUNDER_DIRECTIVE.md` | The authoritative post-Sprint-2 product direction doc from the founder — canonical source for product identity, architecture principles, and the sprint roadmap. Kept verbatim. |
 | `SPRINT_2_REVIEW.md` | The Sprint 2 Architecture Review Gate deliverable — schema, mission engine, decision memory, multi-tenancy, build validation evidence, technical debt, Sprint 3 recommendation, and a self-critical CTO assessment. This gate now happens after every sprint, before merge. |
+| `SPRINT_3_DESIGN_REVIEW.md` | Design-only spec for Sprint 3 (Business URL Analysis) — architecture, DB/API changes, UI wireframe, Mission Engine integration, acceptance criteria, risks, open questions. Awaiting approval; no implementation yet. |
 | `SPRINT_STATUS.md` | Sprint-by-sprint status tracking — what's actually done, what's next. Update this every sprint. |
 | `VISION.md` | Superseded — now a short pointer to `01-Product-Vision.md`, kept only so existing links don't break. |
 
