@@ -4,7 +4,7 @@ This document supersedes and expands the original `docs/VISION.md` (kept in plac
 
 ## What it is
 
-Obsidian OS is an AI Agency Operating System — not a website builder. A website redesign is one artifact a mission can produce, but the product's job is to run an autonomous, always-on operations layer for a small digital agency: it finds prospects, evaluates them, does the analytical and creative work a human strategist and designer would do, drafts the outreach, and lines everything up for a person to review and approve each morning. The unit of work is a **mission** — one prospect business, tracked from first discovery through a proposed engagement — and the product is the console an operator uses to watch, steer, and approve missions at scale.
+Obsidian OS is an Autonomous Client Acquisition Operating System — a more precise label than the looser "AI Agency Operating System," and categorically not a website builder. A website redesign is one artifact a mission can produce inside the Design stage of an explicit pipeline (Discovery → Qualification → Research → Design → Proposal → Email → CRM → Learning → Analytics — see `docs/MASTER_BLUEPRINT.md` §1), but the product's job is to run that entire pipeline autonomously, always-on, for a small digital agency: it finds prospects, qualifies and researches them, does the analytical and creative work a human strategist and designer would do, drafts the outreach, and lines everything up for a person to review and approve each morning. The unit of work is a **mission** — one prospect business, tracked from first discovery through a proposed engagement — and the product is the console an operator uses to watch, steer, and approve missions at scale.
 
 The name is deliberate: obsidian is forged under pressure into something sharp and useful. The interface reflects that — a dark, quiet, "mission control" surface, not a cheerful SaaS dashboard (see `docs/09-UI-Design-System.md`).
 
@@ -22,7 +22,7 @@ Obsidian OS is designed to run on a nightly cycle. While the operator sleeps, th
 
 By morning, the intent is for the operator to wake up to a set of completed missions sitting in an **approval queue** (no UI yet — see `docs/05-Mission-Control.md`). They review each one — the analysis, the redesign, the proposal, the draft email — and decide what goes out.
 
-**Nothing auto-sends. Nothing auto-deploys. The system does the work; the human keeps the keys.** This is the central trust boundary of the product and it does not move as the system gets more capable — more autonomy earns more scope of work, never removal of the approval gate. This principle predates Sprint 2 and Sprint 2 did nothing to weaken it: the Decision Intelligence layer built this sprint (`docs/06-Database.md`, `docs/04-AI-Systems.md`) exists specifically to make a human's approve/reject/edit decision a first-class, permanently recorded event — reinforcing the gate, not routing around it.
+**Nothing auto-sends. Nothing auto-deploys. The system does the work; the human keeps the keys.** This is the central trust boundary of the product and it does not move as the system gets more capable — more autonomy earns more scope of work, never removal of the approval gate. This principle predates Sprint 2 and Sprint 2 did nothing to weaken it: the Decision Memory layer built this sprint (`docs/06-Database.md`, `docs/04-AI-Systems.md`) exists specifically to make a human's approve/reject/edit decision a first-class, permanently recorded event — reinforcing the gate, not routing around it.
 
 ## The mission pipeline, as it exists after Sprint 2
 
@@ -66,7 +66,7 @@ Multi-tenant and white-label-ready. Sprint 2 built the `organizations`/`organiza
 
 **Sprint 1 (Foundation) — done.** Project scaffold, Supabase schema and RLS policies, the original mission workflow engine, Supabase Auth, and a real Mission Control dashboard with a working New Mission flow. No analysis, scraping, or AI generation — by design.
 
-**Sprint 2 (Mission State Machine + Multi-Tenancy + Event Bus + Decision Intelligence + Memory Vault) — done, this sprint.** See `docs/SPRINT_STATUS.md` for the full accounting.
+**Sprint 2 (Mission State Machine + Multi-Tenancy + Event Bus + Decision Memory + Memory Vault) — done, this sprint.** See `docs/SPRINT_STATUS.md` for the full accounting.
 
 **Sprint 3 (next) — the first real AI agents.** Discovery, Opportunity Scoring, and Research engines, wired into the Sprint 2 event bus for real. See `docs/11-Product-Roadmap.md`.
 

@@ -103,7 +103,7 @@ RLS: `is_org_member(organization_id)` for select/insert, using the denormalized 
 
 ## `decisions` (0005)
 
-The Decision Intelligence layer's storage. New table, no backfill.
+The Decision Memory layer's storage. New table, no backfill.
 
 | Column | Type | Notes |
 |---|---|---|

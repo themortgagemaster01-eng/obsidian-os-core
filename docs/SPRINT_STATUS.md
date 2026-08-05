@@ -20,9 +20,9 @@ See git history (`9b989ed`) for the full commit. Summary retained below for cont
 
 ---
 
-## Sprint 2 — Mission State Machine + Multi-Tenancy + Event Bus + Decision Intelligence + Memory Vault — done
+## Sprint 2 — Mission State Machine + Multi-Tenancy + Event Bus + Decision Memory + Memory Vault — done, reviewed, merged
 
-Commit `0a3a5f0`, on top of `9b989ed`.
+Commit `0a3a5f0`, on top of `9b989ed`. Went through the Architecture Review Gate (`docs/SPRINT_2_REVIEW.md`) and was approved for customer-facing development to begin. Post-review, before merge: added `docs/MISSION_ENGINE.md` (canonical Mission Engine spec), ADR-000 (Product Philosophy) in `docs/ARCHITECTURE_DECISIONS.md`, an "Architecture Principles" section in `docs/MASTER_BLUEPRINT.md` §1, and renamed "Decision Intelligence" to "Decision Memory" throughout docs and code comments (conceptual/naming only — the `decisions` table and schema are unchanged).
 
 ### What was actually built
 
@@ -32,7 +32,7 @@ Commit `0a3a5f0`, on top of `9b989ed`.
 
 **Typed event bus** (`lib/events/types.ts`, `lib/events/event-bus.ts`, `supabase/migrations/0004_event_bus.sql`) — A `DomainEvent` discriminated union with a 10-type catalog (`MissionStarted`, `WebsiteScanned`, `SEOComplete`, `ProposalReady`, `EmailDraftReady`, `MissionApproved`, `MissionRejected`, `MissionArchived`, `StateChanged`, `DecisionLogged`), an `EventBus` port interface with `SupabaseEventBus` as its one current implementation (persists to `mission_events`, fans out in-process to same-request subscribers). `mission_events` gained an `actor` column and a denormalized `organization_id`. The workflow engine now publishes every event through this bus (`deps.eventBus.publish(...)`) instead of the Sprint 1 pattern of inserting `mission_events` rows directly.
 
-**Decision Intelligence layer** (`supabase/migrations/0005_decisions.sql`, `lib/repositories/decision-repository.ts`, `lib/services/decision-service.ts`) — New `decisions` table (11 `decision_type` values, `ai_recommendation`/`user_action` free text, `before_value`/`after_value`/`metadata` as flexible `jsonb`, plus named columns for the highest-value expected signals: `opportunity_score`, `website_score`, `proposal_price`, `industry`, etc.) and a typed `logDecision()` service that writes a decision row and publishes a `DecisionLogged` event. Architecture and plumbing only — no ML, no scoring logic, and (see below) no caller yet.
+**Decision Memory layer** (`supabase/migrations/0005_decisions.sql`, `lib/repositories/decision-repository.ts`, `lib/services/decision-service.ts`) — New `decisions` table (11 `decision_type` values, `ai_recommendation`/`user_action` free text, `before_value`/`after_value`/`metadata` as flexible `jsonb`, plus named columns for the highest-value expected signals: `opportunity_score`, `website_score`, `proposal_price`, `industry`, etc.) and a typed `logDecision()` service that writes a decision row and publishes a `DecisionLogged` event. Architecture and plumbing only — no ML, no scoring logic, and (see below) no caller yet.
 
 **Memory Vault** (`supabase/migrations/0006_memory_vault.sql`, `lib/repositories/company-repository.ts`, `lib/services/company-service.ts`) — New `companies` table, the anchor of the future CRM: one row per unique (organization, normalized website URL), tracking `total_missions_count`, `last_mission_id`, proposal/contact history fields, a `do_not_contact` compliance flag, and freeform `design_preferences jsonb`. `findOrCreateCompany()` is genuinely wired into `mission-workflow.ts::createMission()` — every mission created from this sprint forward links to (or creates) a company record and bumps its mission count, so the table starts accumulating real data immediately rather than shipping empty.
 
@@ -52,20 +52,22 @@ Commit `0a3a5f0`, on top of `9b989ed`.
 
 ---
 
-## Sprint 3 (next) — the first real AI agents
+## Sprint 3 (next) — Business URL Analysis
 
-**Scope: Discovery Engine, Opportunity Scoring, and Research Engine** — the first agents that make Sprint 2's event bus carry real work instead of an unused catalog. Concretely, these agents must call `eventBus.publish()` with genuinely populated `WebsiteScanned`/`SEOComplete`-shaped (or newly typed) payloads produced by real analysis, not the current state where those payload interfaces exist in `lib/events/types.ts` with nothing constructing them.
+**Scope, per the Founder Directive issued after the Sprint 2 Architecture Review Gate: the first customer-facing, demoable feature.** A user pastes a business URL; the system performs a website crawl, mobile analysis, SEO analysis, accessibility analysis, Lighthouse analysis, technology detection, opportunity scoring, and screenshot capture, and produces a "Premium Opportunity Report" — a polished report that could be shown to a customer. Scoped to exactly this. Website generation (Sprint 4+) and outreach are explicitly out of scope — do not build ahead into them.
 
-**What Sprint 3 gets for free from Sprint 2:**
-- The **state machine** — `transitionMissionState()` already has the full, correct transition-validation logic; agents call it, they don't reimplement it.
-- The **event bus** — agents get mission-timeline persistence and (same-request) fan-out for free by calling `publish()`.
-- The **`companies` table** — any mission a Discovery Agent creates automatically gets Memory Vault linkage through the already-wired `findOrCreateCompany()`.
-- **Org-scoped RLS** — already correct for every table these agents will read/write, assuming they run with an appropriately-scoped client.
+Per the Founder Directive's standing guardrails, restated in `docs/MASTER_BLUEPRINT.md` §1's Architecture Principles: no infrastructure-only sprint should exist unless absolutely necessary, every feature should satisfy at least one of delivers customer value / removes meaningful technical debt / improves customer experience, and progress is measured against proximity to a first paying customer.
 
-**What Sprint 3 must build net-new (none of this exists today):**
-1. **A job runner / scheduler.** Nothing currently drives a mission past `discovered`. Sprint 3 needs a real trigger mechanism (cron-triggered Route Handler, Supabase scheduled function, or a proper job/queue system) before "nightly pipeline" is anything but aspirational. This is also the natural point to replace the event bus's non-durable in-process fan-out (explicitly documented as inadequate for cross-process consumers in `event-bus.ts`) with something durable.
-2. **Real Anthropic API wiring.** An actual SDK integration, prompt construction, and response parsing into the typed event payloads that already exist as interfaces.
-3. **Actual scraping/analysis logic.** Website scraping/scoring, competitor lookup, and review mining — none of this exists in even stub form today.
-4. **New event types + a migration.** At minimum, something for "company discovered" and "opportunity scored" — no such event type exists in the Sprint 2 catalog, so `lib/events/types.ts` and `mission_events.event_type`'s CHECK constraint both need updates before these agents can publish typed, constraint-valid events for their own output.
+**What Sprint 3 gets for free from Sprint 2** (see `docs/MISSION_ENGINE.md` for the full accounting of what's built vs. stubbed):
+- The **state machine** — `transitionMissionState()` already has full, correct transition-validation logic; the analysis pipeline calls it, it doesn't reimplement it.
+- The **event bus** — mission-timeline persistence and (same-request) fan-out for free via `publish()`.
+- The **`companies` table** — analysis triggered against a mission automatically gets Memory Vault linkage through the already-wired `findOrCreateCompany()`.
+- **Org-scoped RLS** — already correct for every table this feature will read/write.
 
-See `docs/04-AI-Systems.md` and `docs/11-Product-Roadmap.md` for the full agent-by-agent contract and the broader roadmap beyond Sprint 3.
+**What Sprint 3 must build net-new:**
+1. **The analysis pipeline itself** — crawl, mobile analysis, SEO analysis, accessibility analysis, Lighthouse analysis, technology detection, opportunity scoring, and screenshot capture. None of this exists in even stub form today.
+2. **New event types + a migration** for analysis results (at minimum something crawl/analysis-complete-shaped) — no such event type exists in the Sprint 2 catalog yet.
+3. **A "Premium Opportunity Report" view** — the first real customer-facing UI surface beyond Mission Control itself.
+4. **Somewhere for the analysis to run** that isn't blocking a page load for the full duration of a multi-step crawl/analysis — `docs/MISSION_ENGINE.md` §6 flags that no job runner exists yet; Sprint 3 needs at minimum a decision on how a multi-step analysis runs without a human staring at a spinner, even if it's a lightweight solution rather than the full job-runner infrastructure originally scoped for a later sprint.
+
+**Design-review checkpoint:** per standing process, a design review precedes implementation for customer-facing sprints — architecture, database/API changes, the report UI, Mission Engine integration points, acceptance criteria, risks, and open questions get written down and reviewed before code is written. See `docs/11-Product-Roadmap.md` for the broader roadmap beyond Sprint 3.

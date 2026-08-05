@@ -11,7 +11,7 @@ import type { DecisionType } from "@/lib/repositories/decision-repository";
  *   - StateChanged: the state machine (lib/workflow/mission-workflow.ts)
  *     needs a generic event to publish on every transition, distinct from
  *     the domain-specific events an agent publishes when it finishes work.
- *   - DecisionLogged: so the Decision Intelligence layer
+ *   - DecisionLogged: so the Decision Memory layer
  *     (lib/services/decision-service.ts) flows through the same bus as
  *     everything else, instead of writing mission_events directly.
  *

@@ -45,7 +45,7 @@ export interface LogDecisionInput {
 /**
  * Records a single human decision made in the (future) Approval Queue and
  * publishes a `DecisionLogged` event through the event bus. This is the
- * Decision Intelligence layer's write path — the goal is capturing perfect
+ * Decision Memory layer's write path — the goal is capturing perfect
  * training data from day one for every meaningful approve/reject/edit
  * decision, even though no UI calls this yet in Sprint 2.
  *
