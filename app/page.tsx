@@ -10,11 +10,12 @@ import {
 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/server";
-import { computeMissionControlStats, listMissionsForOwner } from "@/lib/services/mission-service";
+import { computeMissionControlStats, listMissionsForOrganization } from "@/lib/services/mission-service";
 import { StatCard } from "@/components/mission-control/stat-card";
 import { MissionList } from "@/components/mission-control/mission-list";
 import { NewMissionDialog } from "@/components/mission-control/new-mission-dialog";
 import { SignOutButton } from "@/components/mission-control/sign-out-button";
+import { profileRepository } from "@/lib/repositories/profile-repository";
 
 /**
  * Mission Control — the authenticated home. Server component: fetches real
@@ -34,7 +35,15 @@ export default async function MissionControlPage() {
     return null;
   }
 
-  const missions = await listMissionsForOwner(supabase, user.id);
+  const profile = await profileRepository.findById(supabase, user.id);
+  const organizationId = profile?.default_organization_id;
+
+  // Every user gets a default organization at signup (see
+  // handle_new_user() in supabase/migrations/0002_organizations.sql), so
+  // this should never be null in practice — guarded defensively.
+  const missions = organizationId
+    ? await listMissionsForOrganization(supabase, organizationId)
+    : [];
   const stats = computeMissionControlStats(missions);
 
   return (

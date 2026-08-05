@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
-import type { MissionStage, MissionStatus } from "@/lib/workflow/types";
+import type { MissionState } from "@/lib/workflow/mission-state";
 
 export type MissionRow = Database["public"]["Tables"]["missions"]["Row"];
 export type MissionInsert = Database["public"]["Tables"]["missions"]["Insert"];
@@ -13,6 +13,11 @@ type TypedClient = SupabaseClient<Database>;
  * Thin data-access layer for the `missions` table. Pure functions taking a
  * Supabase client + args, returning typed rows. No business rules here —
  * those live in lib/services and lib/workflow.
+ *
+ * Sprint 2: access is scoped by organization membership (RLS), not
+ * owner_id directly, so listing now goes through listByOrganization rather
+ * than the Sprint 1 listByOwner. owner_id is kept on the row (who created /
+ * is assigned to the mission) but is no longer the query/RLS boundary.
  */
 export const missionRepository = {
   async insert(client: TypedClient, values: MissionInsert): Promise<MissionRow> {
@@ -53,11 +58,11 @@ export const missionRepository = {
     return data;
   },
 
-  async listByOwner(client: TypedClient, ownerId: string): Promise<MissionRow[]> {
+  async listByOrganization(client: TypedClient, organizationId: string): Promise<MissionRow[]> {
     const { data, error } = await client
       .from("missions")
       .select("*")
-      .eq("owner_id", ownerId)
+      .eq("organization_id", organizationId)
       .order("created_at", { ascending: false });
 
     if (error) throw error;
@@ -65,7 +70,6 @@ export const missionRepository = {
   },
 };
 
-export interface MissionStageAndStatus {
-  stage: MissionStage;
-  status: MissionStatus;
+export interface MissionStateShape {
+  state: MissionState;
 }

@@ -2,7 +2,7 @@ import { Rocket } from "lucide-react";
 
 import type { MissionRow } from "@/lib/repositories/mission-repository";
 import { Card, CardContent } from "@/components/ui/card";
-import { StageBadge } from "@/components/mission-control/stage-badge";
+import { StateBadge } from "@/components/mission-control/state-badge";
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleDateString("en-US", {
@@ -53,7 +53,7 @@ export function MissionList({ missions }: { missions: MissionRow[] }) {
                 <span className="text-xs text-muted-foreground">
                   {formatDate(mission.created_at)}
                 </span>
-                <StageBadge stage={mission.stage} />
+                <StateBadge state={mission.state} />
               </div>
             </li>
           ))}

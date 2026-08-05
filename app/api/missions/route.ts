@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
 import { createMission } from "@/lib/services/mission-service";
+import { profileRepository } from "@/lib/repositories/profile-repository";
 
 interface CreateMissionBody {
   businessName?: string;
@@ -9,12 +10,14 @@ interface CreateMissionBody {
 }
 
 /**
- * POST /api/missions — creates a new mission for the current user.
+ * POST /api/missions — creates a new mission for the current user's default
+ * organization.
  *
  * Kept thin on purpose: auth check + input validation, then delegates the
  * actual work to lib/services/mission-service.ts. Does NOT run any
- * analysis/discovery/scraping — that's Sprint 2+. The mission is created at
- * the `recon` stage and just waits there until a future agent picks it up.
+ * analysis/discovery/scraping — that's Sprint 3+. The mission is created at
+ * the `discovered` state and just waits there until a future agent picks
+ * it up.
  */
 export async function POST(request: NextRequest) {
   const supabase = createClient();
@@ -25,6 +28,16 @@ export async function POST(request: NextRequest) {
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const profile = await profileRepository.findById(supabase, user.id);
+  const organizationId = profile?.default_organization_id;
+
+  if (!organizationId) {
+    return NextResponse.json(
+      { error: "No default organization found for this user." },
+      { status: 400 }
+    );
   }
 
   let body: CreateMissionBody;
@@ -53,6 +66,7 @@ export async function POST(request: NextRequest) {
   try {
     const mission = await createMission(supabase, {
       ownerId: user.id,
+      organizationId,
       businessName,
       websiteUrl: normalizedUrl,
     });
