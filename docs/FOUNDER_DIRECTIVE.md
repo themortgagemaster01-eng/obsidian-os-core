@@ -1,459 +1,936 @@
 # Obsidian OS
-# Founder Directive – Post Sprint 2
-## Version 1.0
-
-Author: Robert Castro
-Architecture Review: Approved
-Status: Begin Customer Value Development
+# MASTER DEVELOPMENT DIRECTIVE
+## Founder Operating Instructions
+### Version 3.0
+### Status: ACTIVE
+### Date: August 2026
 
 ---
 
-# Executive Direction
+# Executive Directive
 
-Sprint 1 and Sprint 2 established the engineering foundation for Obsidian OS.
+Obsidian OS has officially transitioned from concept to production software.
 
-The platform now has:
+The architecture is considered stable.
 
-- Mission Engine foundation
-- Documentation system
-- Architecture Decision Records
-- Multi-tenancy groundwork
-- Decision Memory foundation
-- Review process
-- Development standards
+Future development should focus on delivering customer value rather than expanding architecture.
 
-From this point forward the focus shifts.
+GitHub is now the canonical source of truth.
 
-We are no longer primarily building infrastructure.
+Claude sessions are disposable implementation environments.
 
-We are building customer value on top of the infrastructure.
+Every development session should begin by pulling the latest code from GitHub.
+
+---
+
+# Canonical Repository
+
+Repository:
+
+obsidian-os-core
+
+Status
+
+✅ Private
+
+✅ GitHub is Source of Truth
+
+✅ README.md
+
+✅ CONTRIBUTING.md
+
+✅ CLAUDE.md
+
+✅ CLAUDE_OPERATING_DIRECTIVE.md
+
+⏳ FOUNDER_DIRECTIVE_V2.md (pending push if stalled)
+
+✅ Complete commit history preserved
+
+Do not continue development from long-running sandbox sessions.
+
+---
+
+# Repository Workflow
+
+GitHub is now the official development environment.
+
+Every new implementation session must:
+
+1. Clone or pull latest repository.
+2. Read project documentation.
+3. Confirm current sprint status.
+4. Implement only the approved phase.
+5. Commit frequently.
+6. Push to GitHub.
+7. End the session.
+
+Do not allow Claude sessions to exceed approximately 200–300 turns whenever possible.
+
+Treat sessions as disposable workers.
+
+GitHub owns project history.
+
+---
+
+# Required Startup Procedure
+
+Every Claude session begins by reading:
+
+README.md
+
+CONTRIBUTING.md
+
+CLAUDE.md
+
+CLAUDE_OPERATING_DIRECTIVE.md
+
+MASTER_BLUEPRINT.md
+
+MISSION_ENGINE.md
+
+ARCHITECTURE_DECISIONS.md
+
+SPRINT_STATUS.md
+
+Review the latest completed sprint.
+
+Confirm understanding before implementation begins.
 
 ---
 
 # Product Identity
 
-Obsidian OS is NOT:
+Obsidian OS is NOT a website builder.
 
-- AI Website Builder
-- No-Code Website Builder
-- Prompt Playground
-- Website Template Marketplace
-- Generic AI Tool
+It is an
 
-Obsidian OS IS:
+Autonomous Client Acquisition Operating System.
 
-# Autonomous Client Acquisition Operating System
-
-Everything should reinforce this identity.
-
-The website redesign is only one artifact produced by the system.
-
-The real product is autonomous preparation of high-quality sales opportunities.
+Website generation is only one deliverable produced by the platform.
 
 ---
 
-# Core Mission
+# Product Mission
 
-The ultimate goal is simple.
+The founder should wake each morning to businesses that have already been:
 
-Every morning I should open Mission Control and review approximately ten completed client opportunities.
+Discovered
 
-Each opportunity should already contain:
+↓
 
-- Qualified business
-- Website analysis
-- Opportunity score
-- Competitive analysis
-- Premium redesign
-- Proposal
-- CRM record
-- Personalized draft email
+Analyzed
 
-Nothing is sent automatically.
+↓
 
-Everything waits for approval.
+Scored
 
-My job should become reviewing completed work rather than creating it.
+↓
+
+Documented
+
+↓
+
+Redesigned
+
+↓
+
+Packaged into a proposal
+
+↓
+
+Prepared as a draft email
+
+↓
+
+Ready for founder approval
+
+The founder reviews opportunities.
+
+The system performs the work.
 
 ---
 
-# Engineering Philosophy
+# Mission Pipeline
 
-Mission Engine owns the application.
+Business Discovery
 
-React owns presentation.
+↓
+
+Mission Created
+
+↓
+
+Opportunity Intelligence
+
+↓
+
+Business Insights
+
+↓
+
+Opportunity Score
+
+↓
+
+Opportunity Report
+
+↓
+
+Website Generation
+
+↓
+
+Proposal Generation
+
+↓
+
+Draft Email
+
+↓
+
+Founder Review
+
+↓
+
+Approval
+
+↓
+
+Send
+
+↓
+
+Decision Memory
+
+↓
+
+Learning
+
+↓
+
+Analytics
+
+Every feature must support this workflow.
+
+---
+
+# Mission Engine Rules
+
+Mission Engine owns workflow.
+
+Nothing else.
+
+Only:
+
+transitionMissionState()
+
+and
+
+EventBus.publish()
+
+may change workflow state.
+
+React never owns workflow.
+
+React only renders state.
+
+---
+
+# Service Architecture
+
+Maintain strict responsibility boundaries.
+
+AnalysisService
+
+↓
+
+BusinessInsightService
+
+↓
+
+OpportunityScoringService
+
+↓
+
+OpportunityReportService
+
+↓
+
+Presentation Layer
+
+↓
+
+Founder
+
+Never merge responsibilities.
+
+---
+
+# Adapter Rules
+
+Adapters gather information only.
+
+Adapters never contain business logic.
+
+Approved adapters:
+
+• Crawl
+
+• SEO
+
+• Accessibility
+
+• Mobile
+
+• Lighthouse
+
+• Technology Detection
+
+• Screenshot
 
 Business logic belongs in services.
 
-Integrations belong behind adapters.
+---
 
-Workflows are event-driven.
+# Processing Pipeline
 
-Every important decision is logged.
+Raw Analysis
 
-Documentation evolves with code.
+↓
+
+Normalized Analysis
+
+↓
+
+Business Insights
+
+↓
+
+Opportunity Score
+
+↓
+
+Opportunity Report
+
+↓
+
+Presentation Layer
+
+Every layer owns one responsibility.
 
 ---
 
-# Architecture Principles
+# Opportunity Report Philosophy
 
-The following principles are non-negotiable.
+The Opportunity Report is the product.
 
-- Mission Engine owns workflows.
-- React never owns business logic.
-- Business logic belongs in services.
-- Third-party APIs are isolated through adapters.
-- Every workflow emits events.
-- Human approval is required before outreach.
-- Documentation changes whenever architecture changes.
-- Every sprint produces customer-visible value.
+Everything else supports it.
+
+The report must answer:
+
+What was discovered?
+
+Why does it matter?
+
+What business opportunity exists?
+
+Why should the founder contact this business?
+
+How could the business improve?
+
+The report should read like it was written by a senior digital consultant.
+
+Avoid technical jargon.
+
+Business language always wins.
+
+---
+
+# Evidence First
+
+Evidence First is now a permanent architectural principle.
+
+Every recommendation must reference measurable evidence.
+
+Examples
+
+Slow loading
+
+↓
+
+Lighthouse
+
+Missing H1
+
+↓
+
+SEO Adapter
+
+Accessibility issue
+
+↓
+
+Accessibility Adapter
+
+No evidence
+
+=
+
+No recommendation.
+
+---
+
+# Confidence
+
+Each report section should expose confidence metadata.
+
+Example
+
+Performance
+
+Confidence: High
+
+Measured directly.
+
+Business Opportunity
+
+Confidence: Medium
+
+Derived from measurable indicators.
+
+Never imply certainty beyond available evidence.
 
 ---
 
 # Decision Memory
 
-The platform should not simply remember edits.
+Decision Memory remains a future core capability.
 
-It should remember decisions.
+Eventually capture:
 
-Capture:
+Proposal edits
 
-- Mission approvals
-- Mission rejections
-- "Not a fit"
-- Proposal edits
-- Email edits
-- Subject edits
-- Pricing changes
-- Website preferences
-- Industry preferences
-- Follow-up actions
+Email edits
 
-The objective today is data collection.
+Pricing changes
 
-Intelligence comes later.
+Founder approvals
 
-Future learning depends on perfect decision history.
+Founder rejections
+
+Recommendation edits
+
+Never overwrite history.
+
+Historical decisions become learning.
 
 ---
 
-# Product Success
+# Current Sprint Status
 
-The platform succeeds when I spend my morning reviewing completed opportunities instead of manually researching businesses.
+## Sprint 1
 
-The AI performs preparation.
+✅ Complete
 
-The human performs judgment.
+Mission Engine
 
----
+Architecture
 
-# Customer Value First
+Documentation
 
-Infrastructure is sufficiently mature.
-
-From now on every sprint must end with something a customer could actually experience.
-
-No infrastructure sprint should exist unless absolutely necessary.
+Database
 
 ---
 
-# Sprint Roadmap
+## Sprint 2
+
+✅ Complete
+
+Decision Memory Foundation
+
+Organizations
+
+Architecture refinement
+
+Documentation
+
+---
 
 ## Sprint 3
 
-Goal:
+Opportunity Intelligence
 
-Business URL Analysis
+Phase 1
 
-User pastes:
+✅ Complete
 
-https://business.com
+Infrastructure
 
-System performs:
+Adapters
 
-- Website crawl
-- Mobile analysis
-- SEO analysis
-- Accessibility analysis
-- Lighthouse analysis
-- Technology detection
-- Opportunity scoring
-- Screenshot capture
-- Premium Opportunity Report
+Migration
 
-Definition of Done:
+Analysis Service
 
-A polished report that could be shown to a customer.
+Async execution
 
 ---
 
-## Sprint 4
+Phase 2
 
-Premium Website Generation
+✅ Complete
 
-Input:
+BusinessInsightService
 
-Business URL
+OpportunityScoringService
 
-Output:
+OpportunityReportService
 
-Luxury-quality website redesign.
+22 unit tests
 
-Requirements:
+Real runtime validation
 
-- Mobile first
-- Accessible
-- Fast
-- Unique
-- Production quality
-- Agency-quality design
-
-Include side-by-side comparison.
+Regression tests
 
 ---
 
-## Sprint 5
+Phase 3
 
-Proposal Engine
+⏸ HOLD
 
-Generate:
+Presentation Layer
 
-- Executive summary
-- Problems found
-- Benefits
-- Timeline
-- Investment
-- Before/after screenshots
-- Exportable PDF
+Mission Detail Page
 
----
+Opportunity Report UI
 
-## Sprint 6
+Loading States
 
-Email Draft Engine
+Progress Indicators
 
-Generate personalized outreach.
+Failure States
 
-Requirements:
-
-- Specific observations
-- Mention redesign
-- Link to preview
-- Professional tone
-- Save as Gmail draft
-
-Nothing sends automatically.
+Report Rendering
 
 ---
 
-## Sprint 7
+Phase 4
 
-Approval Queue
+Pending
 
-Mission Control becomes:
+Real-world validation
 
-- Review
-- Approve
-- Reject
-- Archive
-- Edit Proposal
-- Edit Email
-- Edit Price
+Five benchmark reports
 
-Everything waits for approval.
+Founder review
 
 ---
 
-## Sprint 8
+# IMPORTANT
 
-Learning Engine Phase 1
+Phase 3 is intentionally paused.
 
-Do NOT implement AI reasoning.
+Do NOT begin Phase 3 until local repository validation is complete.
 
-Only collect decision history.
-
-Future intelligence will be built from this dataset.
+This is the only temporary exception to the Founder Directive.
 
 ---
 
-## Sprint 9
+# Immediate Priority
 
-Overnight Factory
+Validate the repository locally.
 
-Nightly workflow:
+Steps:
 
-Discovery
+Clone repository
 
 ↓
 
-Qualification
+npm install
 
 ↓
 
-Research
+Generate package-lock.json
 
 ↓
 
-Design
+npm test
 
 ↓
 
-Proposal
+npm run build
 
 ↓
 
-Email Draft
+Verify application starts
 
 ↓
 
-Approval Queue
+Commit package-lock.json
 
-Morning:
+↓
 
-Everything ready for review.
+Push to GitHub
+
+Once completed:
+
+Phase 3 is automatically authorized.
+
+No additional architecture review required.
 
 ---
 
-# Success Metric
+# Testing Standards
 
-Do NOT optimize for:
+Every feature requires:
 
-- Lines of code
-- Number of components
-- Number of AI agents
+Unit Tests
 
-Optimize for:
+↓
 
-Version 0.1
+Integration Tests
 
-First Paying Customer
+↓
 
-Success is defined as:
+Real Website Validation
 
-A business owner pays because Obsidian OS generated the opportunity.
+↓
+
+Founder Review
+
+Never fake successful analysis.
+
+Failures must be reported honestly.
+
+Engineering honesty is a permanent project principle.
 
 ---
 
-# Required Documentation
+# Benchmark Reports
 
-Maintain these documents at every sprint.
+Sprint 3 validation will use:
+
+Restaurant
+
+Dentist
+
+Law Firm
+
+HVAC
+
+Landscaping
+
+These become permanent benchmark reports.
+
+Future improvements should improve these reports.
+
+---
+
+# Development Principles
+
+Prefer:
+
+Simple
+
+Readable
+
+Maintainable
+
+Testable
+
+Evidence-based
+
+Customer-focused
+
+Avoid unnecessary abstraction.
+
+Avoid architecture for architecture's sake.
+
+Customer value always wins.
+
+---
+
+# Repository Standards
+
+Maintain:
+
+README.md
+
+CONTRIBUTING.md
+
+CLAUDE.md
+
+CLAUDE_OPERATING_DIRECTIVE.md
+
+FOUNDER_DIRECTIVE_V2.md
 
 MASTER_BLUEPRINT.md
-
-ARCHITECTURE_DECISIONS.md
-
-VISION_GUARDRAILS.md
 
 MISSION_ENGINE.md
 
-SPRINT_X_REVIEW.md
+ARCHITECTURE_DECISIONS.md
 
-CHATGPT_ARCHITECTURE_REVIEW.md
+CHANGELOG.md (after Sprint 3)
 
-ADR-000 Product Philosophy
-
-Update documentation before considering the sprint complete.
+Documentation must always describe implemented reality.
 
 ---
 
-# Development Workflow
+# Git Standards
 
-Business Vision
+Small commits.
 
-↓
+Frequent pushes.
 
-MASTER_BLUEPRINT.md
+Clean history.
 
-↓
+No force pushes.
 
-Sprint Planning
+GitHub Releases after major milestones.
 
-↓
+Suggested releases:
 
-Implementation
+v0.3.0-alpha
 
-↓
+Sprint 3 Complete
 
-Self Review
+v0.4.0
 
-↓
+Website Generation
 
-Architecture Review
+v0.5.0
 
-↓
-
-Required Changes
-
-↓
-
-Merge Approval
-
-↓
-
-Release Candidate
-
-↓
-
-Production
-
-No sprint bypasses architecture review.
+Proposal Engine
 
 ---
 
-# CTO Assessment Requirement
+# Original Repository
 
-Every Sprint Review must answer:
+The existing repository:
 
-- What architecture improved?
-- What technical debt was introduced?
-- What was intentionally deferred?
-- What becomes a bottleneck at:
-  - 100 users
-  - 10,000 users
-  - 100 agencies
-  - 1,000,000 missions
-- What would we redesign if starting today?
+obsidian-os
 
-Document honest answers.
+is considered an earlier prototype.
+
+Do not overwrite it.
+
+After Sprint 3, compare:
+
+Architecture
+
+UI
+
+Components
+
+Database
+
+Documentation
+
+Services
+
+Reusable code
+
+Technical debt
+
+Then recommend:
+
+Merge
+
+Replace
+
+Keep Separate
+
+Do not automatically overwrite history.
 
 ---
 
-# Long-Term Vision
+# Development Session Rules
 
-Build every subsystem assuming Obsidian OS eventually supports:
+One implementation phase per session.
 
-- Multiple users
-- Multiple agencies
-- White-label SaaS
-- Subscription billing
-- Multi-model AI routing
-- Mobile applications
-- Enterprise customers
+Example:
 
-Do not optimize only for today's version.
+Session A
 
-Optimize for the platform Obsidian OS is intended to become.
+Phase 1
+
+Commit
+
+Push
+
+End Session
+
+Session B
+
+Phase 2
+
+Commit
+
+Push
+
+End Session
+
+Session C
+
+Phase 3
+
+Commit
+
+Push
+
+End Session
+
+This prevents large-context degradation.
 
 ---
 
-# Final Direction
+# Future Roadmap
 
-The architecture is approved.
+Sprint 3
 
-Protect it.
+Opportunity Intelligence
 
-Do not continue building infrastructure for its own sake.
+↓
 
-From this point forward every sprint should move the platform measurably closer to helping me acquire my first paying customer.
+Sprint 4
 
-Every feature must satisfy at least one of these conditions:
+Premium Website Generation
 
-1. Delivers customer value.
-2. Removes meaningful technical debt.
-3. Improves customer experience.
+↓
 
-If it does none of the above, it waits.
+Sprint 5
 
-The mission is no longer to build software.
+Proposal Generation
 
-The mission is to build an Autonomous Client Acquisition Operating System that prepares premium client opportunities overnight and allows me to spend my mornings reviewing, approving, and sending high-quality outreach with confidence.
+↓
+
+Sprint 6
+
+Draft Email Generation
+
+↓
+
+Sprint 7
+
+Approval Queue
+
+↓
+
+Sprint 8
+
+Decision Memory
+
+↓
+
+Sprint 9
+
+Learning Engine
+
+↓
+
+Sprint 10
+
+Founder Dashboard
+
+↓
+
+Future
+
+AI Vision Layer
+
+Video Outreach
+
+Multi-Agent Collaboration
+
+Analytics
+
+---
+
+# Future Enhancements
+
+These are NOT Sprint 3 work items.
+
+Evaluate after Version 1:
+
+• AI-generated personalized outreach videos
+• Optional local video generation (e.g., Wan2GP or equivalent)
+• AI Vision assessment (Visual Quality, CTA quality, Brand Strength)
+• Advanced Learning Engine
+• Automated outreach scheduling
+
+These remain future enhancements and must not delay core product delivery.
+
+---
+
+# Success Definition
+
+Sprint 3 is complete when:
+
+A founder pastes a business URL.
+
+↓
+
+Analysis completes.
+
+↓
+
+Opportunity Report is generated.
+
+↓
+
+The founder says:
+
+"I would confidently send this report to a prospective client."
+
+That is the definition of done.
+
+---
+
+# Engineering Philosophy
+
+Always report:
+
+What works.
+
+What failed.
+
+What was tested.
+
+What remains unverified.
+
+Never hide uncertainty.
+
+Never fake success.
+
+Engineering honesty is one of Obsidian OS's defining principles.
+
+---
+
+# Final Founder Directive
+
+The architecture is complete.
+
+The engineering process is established.
+
+GitHub is the source of truth.
+
+Claude sessions are disposable.
+
+Customer value comes before engineering ceremony.
+
+Validate locally.
+
+Resume Phase 3.
+
+Complete Sprint 3.
+
+Test with real businesses.
+
+Learn.
+
+Iterate.
+
+Ship.
+
+This document supersedes previous operational directives and should serve as the master development guide for all future Obsidian OS implementation.
