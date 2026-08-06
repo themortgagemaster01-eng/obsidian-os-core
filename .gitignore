@@ -16,6 +16,9 @@
 # review package exports (scripts/export-review-package.sh)
 /dist
 
+# Compiled test output (see package.json's "test" script / scripts/register-path-alias.js)
+/.test-build
+
 # misc
 .DS_Store
 *.pem

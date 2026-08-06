@@ -86,13 +86,20 @@ export async function createAnalysisRun(
 // "Insights" layer (§3.3) — that translation is insight-service.ts's job
 // (Phase 2), not this service's. Nothing in this file should be rendered
 // directly in the Opportunity Report UI.
+//
+// Exported (Phase 2 addition, no behavior change): so
+// lib/services/analysis-types.ts's normalizedAnalysisFromRawResults() can
+// reuse this exact scoring logic — for tests and the Phase 2 demo script —
+// instead of a second, potentially-divergent copy of it. Every other
+// caller should still go through a persisted website_analyses row
+// (normalizedAnalysisFromRow), not call these directly.
 // ===========================================================================
 
 function clampScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-function normalizeMobileScore(raw: MobileRawResult): number {
+export function normalizeMobileScore(raw: MobileRawResult): number {
   if (raw.fetchError) return 0;
   let score = 100;
   if (!raw.hasViewportMeta) score -= 40;
@@ -102,7 +109,7 @@ function normalizeMobileScore(raw: MobileRawResult): number {
   return clampScore(score);
 }
 
-function mobileFindings(raw: MobileRawResult): string[] {
+export function mobileFindings(raw: MobileRawResult): string[] {
   const findings: string[] = [];
   if (raw.fetchError) findings.push(`Could not analyze mobile experience: ${raw.fetchError}`);
   if (!raw.hasViewportMeta) findings.push("No viewport meta tag found.");
@@ -114,7 +121,7 @@ function mobileFindings(raw: MobileRawResult): string[] {
   return findings;
 }
 
-function normalizeSeoScore(raw: SeoRawResult): number {
+export function normalizeSeoScore(raw: SeoRawResult): number {
   if (raw.fetchError) return 0;
   if (raw.hasRobotsNoindex) return 0;
   let score = 100;
@@ -130,7 +137,7 @@ function normalizeSeoScore(raw: SeoRawResult): number {
   return clampScore(score);
 }
 
-function seoFindings(raw: SeoRawResult): string[] {
+export function seoFindings(raw: SeoRawResult): string[] {
   const findings: string[] = [];
   if (raw.fetchError) findings.push(`Could not analyze SEO: ${raw.fetchError}`);
   if (raw.hasRobotsNoindex) findings.push("Page is marked noindex — excluded from search results.");
@@ -147,7 +154,7 @@ function seoFindings(raw: SeoRawResult): string[] {
   return findings;
 }
 
-function normalizeAccessibilityScore(raw: AccessibilityRawResult): number {
+export function normalizeAccessibilityScore(raw: AccessibilityRawResult): number {
   if (raw.fetchError) return 0;
   const penalty =
     raw.violationCountByImpact.critical * 10 +
@@ -157,7 +164,7 @@ function normalizeAccessibilityScore(raw: AccessibilityRawResult): number {
   return clampScore(100 - penalty);
 }
 
-function accessibilityFindings(raw: AccessibilityRawResult): string[] {
+export function accessibilityFindings(raw: AccessibilityRawResult): string[] {
   if (raw.fetchError) return [`Could not run accessibility audit: ${raw.fetchError}`];
   return raw.violations
     .slice()

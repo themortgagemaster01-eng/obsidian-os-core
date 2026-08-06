@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": ".test-build",
+    "rootDir": ".",
+    "incremental": false,
+    "jsx": "react-jsx"
+  },
+  "include": ["lib/**/*.ts"],
+  "exclude": ["node_modules", "lib/supabase/**/*.ts"]
+}
