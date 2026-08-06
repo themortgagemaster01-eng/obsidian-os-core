@@ -21,6 +21,7 @@ export type Json =
 
 export type OrganizationPlan = "trial" | "starter" | "pro" | "agency" | "white_label";
 export type OrganizationRole = "owner" | "admin" | "member";
+export type AnalysisStatus = "pending" | "running" | "complete" | "failed";
 
 export interface Database {
   public: {
@@ -387,6 +388,121 @@ export interface Database {
             columns: ["last_mission_id"];
             isOneToOne: false;
             referencedRelation: "missions";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      website_analyses: {
+        Row: {
+          id: string;
+          mission_id: string;
+          organization_id: string;
+          company_id: string | null;
+          status: AnalysisStatus;
+          crawl_result: Json | null;
+          mobile_result: Json | null;
+          seo_result: Json | null;
+          accessibility_result: Json | null;
+          lighthouse_result: Json | null;
+          tech_detection_result: Json | null;
+          mobile_score: number | null;
+          mobile_findings: Json | null;
+          seo_score: number | null;
+          seo_findings: Json | null;
+          accessibility_score: number | null;
+          accessibility_findings: Json | null;
+          lighthouse_performance: number | null;
+          lighthouse_accessibility: number | null;
+          lighthouse_best_practices: number | null;
+          lighthouse_seo: number | null;
+          technology_stack: Json | null;
+          opportunity_score: number | null;
+          screenshot_url: string | null;
+          error_message: string | null;
+          started_at: string | null;
+          completed_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          mission_id: string;
+          organization_id: string;
+          company_id?: string | null;
+          status?: AnalysisStatus;
+          crawl_result?: Json | null;
+          mobile_result?: Json | null;
+          seo_result?: Json | null;
+          accessibility_result?: Json | null;
+          lighthouse_result?: Json | null;
+          tech_detection_result?: Json | null;
+          mobile_score?: number | null;
+          mobile_findings?: Json | null;
+          seo_score?: number | null;
+          seo_findings?: Json | null;
+          accessibility_score?: number | null;
+          accessibility_findings?: Json | null;
+          lighthouse_performance?: number | null;
+          lighthouse_accessibility?: number | null;
+          lighthouse_best_practices?: number | null;
+          lighthouse_seo?: number | null;
+          technology_stack?: Json | null;
+          opportunity_score?: number | null;
+          screenshot_url?: string | null;
+          error_message?: string | null;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          mission_id?: string;
+          organization_id?: string;
+          company_id?: string | null;
+          status?: AnalysisStatus;
+          crawl_result?: Json | null;
+          mobile_result?: Json | null;
+          seo_result?: Json | null;
+          accessibility_result?: Json | null;
+          lighthouse_result?: Json | null;
+          tech_detection_result?: Json | null;
+          mobile_score?: number | null;
+          mobile_findings?: Json | null;
+          seo_score?: number | null;
+          seo_findings?: Json | null;
+          accessibility_score?: number | null;
+          accessibility_findings?: Json | null;
+          lighthouse_performance?: number | null;
+          lighthouse_accessibility?: number | null;
+          lighthouse_best_practices?: number | null;
+          lighthouse_seo?: number | null;
+          technology_stack?: Json | null;
+          opportunity_score?: number | null;
+          screenshot_url?: string | null;
+          error_message?: string | null;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "website_analyses_mission_id_fkey";
+            columns: ["mission_id"];
+            isOneToOne: false;
+            referencedRelation: "missions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "website_analyses_organization_id_fkey";
+            columns: ["organization_id"];
+            isOneToOne: false;
+            referencedRelation: "organizations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "website_analyses_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
             referencedColumns: ["id"];
           }
         ];

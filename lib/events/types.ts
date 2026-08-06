@@ -15,16 +15,21 @@ import type { DecisionType } from "@/lib/repositories/decision-repository";
  *     (lib/services/decision-service.ts) flows through the same bus as
  *     everything else, instead of writing mission_events directly.
  *
- * None of MissionStarted/WebsiteScanned/SEOComplete/ProposalReady/
- * EmailDraftReady are published by any code yet — the agents that will
- * publish them (Research, SEO, Copywriter, Designer, QA, Proposal, Email,
- * Deployment) are Sprint 3+. Sprint 2 only needs the shape to exist and
- * compile.
+ * Sprint 3 (docs/SPRINT_3_DESIGN_REVIEW.md §11) is the first real publisher
+ * of WebsiteScanned and SEOComplete — both payload interfaces below are
+ * expanded here to carry this sprint's actual normalized analysis data,
+ * consistent with ADR-010's precedent of reconciling with existing
+ * vocabulary before adding new concepts. AnalysisFailed is the one
+ * genuinely new event type Sprint 3 adds (see
+ * supabase/migrations/0007_website_analysis.sql for the matching CHECK
+ * constraint update). ProposalReady/EmailDraftReady remain unpublished
+ * until Sprint 5/6.
  */
 export type DomainEventType =
   | "MissionStarted"
   | "WebsiteScanned"
   | "SEOComplete"
+  | "AnalysisFailed"
   | "ProposalReady"
   | "EmailDraftReady"
   | "MissionApproved"
@@ -38,14 +43,41 @@ export interface MissionStartedPayload {
   websiteUrl: string;
 }
 
+/**
+ * Published by lib/services/analysis-service.ts (§1, §11) when the full
+ * analysis pipeline completes for a mission. Carries the Normalized
+ * Analysis scores (§3.2) for every dimension except SEO, which gets its
+ * own SEOComplete event below — the split existed before Sprint 3 and is
+ * kept rather than collapsed, since SEOComplete already had an independent
+ * meaning in the original event catalog.
+ */
 export interface WebsiteScannedPayload {
   websiteUrl: string;
+  mobileScore?: number;
+  accessibilityScore?: number;
+  lighthousePerformance?: number;
+  lighthouseAccessibility?: number;
+  lighthouseBestPractices?: number;
+  lighthouseSeo?: number;
+  technologyStack?: string[];
   findings?: Record<string, unknown>;
 }
 
 export interface SEOCompletePayload {
   score?: number;
   issues?: string[];
+}
+
+/**
+ * New in Sprint 3 (§11, §15 risk #2). Published when any adapter in
+ * analysis-service.ts's pipeline throws — the mission stays at
+ * `analyzing` (§12) rather than advancing, and this event is the failure
+ * signal the UI's Failed state (§6) and a future retry mechanism read.
+ */
+export interface AnalysisFailedPayload {
+  errorMessage: string;
+  /** Which adapter failed, when known — e.g. "lighthouse-adapter". */
+  stage?: string;
 }
 
 export interface ProposalReadyPayload {
@@ -95,6 +127,7 @@ export type DomainEvent = DomainEventBase &
     | { type: "MissionStarted"; payload: MissionStartedPayload }
     | { type: "WebsiteScanned"; payload: WebsiteScannedPayload }
     | { type: "SEOComplete"; payload: SEOCompletePayload }
+    | { type: "AnalysisFailed"; payload: AnalysisFailedPayload }
     | { type: "ProposalReady"; payload: ProposalReadyPayload }
     | { type: "EmailDraftReady"; payload: EmailDraftReadyPayload }
     | { type: "MissionApproved"; payload: MissionApprovedPayload }

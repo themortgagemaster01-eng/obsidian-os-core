@@ -35,6 +35,10 @@ function describeEvent(event: DomainEvent): string {
       return `SEO check complete${
         event.payload.score !== undefined ? ` (score ${event.payload.score})` : ""
       }`;
+    case "AnalysisFailed":
+      return `Analysis failed${
+        event.payload.stage ? ` at ${event.payload.stage}` : ""
+      }: ${event.payload.errorMessage}`;
     case "ProposalReady":
       return "Proposal ready";
     case "EmailDraftReady":
