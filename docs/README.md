@@ -32,3 +32,7 @@
 ## The rule this folder follows
 
 Every numbered doc is a genuine deep-dive grounded in the real code (migrations, TypeScript source, components) as it exists at the time of writing — not aspirational descriptions of unbuilt features presented as if they work. Where a doc describes something forward-looking (an unbuilt agent, an unwired integration), it says so plainly. Keep it that way: update the relevant doc in the same change that changes the code it describes.
+
+## Exporting a review package
+
+Run `npm run export-review-package` (or `./scripts/export-review-package.sh` directly) to bundle the current Architecture Review Gate docs (`MASTER_BLUEPRINT.md`, `ARCHITECTURE_DECISIONS.md`, any `SPRINT_*_REVIEW.md` / `SPRINT_*_DESIGN_REVIEW.md`, `VISION_GUARDRAILS.md`, `MISSION_ENGINE.md`) into a single ZIP under the git-ignored `dist/` directory, for handing off to an external reviewer.

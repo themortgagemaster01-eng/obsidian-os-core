@@ -13,6 +13,9 @@
 # production
 /build
 
+# review package exports (scripts/export-review-package.sh)
+/dist
+
 # misc
 .DS_Store
 *.pem
