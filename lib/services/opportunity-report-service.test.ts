@@ -41,6 +41,7 @@ const BAD_ANALYSIS: NormalizedAnalysis = {
   technicalHealthFindings: ["No robots.txt file found.", "No sitemap.xml file found."],
   lighthouse: { performance: 35, accessibility: 40, bestPractices: 50, seo: 45 },
   technologyStack: ["WordPress"],
+  measurementStatus: { crawl: true, mobile: true, seo: true, accessibility: true, lighthouse: true, techDetection: true },
 };
 
 const GOOD_ANALYSIS: NormalizedAnalysis = {
@@ -55,6 +56,7 @@ const GOOD_ANALYSIS: NormalizedAnalysis = {
   technicalHealthFindings: [],
   lighthouse: { performance: 95, accessibility: 95, bestPractices: 95, seo: 95 },
   technologyStack: ["WordPress"],
+  measurementStatus: { crawl: true, mobile: true, seo: true, accessibility: true, lighthouse: true, techDetection: true },
 };
 
 function buildReport(analysis: NormalizedAnalysis) {
@@ -158,5 +160,76 @@ describe("opportunity-report-service", () => {
   test("overall score in the report matches opportunity-scoring-service's output", () => {
     const { report, scoreResult } = buildReport(BAD_ANALYSIS);
     assert.equal(report.scores.overall, scoreResult.overallScore);
+  });
+
+  test("confidence is High across the board when every check succeeded", () => {
+    const { report } = buildReport(GOOD_ANALYSIS);
+    assert.equal(report.confidence.overall.level, "High");
+    assert.equal(report.confidence.performance.level, "High");
+    assert.equal(report.confidence.accessibility.level, "High");
+    assert.equal(report.confidence.seo.level, "High");
+    assert.equal(report.confidence.mobile.level, "High");
+    assert.equal(report.confidence.technicalHealth.level, "High");
+    assert.equal(report.confidence.businessOpportunity.level, "High");
+    assert.equal(report.confidence.executiveSummary.level, "High");
+    for (const entry of Object.values(report.confidence)) {
+      assert.ok(entry.reason.length > 0);
+    }
+  });
+
+  test("a category whose check failed reads Unavailable, not a confident-sounding score", () => {
+    const analysis: NormalizedAnalysis = {
+      ...GOOD_ANALYSIS,
+      lighthouse: { performance: null, accessibility: null, bestPractices: null, seo: null },
+      measurementStatus: {
+        ...GOOD_ANALYSIS.measurementStatus,
+        lighthouse: false,
+        accessibility: false,
+      },
+    };
+    const { report } = buildReport(analysis);
+    assert.equal(report.confidence.performance.level, "Unavailable");
+    assert.equal(report.confidence.accessibility.level, "Unavailable");
+    // A category that WAS measured should be unaffected by another category's failure.
+    assert.equal(report.confidence.seo.level, "High");
+  });
+
+  test("partial accessibility measurement (one of two checks) reads Medium, not High", () => {
+    const analysis: NormalizedAnalysis = {
+      ...GOOD_ANALYSIS,
+      lighthouse: { ...GOOD_ANALYSIS.lighthouse, accessibility: null },
+      measurementStatus: { ...GOOD_ANALYSIS.measurementStatus, lighthouse: false },
+    };
+    const { report } = buildReport(analysis);
+    assert.equal(report.confidence.accessibility.level, "Medium");
+  });
+
+  test("overall confidence degrades as more categories become unavailable", () => {
+    const oneDown: NormalizedAnalysis = {
+      ...GOOD_ANALYSIS,
+      lighthouse: { performance: null, accessibility: null, bestPractices: null, seo: null },
+      measurementStatus: { ...GOOD_ANALYSIS.measurementStatus, lighthouse: false },
+    };
+    assert.equal(buildReport(oneDown).report.confidence.overall.level, "Medium");
+
+    const threeDown: NormalizedAnalysis = {
+      ...GOOD_ANALYSIS,
+      lighthouse: { performance: null, accessibility: null, bestPractices: null, seo: null },
+      measurementStatus: {
+        ...GOOD_ANALYSIS.measurementStatus,
+        lighthouse: false,
+        accessibility: false,
+        seo: false,
+        crawl: false,
+      },
+    };
+    assert.equal(buildReport(threeDown).report.confidence.overall.level, "Low");
+  });
+
+  test("confidence reasons don't leak technical/tool jargon either", () => {
+    const { report } = buildReport(BAD_ANALYSIS);
+    for (const [key, entry] of Object.entries(report.confidence)) {
+      assertNoJargon(entry.reason, `confidence.${key}.reason`);
+    }
   });
 });

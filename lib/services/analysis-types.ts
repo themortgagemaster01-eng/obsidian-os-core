@@ -36,6 +36,24 @@ export type AnalysisCategory =
  * on WebsiteAnalysisRow, Supabase, or lib/adapters/ directly. That's what
  * keeps them independently testable with plain object fixtures.
  */
+/**
+ * Whether each underlying check actually completed (Phase 2 addition, for
+ * confidence metadata — see opportunity-report-service.ts). Distinct from
+ * the *scores* above: Phase 1's mobile/seo/accessibility normalizers
+ * already collapse a total check failure to a score of 0, which is
+ * indistinguishable from a real, badly-failing measurement unless
+ * something also records that the check itself never ran. This is that
+ * something.
+ */
+export interface MeasurementStatus {
+  crawl: boolean;
+  mobile: boolean;
+  seo: boolean;
+  accessibility: boolean;
+  lighthouse: boolean;
+  techDetection: boolean;
+}
+
 export interface NormalizedAnalysis {
   websiteUrl: string;
   seoScore: number;
@@ -53,6 +71,7 @@ export interface NormalizedAnalysis {
     seo: number | null;
   };
   technologyStack: string[];
+  measurementStatus: MeasurementStatus;
 }
 
 function clampScore(value: number): number {
@@ -129,6 +148,10 @@ export function normalizedAnalysisFromRow(
   websiteUrl: string
 ): NormalizedAnalysis {
   const crawl = (row.crawl_result as unknown as CrawlRawResult | null) ?? null;
+  const mobile = (row.mobile_result as unknown as MobileRawResult | null) ?? null;
+  const seo = (row.seo_result as unknown as SeoRawResult | null) ?? null;
+  const accessibility = (row.accessibility_result as unknown as AccessibilityRawResult | null) ?? null;
+  const lighthouse = (row.lighthouse_result as unknown as LighthouseRawResult | null) ?? null;
   const tech = (row.tech_detection_result as unknown as TechDetectionRawResult | null) ?? null;
   const technicalHealth = computeTechnicalHealth(crawl, tech);
 
@@ -149,6 +172,14 @@ export function normalizedAnalysisFromRow(
       seo: row.lighthouse_seo,
     },
     technologyStack: (row.technology_stack as unknown as string[] | null) ?? [],
+    measurementStatus: {
+      crawl: !!crawl && !crawl.fetchError,
+      mobile: !!mobile && !mobile.fetchError,
+      seo: !!seo && !seo.fetchError,
+      accessibility: !!accessibility && !accessibility.fetchError,
+      lighthouse: !!lighthouse && !lighthouse.fetchError,
+      techDetection: !!tech && !tech.fetchError,
+    },
   };
 }
 
@@ -189,5 +220,13 @@ export function normalizedAnalysisFromRawResults(
     technicalHealthFindings: technicalHealth.findings,
     lighthouse: { ...raw.lighthouse.scores },
     technologyStack: raw.techDetection.technologies.map((t) => t.name),
+    measurementStatus: {
+      crawl: !raw.crawl.fetchError,
+      mobile: !raw.mobile.fetchError,
+      seo: !raw.seo.fetchError,
+      accessibility: !raw.accessibility.fetchError,
+      lighthouse: !raw.lighthouse.fetchError,
+      techDetection: !raw.techDetection.fetchError,
+    },
   };
 }

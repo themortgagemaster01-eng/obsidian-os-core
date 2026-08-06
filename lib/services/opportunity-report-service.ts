@@ -1,4 +1,4 @@
-import type { AnalysisCategory, NormalizedAnalysis } from "@/lib/services/analysis-types";
+import type { AnalysisCategory, MeasurementStatus, NormalizedAnalysis } from "@/lib/services/analysis-types";
 import type { Insight, InsightSeverity } from "@/lib/services/insight-service";
 import {
   scoreForCategory,
@@ -37,6 +37,34 @@ export interface OpportunityReport {
   technologyStack: string[];
   evidence: { claim: string; source: string }[];
   recommendations: { title: string; detail: string; severity: InsightSeverity }[];
+  /**
+   * Confidence metadata (founder-requested, Phase 2 gate #2): internal
+   * quality signal for each major section, NOT meant to inflate certainty.
+   * A category whose underlying check failed reads "Unavailable" here
+   * rather than a confident-sounding score, even though `scores`/
+   * `findings` above still show a numeric value for it (Phase 1's
+   * normalizers default a failed check to a score of 0 — see
+   * MeasurementStatus in analysis-types.ts). This field is how a reader
+   * tells "measured and genuinely bad" apart from "we don't actually
+   * know."
+   */
+  confidence: {
+    overall: ConfidenceEntry;
+    performance: ConfidenceEntry;
+    accessibility: ConfidenceEntry;
+    seo: ConfidenceEntry;
+    mobile: ConfidenceEntry;
+    technicalHealth: ConfidenceEntry;
+    businessOpportunity: ConfidenceEntry;
+    executiveSummary: ConfidenceEntry;
+  };
+}
+
+export type ConfidenceLevel = "High" | "Medium" | "Low" | "Unavailable";
+
+export interface ConfidenceEntry {
+  level: ConfidenceLevel;
+  reason: string;
 }
 
 type ScoreBand = "good" | "moderate" | "poor" | "unknown";
@@ -217,6 +245,119 @@ function buildRecommendations(insights: Insight[]): OpportunityReport["recommend
     .map((i) => ({ title: humanize(i.id), detail: i.statement, severity: i.severity }));
 }
 
+// ---------------------------------------------------------------------
+// Confidence metadata (founder-requested, Phase 2 gate #2) — internal
+// quality signal per major section, computed from MeasurementStatus
+// rather than inferred from score values, specifically so a failed check
+// that defaulted to a score of 0 doesn't read as a confidently-measured
+// bad score.
+// ---------------------------------------------------------------------
+
+function buildConfidence(
+  analysis: NormalizedAnalysis,
+  scoreResult: OpportunityScoreResult
+): OpportunityReport["confidence"] {
+  const status = analysis.measurementStatus;
+
+  const performance: ConfidenceEntry =
+    status.lighthouse && scoreForCategory(scoreResult, "performance") !== null
+      ? { level: "High", reason: "Measured directly from an automated page speed test." }
+      : {
+          level: "Unavailable",
+          reason: "The page speed test could not run during this analysis.",
+        };
+
+  const accessibility: ConfidenceEntry =
+    status.accessibility && status.lighthouse
+      ? { level: "High", reason: "Measured from two independent accessibility checks." }
+      : status.accessibility || status.lighthouse
+        ? {
+            level: "Medium",
+            reason:
+              "Measured from one accessibility check only; a second cross-check could not be completed.",
+          }
+        : {
+            level: "Unavailable",
+            reason:
+              "Accessibility could not be measured during this analysis — the score shown is a default, not a real measurement.",
+          };
+
+  const seo: ConfidenceEntry = status.seo
+    ? { level: "High", reason: "Measured directly from the site's search-visibility check." }
+    : {
+        level: "Unavailable",
+        reason:
+          "The search-visibility check could not run during this analysis — the score shown is a default, not a real measurement.",
+      };
+
+  const mobile: ConfidenceEntry = status.mobile
+    ? { level: "High", reason: "Measured directly from the site's mobile-display check." }
+    : {
+        level: "Unavailable",
+        reason:
+          "The mobile-display check could not run during this analysis — the score shown is a default, not a real measurement.",
+      };
+
+  const technicalHealth: ConfidenceEntry = !status.crawl
+    ? {
+        level: "Unavailable",
+        reason:
+          "The site's basic structure could not be checked during this analysis — the score shown is a default, not a real measurement.",
+      }
+    : status.techDetection
+      ? { level: "High", reason: "Measured directly from the site's structure and configuration." }
+      : {
+          level: "Medium",
+          reason:
+            "Measured from the site's structure directly; technology detection was inconclusive.",
+        };
+
+  const entries = [performance, accessibility, seo, mobile, technicalHealth];
+  const unavailableCount = entries.filter((e) => e.level === "Unavailable").length;
+
+  const overall: ConfidenceEntry =
+    unavailableCount === 0
+      ? { level: "High", reason: "Every category was measured directly in this analysis." }
+      : unavailableCount <= 2
+        ? {
+            level: "Medium",
+            reason: `${unavailableCount} of 5 categories could not be measured in this analysis; the overall score is based on the remaining ${5 - unavailableCount}.`,
+          }
+        : {
+            level: "Low",
+            reason: `${unavailableCount} of 5 categories could not be measured in this analysis — treat the overall score as a partial picture.`,
+          };
+
+  const businessOpportunity: ConfidenceEntry =
+    overall.level === "High"
+      ? {
+          level: "High",
+          reason: "Derived directly from multiple confidently-measured indicators.",
+        }
+      : overall.level === "Medium"
+        ? {
+            level: "Medium",
+            reason: "Derived from a mix of measured and partially-available indicators.",
+          }
+        : {
+            level: "Low",
+            reason: "Derived mostly from indicators that couldn't be fully measured in this analysis.",
+          };
+
+  const executiveSummary: ConfidenceEntry = { ...overall };
+
+  return {
+    overall,
+    performance,
+    accessibility,
+    seo,
+    mobile,
+    technicalHealth,
+    businessOpportunity,
+    executiveSummary,
+  };
+}
+
 /**
  * assembleOpportunityReport — the single entry point this service
  * exposes. Presentation assembly only: takes already-computed
@@ -245,5 +386,6 @@ export function assembleOpportunityReport(
     technologyStack: analysis.technologyStack,
     evidence: buildEvidence(insights),
     recommendations: buildRecommendations(insights),
+    confidence: buildConfidence(analysis, scoreResult),
   };
 }

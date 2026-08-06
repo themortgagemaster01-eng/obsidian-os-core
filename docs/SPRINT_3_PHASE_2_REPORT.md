@@ -99,3 +99,26 @@ Everything Phase 3 and later, unstarted and unauthorized: the Opportunity Report
 ## Commit
 
 Phase 2 committed separately from Phase 1, per your instruction — hash below.
+
+
+---
+
+## Addendum — founder gate requirements (post-review)
+
+The founder's formal Phase 2 sign-off required two changes before Phase 3 is authorized. Both are done, tested, and re-verified end-to-end.
+
+### 1. Real business URL
+
+The `example.com` output was explicitly held back, not finalized as a review artifact. The demo now runs against **`https://www.veslofamilyrestaurant.com`** — Veslo Family Restaurant, a real, independently-owned restaurant in Kitchener, Ontario (found via web search, verified live before use: `curl` returns a real `200`, real HTML, real Wix-hosted content). Crawl, mobile-analysis, SEO, and tech-detection ran for real against it. Accessibility, Lighthouse, and screenshot were attempted for real and failed for real, for the same reason as before — no Chromium binary in this sandbox, no root access to install one. Nothing here is faked or hand-written; it's the actual pipeline output.
+
+### 2. Confidence metadata
+
+Added a `confidence` field to `OpportunityReport` (`opportunity-report-service.ts`), one entry per major section (`overall`, `performance`, `accessibility`, `seo`, `mobile`, `technicalHealth`, `businessOpportunity`, `executiveSummary`), each `{ level: "High" | "Medium" | "Low" | "Unavailable", reason: string }`.
+
+This required a real fix, not just a cosmetic label: Phase 1's mobile/SEO/accessibility normalizers already default a total check failure to a score of **0** — indistinguishable, by score alone, from a real measurement that's genuinely bad. Confidence needed to know the difference, so `NormalizedAnalysis` gained a new `measurementStatus` field (`lib/services/analysis-types.ts`) that records whether each underlying check actually completed, independent of what score it produced. Confidence is computed from `measurementStatus`, not from score values — a category whose check failed reads **Unavailable**, never a confident-sounding number.
+
+Rules, briefly: Performance/SEO/Mobile are High if their check ran, Unavailable if it didn't. Accessibility is High only if both the accessibility scan and Lighthouse's accessibility check ran, Medium if only one did, Unavailable if neither did. Technical Health is High if the site-structure check and technology detection both ran, Medium if only the structure check did, Unavailable if the structure check itself failed. Overall confidence degrades from High (0 categories unavailable) to Medium (1-2) to Low (3+). Business Opportunity and the executive summary inherit overall's level, since both are downstream of every category.
+
+5 new unit tests cover this (all High when everything succeeds, a failed category reads Unavailable without dragging down an unrelated successful one, partial accessibility reads Medium not High, overall confidence degrades correctly with more failures, and confidence reasons pass the same no-jargon scan as everything else). **27 tests total, all passing**, re-verified via `npm test` after these changes.
+
+The real Veslo Family Restaurant `OpportunityReport` object — with confidence metadata, exactly as generated, no editing — is in the chat response accompanying this addendum.
