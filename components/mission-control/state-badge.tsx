@@ -7,6 +7,7 @@ function variantForState(state: MissionState): NonNullable<BadgeProps["variant"]
     case "sent":
       return "success";
     case "approval":
+    case "reviewing":
       return "warning";
     case "rejected":
       return "destructive";

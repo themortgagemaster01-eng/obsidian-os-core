@@ -1,7 +1,11 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildDesignBrief, type BuildDesignBriefInput } from "@/lib/services/design-brief-service";
+import {
+  buildDesignBrief,
+  applyDesignBriefEdits,
+  type BuildDesignBriefInput,
+} from "@/lib/services/design-brief-service";
 import type { NormalizedAnalysis } from "@/lib/services/analysis-types";
 import type { Insight } from "@/lib/services/insight-service";
 
@@ -121,5 +125,47 @@ describe("design-brief-service", () => {
     assert.equal(brief.missionId, "m-42");
     assert.equal(brief.businessName, "Acme");
     assert.equal(brief.websiteUrl, "https://acme.test");
+  });
+});
+
+describe("design-brief-service: applyDesignBriefEdits (Founder Approval Gate)", () => {
+  test("returns the brief unchanged and wasEdited: false when no edits are supplied", () => {
+    const brief = buildDesignBrief(baseInput());
+    const result = applyDesignBriefEdits(brief);
+    assert.deepEqual(result.brief, brief);
+    assert.equal(result.wasEdited, false);
+  });
+
+  test("returns the brief unchanged and wasEdited: false for an empty edits object", () => {
+    const brief = buildDesignBrief(baseInput());
+    const result = applyDesignBriefEdits(brief, {});
+    assert.deepEqual(result.brief, brief);
+    assert.equal(result.wasEdited, false);
+  });
+
+  test("overrides targetAudience and positioning when supplied", () => {
+    const brief = buildDesignBrief(baseInput());
+    const result = applyDesignBriefEdits(brief, {
+      targetAudience: "Custom audience the founder typed in",
+      positioning: "Custom positioning override",
+    });
+    assert.equal(result.wasEdited, true);
+    assert.equal(result.brief.targetAudience, "Custom audience the founder typed in");
+    assert.equal(result.brief.positioning, "Custom positioning override");
+  });
+
+  test("merges partial direction edits without discarding untouched direction fields", () => {
+    const brief = buildDesignBrief(baseInput({ industry: "Law Firm" }));
+    const result = applyDesignBriefEdits(brief, { direction: { typographicMood: "bolder serif" } });
+    assert.equal(result.brief.direction.typographicMood, "bolder serif");
+    assert.equal(result.brief.direction.layoutFamily, brief.direction.layoutFamily);
+    assert.equal(result.brief.direction.colorDirection, brief.direction.colorDirection);
+  });
+
+  test("never touches citedInsights or referencesConsidered — those are not editable", () => {
+    const brief = buildDesignBrief(baseInput());
+    const result = applyDesignBriefEdits(brief, { targetAudience: "Something else" });
+    assert.deepEqual(result.brief.citedInsights, brief.citedInsights);
+    assert.deepEqual(result.brief.referencesConsidered, brief.referencesConsidered);
   });
 });

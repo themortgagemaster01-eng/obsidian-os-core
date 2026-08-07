@@ -294,7 +294,10 @@ export async function createDesignBriefRun(
  * resolution of Design Review Open Question 1 — the Design Brief step
  * genuinely IS the researching stage's work, not a state to skip), builds
  * the brief from the mission's latest completed analysis, persists it, and
- * transitions the mission to `designing`. On failure, marks the row
+ * transitions the mission to `reviewing` — the Founder Approval Gate
+ * (docs/ARCHITECTURE_SPECIFICATION_V1.md, item 2). The mission waits there
+ * until a human calls approveDesignBrief() below; this function never
+ * itself advances a mission into `designing`. On failure, marks the row
  * 'failed' and publishes DesignBriefFailed instead of throwing back to the
  * caller — same failure-handling shape as analysis-service.ts::runAnalysis.
  *
@@ -368,7 +371,7 @@ export async function runDesignBrief(
       payload: { industryBucket: brief.industryBucket, citationCount: brief.citedInsights.length },
     });
 
-    await transitionMissionState(deps.workflowDeps, mission.id, "designing");
+    await transitionMissionState(deps.workflowDeps, mission.id, "reviewing");
 
     return updated;
   } catch (err) {
@@ -389,4 +392,109 @@ export async function runDesignBrief(
 
     return failed;
   }
+}
+
+// ===========================================================================
+// The Founder Approval Gate (docs/ARCHITECTURE_SPECIFICATION_V1.md, item 2)
+// ===========================================================================
+
+/**
+ * The subset of a Design Brief a founder may edit before approving it.
+ * Deliberately narrow: `citedInsights` and `referencesConsidered` are NOT
+ * editable here — they're the brief's evidence trail (§12 AC1's
+ * traceability guarantee), and letting an approval action silently rewrite
+ * them would undermine the same evidence-first discipline ADR-013
+ * established for the Opportunity Report. `industryBucket` is also not
+ * editable through this path — changing it would invalidate the
+ * `referencesConsidered` set it was resolved from; a genuinely wrong
+ * industry classification should go back through a fresh Design Brief run,
+ * not a patch.
+ */
+export interface DesignBriefEdits {
+  targetAudience?: string;
+  positioning?: string;
+  direction?: Partial<DesignBrief["direction"]>;
+}
+
+export interface ApproveDesignBriefInput {
+  /** The founder/user id performing the approval — becomes design_briefs.reviewed_by and the DesignBriefApproved event's approvedBy. */
+  approvedBy: string;
+  edits?: DesignBriefEdits;
+}
+
+/**
+ * applyDesignBriefEdits — pure merge function, separated out of
+ * approveDesignBrief so the actual edit-application logic is independently
+ * testable without a Supabase client, mirroring buildDesignBrief's own
+ * separation from its orchestration wrapper. `wasEdited` is true only when
+ * a non-empty edits object was actually supplied, not merely present.
+ */
+export function applyDesignBriefEdits(
+  brief: DesignBrief,
+  edits?: DesignBriefEdits
+): { brief: DesignBrief; wasEdited: boolean } {
+  const wasEdited = !!edits && Object.keys(edits).length > 0;
+  if (!wasEdited) return { brief, wasEdited: false };
+
+  return {
+    brief: {
+      ...brief,
+      targetAudience: edits?.targetAudience ?? brief.targetAudience,
+      positioning: edits?.positioning ?? brief.positioning,
+      direction: { ...brief.direction, ...edits?.direction },
+    },
+    wasEdited: true,
+  };
+}
+
+/**
+ * approveDesignBrief — the Founder Approval Gate's one action. Requires the
+ * mission to be at `reviewing` (design-brief-service.ts's own
+ * runDesignBrief is the only thing that puts it there); moves it to
+ * `designing` only after this call succeeds. This is the only path by
+ * which a mission ever leaves `reviewing` toward generation — nothing else
+ * in this codebase transitions that edge, per ADR-000's non-negotiable
+ * human-approval-before-anything-customer-facing commitment applied to the
+ * cheapest, highest-leverage review point in the pipeline (docs/
+ * SPRINT_4_DESIGN_REVIEW.md §11, Human Approval Point #2).
+ */
+export async function approveDesignBrief(
+  deps: DesignBriefServiceDeps,
+  missionId: string,
+  input: ApproveDesignBriefInput
+): Promise<DesignBriefRow> {
+  const mission = await deps.missionRepository.findById(deps.client, missionId);
+  if (!mission) {
+    throw new Error(`Mission ${missionId} not found.`);
+  }
+  if (mission.state !== "reviewing") {
+    throw new Error(
+      `Mission ${missionId} is at state "${mission.state}", not "reviewing" — there is nothing to approve.`
+    );
+  }
+
+  const briefRow = await deps.designBriefRepository.findLatestByMission(deps.client, missionId);
+  if (!briefRow || briefRow.status !== "complete" || !briefRow.brief) {
+    throw new Error(`Mission ${missionId} has no completed Design Brief to approve.`);
+  }
+
+  const currentBrief = briefRow.brief as unknown as DesignBrief;
+  const { brief: approvedBrief, wasEdited } = applyDesignBriefEdits(currentBrief, input.edits);
+
+  const updated = await deps.designBriefRepository.update(deps.client, briefRow.id, {
+    brief: approvedBrief as unknown as Json,
+    reviewed_at: new Date().toISOString(),
+    reviewed_by: input.approvedBy,
+  });
+
+  await deps.eventBus.publish({
+    type: "DesignBriefApproved",
+    missionId: mission.id,
+    organizationId: mission.organization_id,
+    payload: { approvedBy: input.approvedBy, wasEdited },
+  });
+
+  await transitionMissionState(deps.workflowDeps, mission.id, "designing");
+
+  return updated;
 }

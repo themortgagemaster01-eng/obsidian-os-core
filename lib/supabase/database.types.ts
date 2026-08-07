@@ -518,6 +518,8 @@ export interface Database {
           status: GenerationStatus;
           industry_bucket: string | null;
           brief: Json | null;
+          reviewed_at: string | null;
+          reviewed_by: string | null;
           error_message: string | null;
           started_at: string | null;
           completed_at: string | null;
@@ -531,6 +533,8 @@ export interface Database {
           status?: GenerationStatus;
           industry_bucket?: string | null;
           brief?: Json | null;
+          reviewed_at?: string | null;
+          reviewed_by?: string | null;
           error_message?: string | null;
           started_at?: string | null;
           completed_at?: string | null;
@@ -544,6 +548,8 @@ export interface Database {
           status?: GenerationStatus;
           industry_bucket?: string | null;
           brief?: Json | null;
+          reviewed_at?: string | null;
+          reviewed_by?: string | null;
           error_message?: string | null;
           started_at?: string | null;
           completed_at?: string | null;
@@ -569,6 +575,13 @@ export interface Database {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "design_briefs_reviewed_by_fkey";
+            columns: ["reviewed_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
             referencedColumns: ["id"];
           }
         ];

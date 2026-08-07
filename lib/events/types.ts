@@ -32,6 +32,7 @@ export type DomainEventType =
   | "AnalysisFailed"
   | "DesignBriefReady"
   | "DesignBriefFailed"
+  | "DesignBriefApproved"
   | "WebsiteDesignReady"
   | "WebsiteDesignFailed"
   | "ProposalReady"
@@ -101,6 +102,19 @@ export interface DesignBriefFailedPayload {
 }
 
 /**
+ * Founder Architecture Spec v1.0, item 2: the Founder Approval Gate.
+ * Published by lib/services/design-brief-service.ts::approveDesignBrief()
+ * when a human approves (optionally with edits) a Design Brief sitting in
+ * the `reviewing` state, immediately before the mission transitions to
+ * `designing`.
+ */
+export interface DesignBriefApprovedPayload {
+  approvedBy: string;
+  /** True when the founder's approval action included edits to the brief, not just a pass-through approval. */
+  wasEdited: boolean;
+}
+
+/**
  * Published by lib/services/design-generation-service.ts when the Wireframe
  * + Component Assembly passes complete during `designing`. Does not itself
  * advance the mission — only a future design-qa-service.ts (Phase 3) owns
@@ -165,6 +179,7 @@ export type DomainEvent = DomainEventBase &
     | { type: "AnalysisFailed"; payload: AnalysisFailedPayload }
     | { type: "DesignBriefReady"; payload: DesignBriefReadyPayload }
     | { type: "DesignBriefFailed"; payload: DesignBriefFailedPayload }
+    | { type: "DesignBriefApproved"; payload: DesignBriefApprovedPayload }
     | { type: "WebsiteDesignReady"; payload: WebsiteDesignReadyPayload }
     | { type: "WebsiteDesignFailed"; payload: WebsiteDesignFailedPayload }
     | { type: "ProposalReady"; payload: ProposalReadyPayload }

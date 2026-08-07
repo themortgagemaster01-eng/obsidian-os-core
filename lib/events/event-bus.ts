@@ -43,6 +43,8 @@ function describeEvent(event: DomainEvent): string {
       return `Design Brief ready (${event.payload.industryBucket}, ${event.payload.citationCount} citation(s))`;
     case "DesignBriefFailed":
       return `Design Brief failed: ${event.payload.errorMessage}`;
+    case "DesignBriefApproved":
+      return `Design Brief approved by ${event.payload.approvedBy}${event.payload.wasEdited ? " (with edits)" : ""}`;
     case "WebsiteDesignReady":
       return `Website design ready: ${event.payload.sectionCount} section(s), ${event.payload.layoutFamily} layout`;
     case "WebsiteDesignFailed":

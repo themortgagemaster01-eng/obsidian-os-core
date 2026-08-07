@@ -6,8 +6,17 @@
  * mission's lifecycle position — nothing else tracks it.
  *
  * Primary linear sequence:
- *   discovered -> analyzing -> researching -> designing -> qa -> proposal
- *   -> email -> approval -> sent -> archived
+ *   discovered -> analyzing -> researching -> reviewing -> designing -> qa
+ *   -> proposal -> email -> approval -> sent -> archived
+ *
+ * `reviewing` (Founder Architecture Spec v1.0, supabase/migrations/
+ * 0011_founder_approval_gate.sql): the Founder Approval Gate between the
+ * Design Brief and Generation Engine steps — a mission sits here once
+ * design-brief-service.ts finishes until a human calls approveDesignBrief()
+ * (lib/services/design-brief-service.ts), which is the only thing that can
+ * move it into `designing`. Distinct from the `approval` state later in
+ * this sequence, which gates the founder's review of the finished
+ * proposal/email before sending, not the Design Brief.
  *
  * Non-sequential transitions, both explicit escape hatches rather than part
  * of the default forward path:
@@ -31,6 +40,7 @@ export type MissionState =
   | "discovered"
   | "analyzing"
   | "researching"
+  | "reviewing"
   | "designing"
   | "qa"
   | "proposal"
@@ -49,6 +59,7 @@ export const MISSION_STATE_SEQUENCE: readonly MissionState[] = [
   "discovered",
   "analyzing",
   "researching",
+  "reviewing",
   "designing",
   "qa",
   "proposal",
@@ -69,6 +80,7 @@ export const STATE_LABELS: Record<MissionState, string> = {
   discovered: "Discovered",
   analyzing: "Analyzing",
   researching: "Researching",
+  reviewing: "Reviewing",
   designing: "Designing",
   qa: "QA",
   proposal: "Proposal",
@@ -90,7 +102,8 @@ export const STATE_LABELS: Record<MissionState, string> = {
 export const NEXT_STATE: Record<MissionState, MissionState | null> = {
   discovered: "analyzing",
   analyzing: "researching",
-  researching: "designing",
+  researching: "reviewing",
+  reviewing: "designing",
   designing: "qa",
   qa: "proposal",
   proposal: "email",

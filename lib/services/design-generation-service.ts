@@ -339,8 +339,10 @@ export async function createDesignGenerationRun(
 /**
  * Runs the Wireframe + Component Assembly passes for an existing
  * `website_designs` row. Requires the mission to already be at `designing`
- * (design-brief-service.ts's job to have gotten it there) and the
- * referenced design brief to be complete. Does NOT transition mission state
+ * — which now only happens after a human has called approveDesignBrief()
+ * (docs/ARCHITECTURE_SPECIFICATION_V1.md's Founder Approval Gate, item 2;
+ * design-brief-service.ts) — and the referenced design brief to be
+ * complete. Does NOT transition mission state
  * on completion — per the founder's Phase 2 guidance, Generation assembles,
  * it doesn't judge; only a future design-qa-service.ts (Phase 3) owns the
  * `designing -> qa` transition.
