@@ -22,12 +22,13 @@ interface RouteParams {
  *
  * Mirrors POST /api/missions/:id/analyze exactly (ADR-012): creates the
  * `design_briefs` row synchronously and returns 202 Accepted immediately;
- * the actual brief-building work is invoked afterward without being
- * awaited, using a service-role client since it keeps running after this
- * request's session/cookies are gone. Reused deliberately, per the
- * founder's explicit instruction, even though buildDesignBrief() itself is
- * fast and synchronous today — this keeps the calling contract stable if a
- * future pass adds a slower step (e.g. a model call) to this service.
+ * the actual brief-building work — now a real LLM call via
+ * design-intelligence-service.ts (docs/ARCHITECTURE_SPECIFICATION_V1.md
+ * §3) — is invoked afterward without being awaited, using a service-role
+ * client since it keeps running after this request's session/cookies are
+ * gone. Fails gracefully with a persisted 'failed' status and error
+ * message if ANTHROPIC_API_KEY isn't configured — see
+ * lib/llm/anthropic-provider.ts.
  */
 export async function POST(_request: NextRequest, { params }: RouteParams) {
   const supabase = createClient();
