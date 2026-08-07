@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Rocket } from "lucide-react";
 
 import type { MissionRow } from "@/lib/repositories/mission-repository";
@@ -37,24 +38,26 @@ export function MissionList({ missions }: { missions: MissionRow[] }) {
       <CardContent className="p-0">
         <ul className="divide-y divide-border">
           {missions.map((mission) => (
-            <li
-              key={mission.id}
-              className="flex items-center justify-between gap-4 px-6 py-4 transition-colors duration-200 ease-in-out hover:bg-panel-hover"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">
-                  {mission.business_name}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {mission.website_url}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-4">
-                <span className="text-xs text-muted-foreground">
-                  {formatDate(mission.created_at)}
-                </span>
-                <StateBadge state={mission.state} />
-              </div>
+            <li key={mission.id}>
+              <Link
+                href={`/missions/${mission.id}`}
+                className="flex items-center justify-between gap-4 px-6 py-4 transition-colors duration-200 ease-in-out hover:bg-panel-hover"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {mission.business_name}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {mission.website_url}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-4">
+                  <span className="text-xs text-muted-foreground">
+                    {formatDate(mission.created_at)}
+                  </span>
+                  <StateBadge state={mission.state} />
+                </div>
+              </Link>
             </li>
           ))}
         </ul>
