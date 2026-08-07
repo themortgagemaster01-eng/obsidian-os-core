@@ -103,3 +103,24 @@ Verified via two independent real end-to-end runs (`katzsdelicatessen.com`, `ves
 **Why the current guard is safe:** `lib/adapters/lighthouse-adapter.ts`'s `finally` block wraps only `chrome?.kill()` in its own `try/catch`, logging via `console.warn` on failure rather than staying silent. This is scoped narrowly to cleanup: it runs after the Lighthouse scan has already either returned a real result or been recorded as a graceful `fetchError` in the adapter's own `catch` block above it, so swallowing a cleanup exception here cannot mask, alter, or fabricate a measurement — it only prevents a disk-cleanup failure from crashing a request that has already done its real work. The `console.warn` keeps the failure visible in server logs (not hidden) so a future, worse failure mode than "temp dir didn't delete" — e.g. Chrome not actually terminating — would still surface to whoever is watching logs, rather than failing silently forever.
 
 **Remaining limitations:** The directory leak itself is not fixed, only prevented from crashing the analysis run — an orphaned `lighthouse.*` directory under the OS temp folder persists on disk after an `EPERM`. No retry loop or deferred cleanup was implemented (that's the "Recommended Resolution" above, deliberately left for a future pass). Whether this is Windows-dev-only or could recur on the eventual production hosting platform is unconfirmed — not tested on Linux/CI in this pass. Confidence is high that the guard itself (catch + log, never crash) is correct and safe regardless of platform; confidence is lower on how often the underlying race actually fires outside this specific machine.
+
+---
+
+## 5. UI still shows the retired "AI Agency Operating System" tagline
+
+**Status:** Open. Found 2026-08-07 during Sprint 3 closure documentation audit.
+
+**Title:** `app/login/page.tsx` and `app/layout.tsx`'s metadata description still read "The AI Agency Operating System," the framing ADR-010 (`docs/ARCHITECTURE_DECISIONS.md`) retired in favor of "Autonomous Client Acquisition Operating System" during the Sprint 2 Architecture Review Gate.
+
+**Description:** ADR-010 deliberately left the UI copy unchanged at the time (no code changes were in scope during that review gate) and named this a "concrete, named follow-up for the first code-touching sprint after this review." Sprint 3 was that sprint, but its three phases were scoped tightly to the Analysis Engine (crawl/mobile/SEO/accessibility/Lighthouse/tech-detection/screenshot adapters, scoring, report presentation) and none of them touched the login page or root layout, so the follow-up did not happen. This is drift, not a design decision — the documentation has used the refined framing since Sprint 2, but a user looking at the actual running login page still sees the retired one.
+
+**Steps to Reproduce:**
+1. Load `/login`.
+2. Read the tagline under the product name — it says "The AI Agency Operating System."
+3. Compare against any doc in `docs/00-Executive-Summary.md` onward, all of which say "Autonomous Client Acquisition Operating System."
+
+**Impact:** Low, cosmetic — does not affect any pipeline behavior. But it is customer-facing (the login page is the first thing any user sees) and it is a direct, checkable inconsistency between documentation and shipped product, which `CLAUDE.md` names as a bug by definition ("if code and docs disagree, that's a bug").
+
+**Proposed Investigation:** A two-line copy change in `app/login/page.tsx` (~line 72) and `app/layout.tsx`'s `metadata.description`. No design work needed — the replacement text already exists and is settled (ADR-010).
+
+**Resolution:** Not yet resolved.

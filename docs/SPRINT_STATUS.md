@@ -52,22 +52,37 @@ Commit `0a3a5f0`, on top of `9b989ed`. Went through the Architecture Review Gate
 
 ---
 
-## Sprint 3 (next) — Business URL Analysis
+## Sprint 3 — Business URL Analysis (Opportunity Report) — done, reviewed, merged
 
-**Scope, per the Founder Directive issued after the Sprint 2 Architecture Review Gate: the first customer-facing, demoable feature.** A user pastes a business URL; the system performs a website crawl, mobile analysis, SEO analysis, accessibility analysis, Lighthouse analysis, technology detection, opportunity scoring, and screenshot capture, and produces a "Premium Opportunity Report" — a polished report that could be shown to a customer. Scoped to exactly this. Website generation (Sprint 4+) and outreach are explicitly out of scope — do not build ahead into them.
+Commits `f3fe479`..`7a1ec8e`, on top of `0a3a5f0`. Went through a design review before code (`docs/SPRINT_3_DESIGN_REVIEW.md`), per-phase reviews as it was built (`docs/SPRINT_3_PHASE_2_REPORT.md`, `docs/SPRINT_3_PHASE_3_VALIDATION_REPORT.md`), and a consolidated closure review (`docs/SPRINT_3_REVIEW.md`) approved by the founder — CTO score 9.0/10, recommendation Ship. Tagged `v0.4.0-alpha`. Full retrospective: `docs/SPRINT_3_RETROSPECTIVE.md`.
 
-Per the Founder Directive's standing guardrails, restated in `docs/MASTER_BLUEPRINT.md` §1's Architecture Principles: no infrastructure-only sprint should exist unless absolutely necessary, every feature should satisfy at least one of delivers customer value / removes meaningful technical debt / improves customer experience, and progress is measured against proximity to a first paying customer.
+**Scope, per the Founder Directive issued after the Sprint 2 Architecture Review Gate: the first customer-facing, demoable feature.** A user pastes a business URL; the system performs a website crawl, mobile analysis, SEO analysis, accessibility analysis, Lighthouse analysis, technology detection, opportunity scoring, and screenshot capture, and produces a "Premium Opportunity Report" — a polished report that could be shown to a customer. Website generation, proposals, and outreach were explicitly out of scope and were not built ahead into.
 
-**What Sprint 3 gets for free from Sprint 2** (see `docs/MISSION_ENGINE.md` for the full accounting of what's built vs. stubbed):
-- The **state machine** — `transitionMissionState()` already has full, correct transition-validation logic; the analysis pipeline calls it, it doesn't reimplement it.
-- The **event bus** — mission-timeline persistence and (same-request) fan-out for free via `publish()`.
-- The **`companies` table** — analysis triggered against a mission automatically gets Memory Vault linkage through the already-wired `findOrCreateCompany()`.
-- **Org-scoped RLS** — already correct for every table this feature will read/write.
+### What was actually built
 
-**What Sprint 3 must build net-new:**
-1. **The analysis pipeline itself** — crawl, mobile analysis, SEO analysis, accessibility analysis, Lighthouse analysis, technology detection, opportunity scoring, and screenshot capture. None of this exists in even stub form today.
-2. **New event types + a migration** for analysis results (at minimum something crawl/analysis-complete-shaped) — no such event type exists in the Sprint 2 catalog yet.
-3. **A "Premium Opportunity Report" view** — the first real customer-facing UI surface beyond Mission Control itself.
-4. **Somewhere for the analysis to run** that isn't blocking a page load for the full duration of a multi-step crawl/analysis — `docs/MISSION_ENGINE.md` §6 flags that no job runner exists yet; Sprint 3 needs at minimum a decision on how a multi-step analysis runs without a human staring at a spinner, even if it's a lightweight solution rather than the full job-runner infrastructure originally scoped for a later sprint.
+**The Analysis Engine, split into four single-responsibility services** (`docs/ARCHITECTURE_DECISIONS.md` ADR-011) — `lib/adapters/*` (seven I/O-only adapters: crawl, mobile, SEO, accessibility, Lighthouse, tech detection, screenshot) → `lib/services/analysis-service.ts` (orchestrates adapters, normalizes vendor-shaped output to a consistent per-dimension shape, persists to the new `website_analyses` table, `supabase/migrations/0007_website_analysis.sql`) → `lib/services/insight-service.ts` (Normalized Analysis translated into plain-language, evidence-tagged business observations) → `lib/services/opportunity-scoring-service.ts` (single 0–100 Opportunity Score, equal 20% weighting across five categories — explicitly disclosed as a placeholder needing a real founder decision, not a finished formula) → `lib/services/opportunity-report-service.ts` (assembles the customer-presentable `OpportunityReport` object the UI renders).
 
-**Design-review checkpoint:** per standing process, a design review precedes implementation for customer-facing sprints — architecture, database/API changes, the report UI, Mission Engine integration points, acceptance criteria, risks, and open questions get written down and reviewed before code is written. See `docs/11-Product-Roadmap.md` for the broader roadmap beyond Sprint 3.
+**Asynchronous execution, mandatory** (ADR-012) — `POST /api/missions/:id/analyze` creates the `website_analyses` row and returns `202 Accepted` immediately; the actual seven-adapter run is invoked as an un-awaited background promise using a service-role client. This is the first real, working exception to "nothing runs outside a request" (`docs/MISSION_ENGINE.md` §6) — explicitly a lightweight v1 workaround for one caller, not the general-purpose job runner still flagged as unbuilt.
+
+**Mission Engine exercised for real, for the first time** — `analysis-service.ts` is the second-ever caller of `transitionMissionState()` (advancing `discovered → analyzing`) and the first real publisher of `WebsiteScanned`/`SEOComplete` with genuine measured payloads instead of placeholder types; `AnalysisFailed` was added as a new event type for the failure path. `docs/MISSION_ENGINE.md` has been updated throughout to reflect this — see that document for the full, section-by-section reality check.
+
+**Evidence-first report architecture, enforced not just described** (ADR-013) — every report claim traces to a specific measurement; every section carries a mandatory confidence rating (High/Medium/Low/Unavailable) computed from whether its underlying check actually succeeded; a banned-terms automated test fails the suite if any adapter/vendor name or raw technical jargon leaks into customer-facing text. This is what turned three real production defects (below) into honest "Unavailable confidence" sections instead of silent data corruption or fabricated scores.
+
+**Presentation layer** (`app/missions/[id]/page.tsx`, `GET /api/missions/:id/analysis`) — the first customer-facing UI surface beyond Mission Control itself, rendering the assembled report in the exact section order specified in the design doc, with inline confidence metadata and signed-URL screenshot rendering.
+
+**Real end-to-end validation, not synthetic** — the full pipeline was run against two independent, live, unaffiliated business websites (`katzsdelicatessen.com`, `veslofamilyrestaurant.com`) through the actual product flow. This surfaced and led to fixing five real defects: a New Mission URL field that rejected any URL with a protocol (its own placeholder's format); login silently failing against a bare local Postgres instance for missing table grants; a Lighthouse adapter that was ESM-incompatible with the app's bundler at runtime; an axe-core adapter broken by webpack bundling; and a Windows-specific `chrome-launcher` cleanup race that could crash an entire analysis run over a temp-directory delete. All five are fixed and re-verified; full detail in `docs/TECH_DEBT.md`.
+
+### Known gaps / TODOs carried forward
+
+- **Category weighting is an unresolved founder decision, not an engineering task.** Equal 20% weighting ships in every report today with no analytical basis behind it — flagged in `docs/SPRINT_3_REVIEW.md` as the one item that should not be allowed to quietly become "how it's always worked" by default.
+- **The general-purpose job runner still does not exist.** Sprint 3's fire-and-forget worker proves the pattern for one caller triggered by one human action; it has no answer for a scheduled agent or multiple concurrent workers. Still the largest piece of unbuilt infrastructure per `docs/MISSION_ENGINE.md` §6.
+- **Windows `chrome-launcher` temp-directory leak** (`docs/TECH_DEBT.md` item 4) — guarded against crashing a run, disk leak itself unfixed, unconfirmed whether it reproduces on the eventual production hosting platform.
+- **UI still shows the retired "AI Agency Operating System" tagline** (`docs/TECH_DEBT.md` item 5) — `docs/ARCHITECTURE_DECISIONS.md` ADR-010 named fixing this as a Sprint 3 follow-up; it was missed because none of the three phases touched the login page or root layout.
+- **No retry policy, no durable cross-process event delivery, no queue claim/lock semantics** — unchanged from Sprint 2, now exercised at slightly larger (but still single-caller) scale without being resolved.
+- Still no automated accessibility audit of the *product's own* UI (distinct from the accessibility-adapter measuring a *target* site), still no rate limiting on `POST /api/missions` or the new analyze endpoint.
+
+---
+
+## Sprint 4 (next) — Website Generation, design phase only
+
+**Status: design review only, no implementation.** See `docs/SPRINT_4_DESIGN_REVIEW.md`. Per `docs/MASTER_BLUEPRINT.md`'s named pipeline (ADR-010), Website Generation is the next stage after the Analysis/Opportunity-Report work Sprint 3 completed. The founder has approved Sprint 3's close and directed that Sprint 4 begin with design-only work — architecture, workflow, Mission Engine integration points, the design pipeline itself, AI responsibilities, acceptance criteria, risks, and open questions written down and reviewed before any code is written, per standing process. No Sprint 4 implementation is authorized by this status update or by the design review document itself.
