@@ -1,6 +1,6 @@
 /**
  * Hand-written types matching supabase/migrations/0001_init.sql through
- * 0006_memory_vault.sql, following the shape that
+ * 0010_design_engine.sql, following the shape that
  * `supabase gen types typescript` produces. Once a live Supabase project
  * exists, running the codegen and dropping the output in here should be a
  * minimal diff.
@@ -22,6 +22,8 @@ export type Json =
 export type OrganizationPlan = "trial" | "starter" | "pro" | "agency" | "white_label";
 export type OrganizationRole = "owner" | "admin" | "member";
 export type AnalysisStatus = "pending" | "running" | "complete" | "failed";
+/** Shared by design_briefs and website_designs (0010_design_engine.sql) — same job-execution-status domain as AnalysisStatus, reused rather than duplicated since both new tables are the same kind of async run record. */
+export type GenerationStatus = "pending" | "running" | "complete" | "failed";
 
 export interface Database {
   public: {
@@ -503,6 +505,134 @@ export interface Database {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      design_briefs: {
+        Row: {
+          id: string;
+          mission_id: string;
+          organization_id: string;
+          company_id: string | null;
+          status: GenerationStatus;
+          industry_bucket: string | null;
+          brief: Json | null;
+          error_message: string | null;
+          started_at: string | null;
+          completed_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          mission_id: string;
+          organization_id: string;
+          company_id?: string | null;
+          status?: GenerationStatus;
+          industry_bucket?: string | null;
+          brief?: Json | null;
+          error_message?: string | null;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          mission_id?: string;
+          organization_id?: string;
+          company_id?: string | null;
+          status?: GenerationStatus;
+          industry_bucket?: string | null;
+          brief?: Json | null;
+          error_message?: string | null;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "design_briefs_mission_id_fkey";
+            columns: ["mission_id"];
+            isOneToOne: false;
+            referencedRelation: "missions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "design_briefs_organization_id_fkey";
+            columns: ["organization_id"];
+            isOneToOne: false;
+            referencedRelation: "organizations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "design_briefs_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      website_designs: {
+        Row: {
+          id: string;
+          design_brief_id: string;
+          mission_id: string;
+          organization_id: string;
+          status: GenerationStatus;
+          wireframe: Json | null;
+          components: Json | null;
+          error_message: string | null;
+          started_at: string | null;
+          completed_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          design_brief_id: string;
+          mission_id: string;
+          organization_id: string;
+          status?: GenerationStatus;
+          wireframe?: Json | null;
+          components?: Json | null;
+          error_message?: string | null;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          design_brief_id?: string;
+          mission_id?: string;
+          organization_id?: string;
+          status?: GenerationStatus;
+          wireframe?: Json | null;
+          components?: Json | null;
+          error_message?: string | null;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "website_designs_design_brief_id_fkey";
+            columns: ["design_brief_id"];
+            isOneToOne: false;
+            referencedRelation: "design_briefs";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "website_designs_mission_id_fkey";
+            columns: ["mission_id"];
+            isOneToOne: false;
+            referencedRelation: "missions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "website_designs_organization_id_fkey";
+            columns: ["organization_id"];
+            isOneToOne: false;
+            referencedRelation: "organizations";
             referencedColumns: ["id"];
           }
         ];

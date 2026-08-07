@@ -30,6 +30,10 @@ export type DomainEventType =
   | "WebsiteScanned"
   | "SEOComplete"
   | "AnalysisFailed"
+  | "DesignBriefReady"
+  | "DesignBriefFailed"
+  | "WebsiteDesignReady"
+  | "WebsiteDesignFailed"
   | "ProposalReady"
   | "EmailDraftReady"
   | "MissionApproved"
@@ -80,6 +84,37 @@ export interface AnalysisFailedPayload {
   stage?: string;
 }
 
+/**
+ * Sprint 4 Phase 2 (docs/SPRINT_4_ARCHITECTURE_RECOMMENDATION.md §1, §2).
+ * Published by lib/services/design-brief-service.ts when a mission's Design
+ * Brief completes during the `researching` state, just before the mission
+ * transitions to `designing`.
+ */
+export interface DesignBriefReadyPayload {
+  industryBucket: string;
+  /** How many Insights/Normalized Analysis findings the brief cites — mechanically confirms §12 AC1's non-empty-citation requirement actually held for this run. */
+  citationCount: number;
+}
+
+export interface DesignBriefFailedPayload {
+  errorMessage: string;
+}
+
+/**
+ * Published by lib/services/design-generation-service.ts when the Wireframe
+ * + Component Assembly passes complete during `designing`. Does not itself
+ * advance the mission — only a future design-qa-service.ts (Phase 3) owns
+ * the `designing -> qa` transition.
+ */
+export interface WebsiteDesignReadyPayload {
+  sectionCount: number;
+  layoutFamily: string;
+}
+
+export interface WebsiteDesignFailedPayload {
+  errorMessage: string;
+}
+
 export interface ProposalReadyPayload {
   proposalId?: string;
   price?: number;
@@ -128,6 +163,10 @@ export type DomainEvent = DomainEventBase &
     | { type: "WebsiteScanned"; payload: WebsiteScannedPayload }
     | { type: "SEOComplete"; payload: SEOCompletePayload }
     | { type: "AnalysisFailed"; payload: AnalysisFailedPayload }
+    | { type: "DesignBriefReady"; payload: DesignBriefReadyPayload }
+    | { type: "DesignBriefFailed"; payload: DesignBriefFailedPayload }
+    | { type: "WebsiteDesignReady"; payload: WebsiteDesignReadyPayload }
+    | { type: "WebsiteDesignFailed"; payload: WebsiteDesignFailedPayload }
     | { type: "ProposalReady"; payload: ProposalReadyPayload }
     | { type: "EmailDraftReady"; payload: EmailDraftReadyPayload }
     | { type: "MissionApproved"; payload: MissionApprovedPayload }

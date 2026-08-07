@@ -39,6 +39,14 @@ function describeEvent(event: DomainEvent): string {
       return `Analysis failed${
         event.payload.stage ? ` at ${event.payload.stage}` : ""
       }: ${event.payload.errorMessage}`;
+    case "DesignBriefReady":
+      return `Design Brief ready (${event.payload.industryBucket}, ${event.payload.citationCount} citation(s))`;
+    case "DesignBriefFailed":
+      return `Design Brief failed: ${event.payload.errorMessage}`;
+    case "WebsiteDesignReady":
+      return `Website design ready: ${event.payload.sectionCount} section(s), ${event.payload.layoutFamily} layout`;
+    case "WebsiteDesignFailed":
+      return `Website design failed: ${event.payload.errorMessage}`;
     case "ProposalReady":
       return "Proposal ready";
     case "EmailDraftReady":

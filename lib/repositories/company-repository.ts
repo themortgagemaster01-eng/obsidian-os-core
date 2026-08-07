@@ -37,6 +37,17 @@ export const companyRepository = {
     return data;
   },
 
+  async findById(client: TypedClient, id: string): Promise<CompanyRow | null> {
+    const { data, error } = await client
+      .from("companies")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data;
+  },
+
   /** Looks up a company by its (organization_id, normalized website_url) unique key. */
   async findByOrgAndUrl(
     client: TypedClient,
