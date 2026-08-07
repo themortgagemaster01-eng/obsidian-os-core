@@ -20,10 +20,25 @@ function variantForConfidence(level: ConfidenceEntry["level"]): NonNullable<Badg
   }
 }
 
-export function ConfidenceBadge({ entry, className }: { entry: ConfidenceEntry; className?: string }) {
+/**
+ * The founder's explicit bar: confidence must be "visibly shown, not
+ * buried." A hover-only tooltip fails that test for anything below High —
+ * `showReason` renders the reason as real, always-visible text beneath the
+ * badge rather than something a reader has to discover by hovering.
+ */
+export function ConfidenceBadge({
+  entry,
+  showReason = false,
+  className,
+}: {
+  entry: ConfidenceEntry;
+  showReason?: boolean;
+  className?: string;
+}) {
   return (
-    <Badge variant={variantForConfidence(entry.level)} className={className} title={entry.reason}>
-      {entry.level} confidence
-    </Badge>
+    <div className={className}>
+      <Badge variant={variantForConfidence(entry.level)}>{entry.level} confidence</Badge>
+      {showReason && <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{entry.reason}</p>}
+    </div>
   );
 }

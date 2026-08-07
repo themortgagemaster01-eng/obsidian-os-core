@@ -1,6 +1,7 @@
-import { Loader2, Clock } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { AnalysisStatus } from "@/lib/repositories/website-analysis-repository";
 
 const DIMENSIONS = [
@@ -18,33 +19,33 @@ const DIMENSIONS = [
  * actually tell us. analysis-service.ts runs all seven adapters in a single
  * `Promise.all` and writes the `website_analyses` row once at the end
  * (§1/§3 of the design doc) — there is no per-adapter completion timestamp
- * or event persisted anywhere the UI can read mid-run. So rather than fake
- * independent per-item progress, every dimension shares the run's real,
- * single status: queued before the worker picks it up, running together
- * while it does (which is also literally true — they execute concurrently),
- * done together the moment the row flips to `complete`.
+ * or event persisted anywhere the UI can read mid-run. Rather than fake
+ * independent per-item progress (or seven simultaneous spinners, which
+ * reads as busy rather than calm), every dimension shares one quiet pulse
+ * while the run is genuinely in flight together, and a single status line
+ * carries the real state — queued vs. running.
  */
 export function AnalysisProgress({ status }: { status: AnalysisStatus }) {
   const running = status === "running";
 
   return (
     <Card>
-      <CardContent className="space-y-4 py-6">
-        <div className="flex items-center gap-2">
+      <CardContent className="space-y-6 py-8">
+        <div className="flex items-center gap-2.5">
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           <p className="text-sm font-medium text-foreground">
-            {running ? "Analysis in progress…" : "Analysis queued…"}
+            {running ? "Analysis in progress" : "Analysis queued"}
           </p>
         </div>
-        <ul className="space-y-2.5">
+        <ul className="space-y-3">
           {DIMENSIONS.map((dimension) => (
-            <li key={dimension} className="flex items-center gap-2.5 text-sm">
+            <li key={dimension} className="flex items-center gap-3">
               {running ? (
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-300" />
+                <Skeleton className="h-1.5 w-1.5 shrink-0 rounded-full" />
               ) : (
-                <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/10" />
               )}
-              <span className={running ? "text-foreground" : "text-muted-foreground"}>
+              <span className={`text-sm ${running ? "text-foreground" : "text-muted-foreground"}`}>
                 {dimension}
               </span>
             </li>

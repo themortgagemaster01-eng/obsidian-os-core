@@ -1,12 +1,14 @@
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { OpportunityReport } from "@/lib/services/opportunity-report-service";
 
 /** §6.8 — every insight/recommendation traced back to the specific measurement it came from. */
 export function EvidenceTable({ report }: { report: OpportunityReport }) {
   return (
     <Card>
-      <CardContent className="space-y-3 py-6">
-        <h2 className="text-sm font-medium text-muted-foreground">Evidence</h2>
+      <CardHeader>
+        <CardTitle>Evidence</CardTitle>
+      </CardHeader>
+      <CardContent>
         {report.evidence.length === 0 ? (
           <p className="text-sm text-muted-foreground">No findings to trace for this analysis.</p>
         ) : (
@@ -18,11 +20,11 @@ export function EvidenceTable({ report }: { report: OpportunityReport }) {
                   <th className="py-2 pl-4 font-medium">Source</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
+              <tbody className="divide-y divide-border/60">
                 {report.evidence.map((entry, i) => (
                   <tr key={i}>
-                    <td className="py-3 pr-4 text-foreground">{entry.claim}</td>
-                    <td className="py-3 pl-4 whitespace-nowrap text-muted-foreground">
+                    <td className="py-3.5 pr-4 text-foreground">{entry.claim}</td>
+                    <td className="py-3.5 pl-4 whitespace-nowrap text-muted-foreground">
                       {entry.source}
                     </td>
                   </tr>

@@ -59,10 +59,10 @@ export default async function MissionDetailPage({ params }: PageParams) {
   return (
     <main className="min-h-screen bg-background">
       <header className="border-b border-border">
-        <div className="container space-y-4 py-6">
+        <div className="container max-w-3xl space-y-5 py-8">
           <Link
             href="/"
-            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors duration-200 ease-in-out hover:text-foreground"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             Mission Control
@@ -71,7 +71,7 @@ export default async function MissionDetailPage({ params }: PageParams) {
         </div>
       </header>
 
-      <div className="container max-w-3xl space-y-6 py-8">
+      <div className="container max-w-3xl space-y-6 py-10">
         <AnalysisPanel
           missionId={mission.id}
           initialAnalysis={analysis}

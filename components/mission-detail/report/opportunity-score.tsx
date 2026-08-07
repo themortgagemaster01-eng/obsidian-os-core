@@ -1,9 +1,6 @@
-import { CheckSquare } from "lucide-react";
-
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfidenceBadge } from "@/components/mission-detail/report/confidence-badge";
-import { scoreTextClass, scoreRingClass } from "@/components/mission-detail/report/score-color";
+import { scoreTextClass } from "@/components/mission-detail/report/score-color";
 import type { OpportunityReport } from "@/lib/services/opportunity-report-service";
 import type { InsightSeverity } from "@/lib/services/insight-service";
 
@@ -14,56 +11,50 @@ function qualitativeLabel(score: number | null): string {
   return "Significant opportunity";
 }
 
-function severityBadgeVariant(severity: InsightSeverity): "destructive" | "warning" | "outline" {
-  if (severity === "high") return "destructive";
-  if (severity === "medium") return "warning";
-  return "outline";
-}
+const SEVERITY_DOT: Record<InsightSeverity, string> = {
+  high: "bg-red-400",
+  medium: "bg-amber-400",
+  low: "bg-white/30",
+};
 
 /**
- * §6.4 — the overall score, plus the "Top Opportunities" checklist. The
- * checklist is real `recommendations` data (already sorted high-severity
- * first by opportunity-report-service.ts) rather than a hardcoded list of
- * example topic names — the design doc's illustrative topic list
- * (Mobile Experience, SEO, ...) was an example of the *kind* of content,
- * not literal required labels.
+ * §6.4 — the overall score, plus the "Top Opportunities" checklist. A large,
+ * quiet number rather than a gauge/ring — the score bands opportunity-
+ * report-service.ts already computes are conveyed through color and the
+ * qualitative label alone, not a chart. The checklist is real
+ * `recommendations` data (already sorted high-severity first), not a
+ * hardcoded list of example topic names — the design doc's illustrative
+ * topic list was an example of the *kind* of content, not literal labels.
  */
 export function OpportunityScore({ report }: { report: OpportunityReport }) {
   const topOpportunities = report.recommendations.slice(0, 5);
 
   return (
     <Card>
-      <CardContent className="space-y-6 py-6">
-        <div className="flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-center">
-          <div className="flex items-center gap-5">
-            <div
-              className={`flex h-20 w-20 shrink-0 items-center justify-center rounded-full border-4 ${scoreRingClass(report.scores.overall)}`}
-            >
-              <span className={`text-2xl font-semibold ${scoreTextClass(report.scores.overall)}`}>
-                {report.scores.overall ?? "—"}
-              </span>
-            </div>
-            <div>
-              <h2 className="text-sm font-medium text-muted-foreground">Opportunity Score</h2>
-              <p className="mt-1 text-lg font-semibold text-foreground">
-                {qualitativeLabel(report.scores.overall)}
-              </p>
-            </div>
-          </div>
-          <ConfidenceBadge entry={report.confidence.overall} />
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardTitle>Opportunity Score</CardTitle>
+        <ConfidenceBadge entry={report.confidence.overall} />
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="flex items-baseline gap-4">
+          <span className={`text-6xl font-semibold tracking-tight ${scoreTextClass(report.scores.overall)}`}>
+            {report.scores.overall ?? "—"}
+          </span>
+          <span className="text-base font-medium text-muted-foreground">
+            {qualitativeLabel(report.scores.overall)}
+          </span>
         </div>
 
         {topOpportunities.length > 0 && (
-          <div className="space-y-3 border-t border-border pt-4">
-            <h3 className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              <CheckSquare className="h-3.5 w-3.5" />
+          <div className="space-y-3 border-t border-border pt-5">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Top Opportunities
-            </h3>
-            <ul className="space-y-2">
+            </p>
+            <ul className="space-y-3">
               {topOpportunities.map((item) => (
-                <li key={item.title} className="flex items-center justify-between gap-4 text-sm">
+                <li key={item.title} className="flex items-center gap-3 text-sm">
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${SEVERITY_DOT[item.severity]}`} />
                   <span className="text-foreground">{item.title}</span>
-                  <Badge variant={severityBadgeVariant(item.severity)}>{item.severity}</Badge>
                 </li>
               ))}
             </ul>

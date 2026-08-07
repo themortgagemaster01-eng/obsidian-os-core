@@ -1,4 +1,4 @@
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfidenceBadge } from "@/components/mission-detail/report/confidence-badge";
 import { scoreTextClass } from "@/components/mission-detail/report/score-color";
 import type { OpportunityReport, ConfidenceEntry } from "@/lib/services/opportunity-report-service";
@@ -22,23 +22,25 @@ const CONFIDENCE_KEY: Record<AnalysisCategory, keyof OpportunityReport["confiden
 
 /**
  * §6.5 — the five v1 categories individually. A category the underlying
- * check couldn't measure reads visually muted (score dimmed, "—" instead
- * of a bold number) rather than a confident-looking score standing in for
- * a real measurement that never happened — the same distinction
- * opportunity-report-service.ts's confidence field exists to preserve.
+ * check couldn't measure reads visually muted (score dimmed to "—") rather
+ * than a confident-looking number standing in for a measurement that never
+ * happened; its confidence reason is shown as real text, not a tooltip —
+ * "visibly shown, not buried."
  */
 export function CategoryScorecards({ report }: { report: OpportunityReport }) {
   return (
     <Card>
-      <CardContent className="space-y-5 py-6">
-        <h2 className="text-sm font-medium text-muted-foreground">Category Scorecards</h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <CardHeader>
+        <CardTitle>Category Scorecards</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-2">
           {report.findings.map((finding) => {
             const confidence: ConfidenceEntry = report.confidence[CONFIDENCE_KEY[finding.category]];
             const measured = confidence.level !== "Unavailable";
 
             return (
-              <div key={finding.category} className="rounded-md border border-border p-4">
+              <div key={finding.category} className="space-y-3 bg-panel p-5">
                 <div className="flex items-start justify-between gap-3">
                   <p className="text-sm font-medium text-foreground">
                     {CATEGORY_LABELS[finding.category]}
@@ -46,17 +48,17 @@ export function CategoryScorecards({ report }: { report: OpportunityReport }) {
                   <span
                     className={
                       measured
-                        ? `text-lg font-semibold ${scoreTextClass(finding.score)}`
-                        : "text-lg font-semibold text-muted-foreground/50"
+                        ? `text-xl font-semibold tracking-tight ${scoreTextClass(finding.score)}`
+                        : "text-xl font-semibold tracking-tight text-muted-foreground/40"
                     }
                   >
                     {measured ? (finding.score ?? "—") : "—"}
                   </span>
                 </div>
-                <div className="mt-2">
-                  <ConfidenceBadge entry={confidence} />
-                </div>
-                <ul className="mt-3 space-y-1.5">
+                {confidence.level !== "High" && (
+                  <ConfidenceBadge entry={confidence} showReason />
+                )}
+                <ul className="space-y-1.5">
                   {finding.statements.map((statement, i) => (
                     <li key={i} className="text-sm leading-relaxed text-muted-foreground">
                       {statement}

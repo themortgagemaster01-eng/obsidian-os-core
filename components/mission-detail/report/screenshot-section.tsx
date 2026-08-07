@@ -1,6 +1,6 @@
 import { ImageOff } from "lucide-react";
 
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 /**
  * §6.7 — the full-page capture, embedded. `screenshotUrl` is a signed URL
@@ -12,8 +12,10 @@ import { Card, CardContent } from "@/components/ui/card";
 export function ScreenshotSection({ screenshotUrl }: { screenshotUrl: string | null }) {
   return (
     <Card>
-      <CardContent className="space-y-3 py-6">
-        <h2 className="text-sm font-medium text-muted-foreground">Screenshot</h2>
+      <CardHeader>
+        <CardTitle>Screenshot</CardTitle>
+      </CardHeader>
+      <CardContent>
         {screenshotUrl ? (
           <img
             src={screenshotUrl}
@@ -21,7 +23,7 @@ export function ScreenshotSection({ screenshotUrl }: { screenshotUrl: string | n
             className="w-full rounded-md border border-border"
           />
         ) : (
-          <div className="flex flex-col items-center gap-2 rounded-md border border-dashed border-border py-12 text-center">
+          <div className="flex flex-col items-center gap-2 rounded-md border border-dashed border-border py-14 text-center">
             <ImageOff className="h-5 w-5 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
               No screenshot is available for this analysis.

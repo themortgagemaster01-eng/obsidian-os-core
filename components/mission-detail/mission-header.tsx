@@ -20,14 +20,14 @@ export function MissionHeader({
   return (
     <div className="flex items-start justify-between gap-6">
       <div className="min-w-0">
-        <h1 className="truncate text-xl font-semibold tracking-tight text-foreground">
+        <h1 className="truncate text-2xl font-semibold tracking-tight text-foreground">
           {mission.business_name}
         </h1>
         <a
           href={mission.website_url}
           target="_blank"
           rel="noreferrer"
-          className="mt-1 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          className="mt-1.5 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors duration-200 ease-in-out hover:text-foreground"
         >
           <Globe className="h-3.5 w-3.5" />
           {mission.website_url}
@@ -38,7 +38,7 @@ export function MissionHeader({
           <img
             src={screenshotUrl}
             alt={`${mission.business_name} homepage screenshot`}
-            className="h-16 w-24 rounded-md border border-border object-cover object-top"
+            className="h-16 w-24 rounded-md border border-border object-cover object-top shadow-panel"
           />
         )}
         <StateBadge state={mission.state} />
