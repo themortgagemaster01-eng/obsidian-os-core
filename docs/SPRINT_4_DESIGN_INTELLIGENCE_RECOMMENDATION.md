@@ -1,0 +1,59 @@
+# Sprint 4 Design Intelligence Recommendation
+
+**Status: evaluation and recommendation only. Not a build decision, not implementation.** This document answers one specific question the founder posed separately from the general Sprint 4 Design Review: should Sprint 4 introduce a dedicated "Design Intelligence" subsystem — owning the industry reference library, typography/layout/component/motion standards, color systems, general design rules, and "Never Generate" rules — as its own subsystem? The answer below is a recommendation for what a future implementation phase should scope, contingent on founder approval, not a decision this document has authority to make on its own.
+
+---
+
+## 1. Reframing the question before answering it
+
+"Should this be a dedicated subsystem" bundles two different questions that deserve separate answers: **(a) should these responsibilities exist as explicit, codified rules at all, this early**, and **(b) should they be built as a large, standalone platform-shaped subsystem, or as a small, code-adjacent knowledge layer other services depend on.** The research (`docs/SPRINT_4_RESEARCH_SUMMARY.md` §4) makes (a) close to a foundational necessity, not optional: the modern token-architecture practice (primitive → semantic → component) exists specifically because ungoverned, per-request generation drifts toward generic output, which is the exact failure this entire sprint exists to prevent. Question (b) is a real architectural choice with a real precedent in this codebase on both sides, and is where this recommendation spends most of its reasoning.
+
+## 2. What "Design Intelligence" actually is, once decomposed
+
+The founder's list — industry reference library, typography standards, layout standards, component standards, motion standards, color systems, design rules, Never Generate rules — is not one thing. Decomposed against `docs/SPRINT_4_RESEARCH_SUMMARY.md`'s findings, it's four distinct kinds of asset with different volatility and different build costs:
+
+1. **A token *schema*** (not values) — which categories of design decision always get made, for every mission, regardless of industry: a typographic scale with named slots (display/heading/body/caption), a spacing scale, color *roles* (not hex values — "primary action," "surface," "emphasis"), a motion-duration band. This is structural and should be stable across every generated site, the same way `docs/09-UI-Design-System.md`'s categories (not its specific values) would still make sense for a differently-branded product.
+2. **A rules/principles document** — the qualitative standard: what "premium, not generic" actually means in checkable terms, and the Never Generate list. Text, not data; changes rarely; read by both generation and QA.
+3. **Per-mission token *values* and a chosen direction** — typography choices, a color palette, a layout family, all populated *per mission*, informed by the target business's industry and the Design Brief's reasoning (`docs/SPRINT_4_DESIGN_REVIEW.md` §2's `design-brief-service.ts`). This is inherently per-mission data, not a shared subsystem asset.
+4. **The industry reference library itself** — a searchable, tagged corpus of real sites/patterns used as direction input. This is the one item on the founder's list that's genuinely infrastructure-shaped (a corpus, an index, possibly a third-party dependency) rather than a rules document or a schema.
+
+Items 1 and 2 are cheap, mostly static, and low-risk to define now. Item 3 isn't a subsystem at all — it's the Design Brief's own output, already scoped in the Design Review. Item 4 is the one piece that looks like real infrastructure and deserves the most caution before committing to a shape.
+
+## 3. Precedent in this codebase, both directions
+
+**Argument for building the rules/schema layer now (item 1, 2), not deferring:** `docs/ARCHITECTURE_DECISIONS.md` ADR-004's reasoning for building multi-tenancy ahead of any team/billing UI applies here with a similar shape — "paying the cost while there's zero live data is objectively cheaper than paying it after there's real [output] to [fix]." Generating even one real mission's website without a defined typography/spacing/motion schema and an explicit Never Generate list risks producing exactly the generic-looking output this sprint exists to prevent, and retrofitting rules onto output that's already shipped (or onto a generation pass whose defaults are already baked into how prompts were written) is a worse position than defining the rules before the first generation happens.
+
+**Argument against building a large, standalone Design Intelligence *platform* now:** ADR-006's reasoning for the event bus applies in the other direction — "adopt a real message queue... immediately... rejected as premature... speculative complexity with no consumer yet to justify it." A full versioned rules engine, a component library with many pre-built coded components, or a licensed third-party reference-library integration are all real infrastructure investments with no second consumer to justify their complexity yet — there is exactly one caller (`design-brief-service.ts`) and zero missions that have ever exercised any of this. Building the heavy version now would repeat the exact mistake ADR-006 already named and avoided once.
+
+## 4. Recommendation
+
+**Define Design Intelligence now, but as a lightweight, code-adjacent knowledge layer — not a standalone platform.** Concretely, if and when Sprint 4 implementation is authorized:
+
+- **A canonical rules document** (proposed: `docs/DESIGN_INTELLIGENCE.md`), playing the same role for generated client output that `docs/09-UI-Design-System.md` plays for Obsidian's own product UI — but explicitly **not** the same document and **not** the same values (§5 below). Owns the token schema (categories, not per-mission values) and the Never Generate list (§6).
+- **A small typed module** (proposed: `lib/design-intelligence/`) that `design-brief-service.ts` and `design-qa-service.ts` both depend on — a real, if narrow, seam in the codebase (the same "build the interface, not the heavy implementation behind it" move ADR-006 made for the event bus), so the rules are enforceable in code (informing generation, checkable by QA) rather than living only as a document a generation prompt might or might not actually honor.
+- **Deferred, named explicitly rather than silently dropped:** a queryable/indexed reference-library integration (in-house-curated or third-party — `docs/SPRINT_4_DESIGN_REVIEW.md` Open Question 4 is unresolved and this recommendation doesn't resolve it either), a real component library of many reusable coded components, a versioned/multi-tenant rules engine, per-industry preset packages. Each of these should be built once there's evidence the lightweight version is insufficient — a second real consumer, or a specific failure the lightweight version couldn't prevent — the same trigger condition ADR-006 used, not a fixed sprint number.
+- **Ownership boundary, kept clean against ADR-011's precedent:** Design Intelligence is a read-only knowledge/constraints layer, not a fourth pipeline stage alongside Design Brief, Generation, and QA. It never orchestrates, never calls `transitionMissionState()`, never talks to adapters. Blurring this would repeat the exact "one function doing too many jobs" mistake ADR-011 was written to avoid.
+
+## 5. On reusing Obsidian's own design tokens: no, and this needs to be explicit
+
+`docs/09-UI-Design-System.md`'s specific values (the near-black/navy palette, Inter, dark-mode-only, the `.glass-panel` treatment) govern Obsidian's *own* product surfaces — Mission Control, login, the Opportunity Report. They should not be the default output for a generated client website. A bakery's site and a law firm's site should not both come out looking like Obsidian's own dashboard just because that's the palette closest at hand. What *does* transfer, and should be stated as a first-class principle in the proposed `docs/DESIGN_INTELLIGENCE.md`: the **discipline**, not the **values** — real typographic hierarchy over decoration, a deliberate and generous spacing scale, restrained motion (a duration band, not bounce/spring), no visual noise. This is the direct application of the token-architecture research's primitive/semantic split (`docs/SPRINT_4_RESEARCH_SUMMARY.md` §4): Obsidian owns the *schema and the discipline* (semantic-level, stable), each mission owns its own *primitive values* (industry-appropriate, per business).
+
+## 6. A candidate "Never Generate" list — compiled from what's already established, not invented here
+
+Per the research finding that negative constraints work best when concrete and paired with a positive alternative (`docs/SPRINT_4_RESEARCH_SUMMARY.md` §3), and drawing directly from principles already established across `docs/VISION_GUARDRAILS.md`, `docs/09-UI-Design-System.md`, and the founder's own explicit list in this directive — proposed as a starting point for `docs/DESIGN_INTELLIGENCE.md`, not a final or complete list:
+
+| Never generate | Positive alternative already established in this codebase's philosophy |
+|---|---|
+| A layout copied structurally from a cited reference (§ VISION_GUARDRAILS' "not a template marketplace") | A layout justified in the Design Brief by the business's own Insights/Analysis data |
+| Generic centered-hero + three-icon-cards + testimonial-carousel, used without a stated reason | A section order and content shape chosen because it fits *this* business's actual positioning |
+| Loud/random gradients, cartoon graphics, saturated accent colors with no semantic role (already banned for Obsidian's own UI, `docs/09-UI-Design-System.md`) | Restraint and confidence — real depth and texture (shadow, blur) without visual noise |
+| Repetitive card grids used as a default filler pattern | Editorial, business-storytelling layout structure appropriate to the specific content |
+| Bounce/spring motion, or animation with no functional purpose | The same 200–300ms `ease`/`ease-in-out` restraint band `docs/09-UI-Design-System.md` already established, adapted per mission, not abandoned |
+| Fabricated business claims, invented biography, or content not grounded in real company/analysis data (extends ADR-013's "no unsupported claims" from report text into generated site copy) | Copy grounded in real `companies` data and real Analysis-stage findings |
+| A generic "AI Agency Operating System"-style category tagline for the client's own generated site (the same drift `docs/TECH_DEBT.md` item 5 flagged in Obsidian's *own* product, now named as a risk for generated output too) | Positioning language specific to the client's actual business |
+
+This list should be treated as a first draft for founder review, not a finished spec — several entries are judgment calls (e.g. "no card grids" is too absolute stated flatly; a card grid used deliberately and well is not automatically generic) that deserve a real editing pass before being codified as enforceable rules.
+
+## 7. What this recommendation does not resolve
+
+Whether the reference library (item 4, §2) is a licensed third-party service or an in-house-curated set remains open — this recommendation only concludes that *whichever it is*, it should be treated as a deferred, evidence-triggered build, not part of Sprint 4's lightweight v1. Whether the Never Generate list (§6) is enforced only as a generation-time constraint (a prompt instruction) or also as a QA-time mechanical check (the way the banned-terms test mechanically enforces "no jargon" in report text) is also open — `docs/SPRINT_4_DESIGN_REVIEW.md` §7 already flags that "does this look like a template" has no equivalent clean mechanical check the way "does this string contain the word Lighthouse" does, and this recommendation doesn't resolve that gap, only names where it would need to be addressed.
