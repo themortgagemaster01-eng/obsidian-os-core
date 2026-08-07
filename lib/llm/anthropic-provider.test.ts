@@ -70,18 +70,15 @@ describe("anthropic-provider", () => {
     assert.deepEqual(body.messages, [{ role: "user", content: "Say hi." }]);
   });
 
-  test("applies the assistant-prefill trick and prepends '{' back when expectJson is true", async () => {
-    mockFetchOnce({ ok: true, json: { content: [{ type: "text", text: '"a": 1}' }] } });
+  test("does NOT send an assistant-prefill message when expectJson is true — confirmed against the real API that some models reject a conversation not ending on a user message", async () => {
+    mockFetchOnce({ ok: true, json: { content: [{ type: "text", text: '{"a": 1}' }] } });
 
     const provider = new AnthropicLlmProvider();
     const result = await provider.complete({ systemPrompt: "sys", userPrompt: "user", expectJson: true });
 
     assert.equal(result, '{"a": 1}');
     const body = JSON.parse(lastFetchArgs![1]!.body as string);
-    assert.deepEqual(body.messages, [
-      { role: "user", content: "user" },
-      { role: "assistant", content: "{" },
-    ]);
+    assert.deepEqual(body.messages, [{ role: "user", content: "user" }]);
   });
 
   test("throws a descriptive error on a non-ok HTTP response", async () => {

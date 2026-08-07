@@ -47,17 +47,20 @@ export class AnthropicLlmProvider implements LlmProvider {
       );
     }
 
-    // The assistant-message prefill trick: seeding the assistant turn with
-    // "{" strongly biases Claude toward continuing directly into JSON
-    // rather than prefacing it with "Here's the JSON:" or similar — the
-    // model's completion picks up after the seed, so it's prepended back
-    // below rather than duplicated.
+    // NOTE: this used to seed an assistant-turn prefill ("{") to bias the
+    // model toward direct JSON output. Confirmed against the real API
+    // (live smoke test, docs/SPRINT_STATUS.md) that the configured model
+    // rejects that outright: "This model does not support assistant
+    // message prefill. The conversation must end with a user message." —
+    // not every current Claude model supports prefill, so this provider
+    // doesn't rely on it. expectJson is satisfied by the system prompt's
+    // explicit instruction plus lib/llm/json-response.ts's defensive
+    // parsing on the caller's side instead — a live API rejection is
+    // exactly the kind of thing a mocked test can't catch, which is why
+    // this comment names the real error rather than just the fix.
     const messages: { role: "user" | "assistant"; content: string }[] = [
       { role: "user", content: request.userPrompt },
     ];
-    if (request.expectJson) {
-      messages.push({ role: "assistant", content: "{" });
-    }
 
     const response = await fetch(ANTHROPIC_API_URL, {
       method: "POST",
@@ -89,7 +92,7 @@ export class AnthropicLlmProvider implements LlmProvider {
       request.onUsage({ inputTokens: data.usage.input_tokens, outputTokens: data.usage.output_tokens });
     }
 
-    return request.expectJson ? `{${text}` : text;
+    return text;
   }
 }
 

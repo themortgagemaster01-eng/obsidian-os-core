@@ -24,13 +24,17 @@ export interface LlmMessageRequest {
   /**
    * When true, the caller expects the response to be a single JSON value
    * with no surrounding prose. Providers that support a stronger mechanism
-   * for this (e.g. Anthropic's assistant-message prefill trick, OpenAI's
-   * `response_format: { type: "json_object" }`) should use it — the
-   * request only states the *intent*, each implementation decides *how*.
-   * This does not replace defensive parsing on the caller's side
-   * (lib/llm/json-response.ts) — no provider guarantee is treated as
-   * absolute, since models occasionally wrap JSON in prose or markdown
-   * fences even when explicitly instructed not to.
+   * for this (e.g. OpenAI's `response_format: { type: "json_object" }`)
+   * should use it — the request only states the *intent*, each
+   * implementation decides *how*. Confirmed against the real Anthropic API
+   * that its assistant-message-prefill trick is NOT a safe universal
+   * mechanism — some current Claude models reject a conversation that
+   * doesn't end on a user message outright — so AnthropicLlmProvider
+   * relies on its system prompt's explicit instruction instead. This does
+   * not replace defensive parsing on the caller's side
+   * (lib/llm/json-response.ts) either way — no provider guarantee is
+   * treated as absolute, since models occasionally wrap JSON in prose or
+   * markdown fences even when explicitly instructed not to.
    */
   expectJson?: boolean;
   /** Opportunistic — called with token usage if the provider's response reports it. Not every provider/response is guaranteed to; absence is not an error. */

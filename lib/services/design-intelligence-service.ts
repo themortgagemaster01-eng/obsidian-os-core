@@ -148,6 +148,8 @@ Hard constraints on your output:
 
 You will be given real, structured facts about one specific business — cited Insights from its website analysis, its industry classification, and a small set of candidate reference directions. The reference directions are inspiration for your reasoning only — you must NEVER copy their structure, and your response must explain your direction in terms of THIS business's actual cited facts, not a generic template.
 
+Keep every string value concise — 1-3 sentences each, "reasoning" up to one short paragraph. This is a direction brief, not a full essay; a shorter, complete response is far more useful than a longer one that gets cut off before it finishes.
+
 Respond with ONLY a single JSON object, no prose before or after it, no markdown code fences, matching exactly this shape:
 {
   "designBrief": {
@@ -305,7 +307,17 @@ export function parseDesignIntelligenceResponse(raw: string): DesignIntelligence
 // Orchestration — the only function that actually talks to an LlmProvider.
 // ===========================================================================
 
-const DESIGN_INTELLIGENCE_MAX_TOKENS = 4096;
+/**
+ * A live smoke test against the real API (docs/SPRINT_STATUS.md) hit this
+ * ceiling mid-JSON at the previous value (4096) — the model's response was
+ * truncated before the object closed, which surfaced as a JSON parse
+ * error, not a token-limit error, since the API itself doesn't fail the
+ * request for hitting max_tokens. Raised with headroom; paired with an
+ * explicit concision instruction in the system prompt (above) to control
+ * both truncation risk and cost, rather than just raising the ceiling
+ * further.
+ */
+const DESIGN_INTELLIGENCE_MAX_TOKENS = 8192;
 
 /**
  * generateDesignIntelligence — builds the prompt, calls the injected
