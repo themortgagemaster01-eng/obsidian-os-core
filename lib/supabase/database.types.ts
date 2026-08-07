@@ -518,6 +518,8 @@ export interface Database {
           status: GenerationStatus;
           industry_bucket: string | null;
           brief: Json | null;
+          design_memory: Json | null;
+          reasoning: string | null;
           reviewed_at: string | null;
           reviewed_by: string | null;
           error_message: string | null;
@@ -533,6 +535,8 @@ export interface Database {
           status?: GenerationStatus;
           industry_bucket?: string | null;
           brief?: Json | null;
+          design_memory?: Json | null;
+          reasoning?: string | null;
           reviewed_at?: string | null;
           reviewed_by?: string | null;
           error_message?: string | null;
@@ -548,6 +552,8 @@ export interface Database {
           status?: GenerationStatus;
           industry_bucket?: string | null;
           brief?: Json | null;
+          design_memory?: Json | null;
+          reasoning?: string | null;
           reviewed_at?: string | null;
           reviewed_by?: string | null;
           error_message?: string | null;

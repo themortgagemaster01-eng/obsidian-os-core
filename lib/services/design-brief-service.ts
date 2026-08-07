@@ -5,13 +5,10 @@ import type { AnalysisCategory, NormalizedAnalysis } from "@/lib/services/analys
 import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
 import { generateInsights, type Insight } from "@/lib/services/insight-service";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
-import {
-  resolveIndustryBucket,
-  selectReferenceDirections,
-  selectPrimaryReferenceDirection,
-  type IndustryBucket,
-  type ReferenceDirection,
-} from "@/lib/design-references/reference-library";
+import { resolveIndustryBucket, selectReferenceDirections, type IndustryBucket } from "@/lib/design-references/reference-library";
+import { generateDesignIntelligence, type DesignMemory } from "@/lib/services/design-intelligence-service";
+import type { LlmProvider } from "@/lib/llm/provider";
+import { createAnthropicProviderFromEnv } from "@/lib/llm/anthropic-provider";
 
 import {
   designBriefRepository,
@@ -28,25 +25,31 @@ import {
 import { createEventBus, type EventBus } from "@/lib/events/event-bus";
 
 /**
- * design-brief-service.ts — the Design Engine's first service (docs/
- * SPRINT_4_ARCHITECTURE_RECOMMENDATION.md §1). Reads Analysis Engine output
- * (Insights and Normalized Analysis directly, per §2's resolution of Design
- * Review Open Question 7 — NOT the aggregate opportunity_score, since
- * docs/SPRINT_3_REVIEW.md already flagged its category weighting as an
- * unresolved founder decision this stage shouldn't quietly start depending
- * on), selects a reference direction (lib/design-references/), and produces
- * a Design Brief: a structured, citable artifact naming the target
- * audience, positioning, and a proposed direction with its reasoning.
+ * design-brief-service.ts — the Design Engine's first service. Per
+ * docs/ARCHITECTURE_SPECIFICATION_V1.md §2, the actual creative-decision
+ * making (target audience, positioning, direction, Design Memory) is
+ * delegated entirely to lib/services/design-intelligence-service.ts's LLM
+ * call — this file's own job is deterministic fact-gathering: reading
+ * Analysis Engine output (Insights and Normalized Analysis directly, never
+ * the aggregate opportunity_score — docs/SPRINT_3_REVIEW.md flagged its
+ * category weighting as an unresolved founder decision this stage
+ * shouldn't depend on), citing what's real, classifying the industry
+ * bucket, and selecting candidate reference directions — then handing
+ * those facts to Design Intelligence and persisting what comes back.
  *
- * Per the founder's Phase 2 guidance: this service defines and cites
- * direction — it does not judge output (that's design-qa-service.ts,
- * Phase 3) and it does not build the actual site (that's
- * design-generation-service.ts, which only ever reads this service's
- * output, never lib/design-references/ directly).
+ * This is the concrete split the founder's "strict separation of
+ * responsibilities" principle demands: this file gathers and cites facts
+ * (Analysis-adjacent, mechanical); design-intelligence-service.ts makes the
+ * creative call (the ONLY layer that does, and the only one that talks to
+ * an LLM). Neither judges output (that's a future design-qa-service.ts) nor
+ * builds the actual site (that's design-generation-service.ts, which only
+ * ever reads a completed, founder-approved DesignBrief — never
+ * lib/design-references/ or an LLM directly).
  */
 
 // ===========================================================================
-// The Design Brief (pure data shape + pure builder function)
+// The Design Brief data shape (unchanged from Sprint 4 Phase 2 — only how
+// its creative fields get populated changed, see runDesignBrief below)
 // ===========================================================================
 
 export interface DesignBriefCitation {
@@ -63,7 +66,7 @@ export interface DesignBrief {
   /** As recorded on the company record — may be null; never guessed. */
   industry: string | null;
   industryBucket: IndustryBucket;
-  /** §12 AC1 (docs/SPRINT_4_DESIGN_REVIEW.md): at least one citation is required. buildDesignBrief() throws rather than producing an uncitable brief. */
+  /** §12 AC1 (docs/SPRINT_4_DESIGN_REVIEW.md): at least one citation is required — runDesignBrief() throws rather than producing an uncitable brief. */
   citedInsights: DesignBriefCitation[];
   targetAudience: string;
   positioning: string;
@@ -71,10 +74,10 @@ export interface DesignBrief {
     layoutFamily: LayoutFamily;
     typographicMood: string;
     colorDirection: string;
-    /** "energetic" only for buckets where §6/§10 name a deliberate, disclosed deviation from the general restraint default (fitness) — never a silent default. */
+    /** "energetic" only when Design Intelligence made a deliberate, disclosed decision to deviate from the general restraint default — never a silent default. */
     motionIntensity: "restrained" | "energetic";
   };
-  /** Every reference direction considered for this bucket, cited as reasoning input — never a structure to copy (§8's hard line). */
+  /** Every reference direction considered for this bucket, cited as reasoning input to Design Intelligence — never a structure to copy (§8's hard line). */
   referencesConsidered: { referenceId: string; reasoning: string }[];
 }
 
@@ -84,31 +87,6 @@ const CATEGORY_LABEL: Record<AnalysisCategory, string> = {
   seo: "Search visibility",
   mobile: "Mobile experience",
   technicalHealth: "Technical health",
-};
-
-/**
- * §10-derived audience framing per industry bucket — paraphrased directly
- * from docs/DESIGN_INTELLIGENCE.md §10's "what shifts" column, never
- * fabricated detail about a specific business. "general" is deliberately
- * generic rather than guessing an unconfirmed industry.
- */
-const AUDIENCE_BY_BUCKET: Record<IndustryBucket, string> = {
-  restaurant:
-    "Local diners and visitors deciding where to eat, often on mobile, close to a decision moment (tonight, this weekend).",
-  lawFirm:
-    "Prospective clients evaluating credibility and outcomes before ever making contact, often during a stressful, high-stakes moment.",
-  dentistMedical:
-    "Patients choosing a provider based on trust, cleanliness, and approachability, frequently comfort-sensitive.",
-  homeService:
-    "Homeowners with an urgent or time-sensitive need, searching from a phone, comparing reliability and response time.",
-  realEstate:
-    "Buyers and sellers evaluating an individual agent's credibility and local-market expertise as much as the brokerage brand.",
-  fitness:
-    "Prospective members deciding based on energy and community, with an easy first step (a class, a trial) mattering more than a long-form pitch.",
-  luxuryServices:
-    "A discerning, high-trust audience for whom understatement and consultation-first framing signal credibility better than visible selling.",
-  general:
-    "Prospective customers evaluating whether this business looks credible and current enough to trust with their business.",
 };
 
 function measuredCategories(
@@ -127,9 +105,12 @@ function measuredCategories(
  * §12 AC1's citation source: real Insights when any exist; when the site is
  * clean enough that insight-service.ts produced none, falls back to citing
  * the measured Normalized Analysis scores directly — still real data
- * insight-service.ts itself reads, never an invented finding.
+ * insight-service.ts itself reads, never an invented finding. Exported:
+ * this is exactly the kind of mechanical, Analysis-adjacent fact-gathering
+ * design-intelligence-service.ts's LLM call receives as input, per §2's
+ * "Analysis only gathers facts" principle.
  */
-function buildCitations(analysis: NormalizedAnalysis, insights: Insight[]): DesignBriefCitation[] {
+export function buildCitations(analysis: NormalizedAnalysis, insights: Insight[]): DesignBriefCitation[] {
   if (insights.length > 0) {
     return insights.map((insight) => ({
       category: insight.category,
@@ -146,7 +127,8 @@ function buildCitations(analysis: NormalizedAnalysis, insights: Insight[]): Desi
     }));
 }
 
-function findWeakestMeasuredCategory(
+/** The business's single most pressing measured gap, or null if nothing was measurable — passed to Design Intelligence as a fact, never computed or guessed by it. */
+export function findWeakestMeasuredCategory(
   analysis: NormalizedAnalysis
 ): { category: AnalysisCategory; score: number } | null {
   const measured = measuredCategories(analysis).filter(
@@ -154,83 +136,6 @@ function findWeakestMeasuredCategory(
   );
   if (measured.length === 0) return null;
   return measured.reduce((weakest, current) => (current.score < weakest.score ? current : weakest));
-}
-
-function buildPositioning(
-  reference: ReferenceDirection,
-  weakest: { category: AnalysisCategory; score: number } | null
-): string {
-  const base = `Positioning should lead with ${reference.positioningEmphasis}.`;
-  if (!weakest) return base;
-  return `${base} The redesign should directly address ${CATEGORY_LABEL[
-    weakest.category
-  ].toLowerCase()} (currently measured at ${weakest.score}/100), the business's most pressing measured gap.`;
-}
-
-export interface BuildDesignBriefInput {
-  missionId: string;
-  businessName: string;
-  websiteUrl: string;
-  industry: string | null;
-  businessCategory: string | null;
-  analysis: NormalizedAnalysis;
-  insights: Insight[];
-}
-
-/**
- * buildDesignBrief — the single pure entry point this module exposes for
- * brief construction. NormalizedAnalysis + Insight[] + business identity in,
- * DesignBrief out. No database, no adapters, no Mission Engine — matching
- * insight-service.ts's and opportunity-scoring-service.ts's own precedent
- * of a pure, independently-testable core wrapped by a thin orchestration
- * layer (runDesignBrief, below) for the actual pipeline.
- *
- * Throws if there is nothing to cite (§10, docs/SPRINT_4_DESIGN_REVIEW.md:
- * "A brief that can't point to what it's addressing shouldn't generate
- * anything") — in practice this should be unreachable, since every
- * NormalizedAnalysis carries at least one measured category, but the guard
- * documents the requirement rather than silently trusting it.
- */
-export function buildDesignBrief(input: BuildDesignBriefInput): DesignBrief {
-  const citedInsights = buildCitations(input.analysis, input.insights);
-  if (citedInsights.length === 0) {
-    throw new Error(
-      "Cannot build a Design Brief with no citable Insight or Normalized Analysis finding — " +
-        "a brief that can't point to what it's addressing shouldn't generate anything (docs/SPRINT_4_DESIGN_REVIEW.md §10)."
-    );
-  }
-
-  const industryBucket = resolveIndustryBucket(input.industry, input.businessCategory);
-  const references = selectReferenceDirections(industryBucket);
-  const primaryReference = selectPrimaryReferenceDirection(industryBucket);
-  if (!primaryReference) {
-    throw new Error(
-      `No reference direction available for industry bucket "${industryBucket}" — the in-house reference library must cover every bucket, including "general".`
-    );
-  }
-
-  const weakest = findWeakestMeasuredCategory(input.analysis);
-
-  return {
-    missionId: input.missionId,
-    businessName: input.businessName,
-    websiteUrl: input.websiteUrl,
-    industry: input.industry,
-    industryBucket,
-    citedInsights,
-    targetAudience: AUDIENCE_BY_BUCKET[industryBucket],
-    positioning: buildPositioning(primaryReference, weakest),
-    direction: {
-      layoutFamily: primaryReference.layoutFamily,
-      typographicMood: primaryReference.typographicMood,
-      colorDirection: primaryReference.colorDirection,
-      motionIntensity: industryBucket === "fitness" ? "energetic" : "restrained",
-    },
-    referencesConsidered: references.map((reference) => ({
-      referenceId: reference.id,
-      reasoning: `Informed by ${reference.description} — direction only, not structurally copied (§8).`,
-    })),
-  };
 }
 
 // ===========================================================================
@@ -248,6 +153,8 @@ export interface DesignBriefServiceDeps {
   companyRepository: typeof companyRepository;
   workflowDeps: MissionWorkflowDeps;
   eventBus: EventBus;
+  /** Design Intelligence's LLM dependency — injected, never a specific vendor imported directly by this file's own logic (docs/ARCHITECTURE_SPECIFICATION_V1.md §3). Defaults to Anthropic via createDesignBriefServiceDeps, but construction never throws for a missing API key — only an actual call inside runDesignBrief does (see lib/llm/anthropic-provider.ts). */
+  llmProvider: LlmProvider;
 }
 
 export function createDesignBriefServiceDeps(client: TypedClient): DesignBriefServiceDeps {
@@ -259,6 +166,7 @@ export function createDesignBriefServiceDeps(client: TypedClient): DesignBriefSe
     companyRepository,
     workflowDeps: createMissionWorkflowDeps(client),
     eventBus: createEventBus(client),
+    llmProvider: createAnthropicProviderFromEnv(),
   };
 }
 
@@ -290,22 +198,23 @@ export async function createDesignBriefRun(
 /**
  * Runs the Design Brief step for an existing `design_briefs` row: flips it
  * to 'running', transitions the mission analyzing -> researching if it
- * hasn't already (per docs/SPRINT_4_ARCHITECTURE_RECOMMENDATION.md §2's
- * resolution of Design Review Open Question 1 — the Design Brief step
- * genuinely IS the researching stage's work, not a state to skip), builds
- * the brief from the mission's latest completed analysis, persists it, and
- * transitions the mission to `reviewing` — the Founder Approval Gate
- * (docs/ARCHITECTURE_SPECIFICATION_V1.md, item 2). The mission waits there
- * until a human calls approveDesignBrief() below; this function never
- * itself advances a mission into `designing`. On failure, marks the row
- * 'failed' and publishes DesignBriefFailed instead of throwing back to the
- * caller — same failure-handling shape as analysis-service.ts::runAnalysis.
+ * hasn't already (the Design Brief step genuinely IS the researching
+ * stage's work, not a state to skip), gathers the deterministic facts
+ * (citations, industry bucket, candidate references), delegates the actual
+ * creative decision to design-intelligence-service.ts's LLM call, persists
+ * the result (brief + Design Memory + reasoning), and transitions the
+ * mission to `reviewing` — the Founder Approval Gate. On failure, marks the
+ * row 'failed' and publishes DesignBriefFailed instead of throwing back to
+ * the caller — same failure-handling shape as
+ * analysis-service.ts::runAnalysis.
  *
- * Deliberately synchronous work today (buildDesignBrief is a fast,
- * deterministic function — no adapter calls, no model calls), but kept in
- * the same fire-and-forget shape as runAnalysis per the founder's explicit
- * instruction to reuse that pattern, so the calling contract doesn't need
- * to change if a future pass adds a slower step (e.g. a model call) here.
+ * This step now genuinely depends on a working ANTHROPIC_API_KEY
+ * (docs/ARCHITECTURE_SPECIFICATION_V1.md's "Design Intelligence is the
+ * ONLY creative layer and should use an LLM" — not a fallback-when-
+ * available option). Without one, deps.llmProvider.complete() throws a
+ * clear, actionable error, this function catches it like any other
+ * failure, and the row reads 'failed' with that message — an honest
+ * failure, not a silent revert to the old deterministic behavior.
  */
 export async function runDesignBrief(
   deps: DesignBriefServiceDeps,
@@ -347,21 +256,55 @@ export async function runDesignBrief(
     const normalized = normalizedAnalysisFromRow(analysisRow, mission.website_url);
     const insights = generateInsights(normalized);
 
-    const brief = buildDesignBrief({
+    // --- Deterministic fact-gathering (this file's job, §2's "Analysis
+    // only gathers facts" principle applied to what Design Intelligence
+    // consumes) ---
+    const citedInsights = buildCitations(normalized, insights);
+    if (citedInsights.length === 0) {
+      throw new Error(
+        "Cannot build a Design Brief with no citable Insight or Normalized Analysis finding — " +
+          "a brief that can't point to what it's addressing shouldn't generate anything (docs/SPRINT_4_DESIGN_REVIEW.md §10)."
+      );
+    }
+    const industryBucket = resolveIndustryBucket(company?.industry ?? null, company?.business_category ?? null);
+    const candidateReferences = selectReferenceDirections(industryBucket);
+    const weakestCategory = findWeakestMeasuredCategory(normalized);
+
+    // --- The one creative decision, delegated entirely to Design
+    // Intelligence's LLM call (§2: "Design Intelligence is the ONLY
+    // creative layer") ---
+    const { designBrief: creative, designMemory, reasoning } = await generateDesignIntelligence(deps.llmProvider, {
+      businessName: mission.business_name,
+      industry: company?.industry ?? null,
+      industryBucket,
+      citedInsights,
+      weakestCategory,
+      candidateReferences,
+    });
+
+    const brief: DesignBrief = {
       missionId: mission.id,
       businessName: mission.business_name,
       websiteUrl: mission.website_url,
       industry: company?.industry ?? null,
-      businessCategory: company?.business_category ?? null,
-      analysis: normalized,
-      insights,
-    });
+      industryBucket,
+      citedInsights,
+      targetAudience: creative.targetAudience,
+      positioning: creative.positioning,
+      direction: creative.direction,
+      referencesConsidered: candidateReferences.map((reference) => ({
+        referenceId: reference.id,
+        reasoning: `Informed by ${reference.description} — direction only, not structurally copied (§8).`,
+      })),
+    };
 
     const updated = await deps.designBriefRepository.update(deps.client, designBriefId, {
       status: "complete",
       completed_at: new Date().toISOString(),
       industry_bucket: brief.industryBucket,
       brief: brief as unknown as Json,
+      design_memory: designMemory as unknown as Json,
+      reasoning,
     });
 
     await deps.eventBus.publish({
@@ -425,9 +368,8 @@ export interface ApproveDesignBriefInput {
 /**
  * applyDesignBriefEdits — pure merge function, separated out of
  * approveDesignBrief so the actual edit-application logic is independently
- * testable without a Supabase client, mirroring buildDesignBrief's own
- * separation from its orchestration wrapper. `wasEdited` is true only when
- * a non-empty edits object was actually supplied, not merely present.
+ * testable without a Supabase client. `wasEdited` is true only when a
+ * non-empty edits object was actually supplied, not merely present.
  */
 export function applyDesignBriefEdits(
   brief: DesignBrief,
@@ -498,3 +440,5 @@ export async function approveDesignBrief(
 
   return updated;
 }
+
+export type { DesignMemory };

@@ -2,9 +2,10 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  buildDesignBrief,
+  buildCitations,
+  findWeakestMeasuredCategory,
   applyDesignBriefEdits,
-  type BuildDesignBriefInput,
+  type DesignBrief,
 } from "@/lib/services/design-brief-service";
 import type { NormalizedAnalysis } from "@/lib/services/analysis-types";
 import type { Insight } from "@/lib/services/insight-service";
@@ -38,74 +39,21 @@ const SOME_INSIGHTS: Insight[] = [
   { id: "mobile-experience-gap", category: "mobile", severity: "high", statement: "Mobile experience is rough.", source: "Mobile display check" },
 ];
 
-function baseInput(overrides: Partial<BuildDesignBriefInput> = {}): BuildDesignBriefInput {
-  return {
-    missionId: "mission-1",
-    businessName: "Katz's Delicatessen",
-    websiteUrl: "https://example.com",
-    industry: null,
-    businessCategory: null,
-    analysis: POOR_ANALYSIS,
-    insights: SOME_INSIGHTS,
-    ...overrides,
-  };
-}
-
-describe("design-brief-service", () => {
+describe("design-brief-service: buildCitations", () => {
   test("cites real insights when they exist", () => {
-    const brief = buildDesignBrief(baseInput());
-    assert.equal(brief.citedInsights.length, 2);
-    assert.ok(brief.citedInsights.every((c) => !!c.insightId));
+    const citations = buildCitations(POOR_ANALYSIS, SOME_INSIGHTS);
+    assert.equal(citations.length, 2);
+    assert.ok(citations.every((c) => !!c.insightId));
   });
 
   test("falls back to citing measured Normalized Analysis scores when there are no insights", () => {
-    const brief = buildDesignBrief(baseInput({ analysis: CLEAN_ANALYSIS, insights: [] }));
-    assert.ok(brief.citedInsights.length > 0);
-    assert.ok(brief.citedInsights.every((c) => c.insightId === undefined));
-    assert.ok(brief.citedInsights.every((c) => c.statement.includes("/100")));
+    const citations = buildCitations(CLEAN_ANALYSIS, []);
+    assert.ok(citations.length > 0);
+    assert.ok(citations.every((c) => c.insightId === undefined));
+    assert.ok(citations.every((c) => c.statement.includes("/100")));
   });
 
-  test("resolves the industry bucket from freeform industry text", () => {
-    const brief = buildDesignBrief(baseInput({ industry: "Italian Restaurant" }));
-    assert.equal(brief.industryBucket, "restaurant");
-    assert.equal(brief.direction.layoutFamily, "imagery-led");
-  });
-
-  test("falls back to the general bucket for unknown/null industry, never guessing a specific one", () => {
-    const brief = buildDesignBrief(baseInput({ industry: null, businessCategory: "Widget Manufacturing" }));
-    assert.equal(brief.industryBucket, "general");
-    assert.equal(brief.direction.layoutFamily, "editorial");
-  });
-
-  test("motion intensity is 'energetic' only for the fitness bucket, 'restrained' otherwise", () => {
-    const fitnessBrief = buildDesignBrief(baseInput({ industry: "Boutique Fitness Studio" }));
-    assert.equal(fitnessBrief.direction.motionIntensity, "energetic");
-
-    const lawBrief = buildDesignBrief(baseInput({ industry: "Law Firm" }));
-    assert.equal(lawBrief.direction.motionIntensity, "restrained");
-  });
-
-  test("positioning cites the weakest measured category by name and score", () => {
-    const brief = buildDesignBrief(baseInput({ analysis: POOR_ANALYSIS }));
-    // POOR_ANALYSIS's weakest category is performance (lighthouse.performance = 25).
-    assert.match(brief.positioning, /page speed/i);
-    assert.match(brief.positioning, /25\/100/);
-  });
-
-  test("referencesConsidered includes every reference for the resolved bucket, cited as reasoning only", () => {
-    const brief = buildDesignBrief(baseInput({ industry: "Law Firm" }));
-    assert.ok(brief.referencesConsidered.length >= 2);
-    for (const ref of brief.referencesConsidered) {
-      assert.match(ref.reasoning, /not structurally copied/);
-    }
-  });
-
-  test("targetAudience is drawn from the bucket-level lookup, not fabricated per business", () => {
-    const brief = buildDesignBrief(baseInput({ industry: "Family Dental Clinic" }));
-    assert.match(brief.targetAudience, /patients/i);
-  });
-
-  test("throws if there is truly nothing to cite (no insights and no measured categories)", () => {
+  test("returns an empty array when there are no insights and nothing measured", () => {
     const emptyAnalysis: NormalizedAnalysis = {
       ...CLEAN_ANALYSIS,
       accessibilityScore: null as unknown as number,
@@ -114,37 +62,68 @@ describe("design-brief-service", () => {
       technicalHealthScore: null as unknown as number,
       lighthouse: { performance: null, accessibility: null, bestPractices: null, seo: null },
     };
-    assert.throws(
-      () => buildDesignBrief(baseInput({ analysis: emptyAnalysis, insights: [] })),
-      /shouldn't generate anything/
-    );
-  });
-
-  test("preserves the mission/business identity fields verbatim", () => {
-    const brief = buildDesignBrief(baseInput({ missionId: "m-42", businessName: "Acme", websiteUrl: "https://acme.test" }));
-    assert.equal(brief.missionId, "m-42");
-    assert.equal(brief.businessName, "Acme");
-    assert.equal(brief.websiteUrl, "https://acme.test");
+    assert.deepEqual(buildCitations(emptyAnalysis, []), []);
   });
 });
 
+describe("design-brief-service: findWeakestMeasuredCategory", () => {
+  test("finds the lowest-scoring measured category", () => {
+    const weakest = findWeakestMeasuredCategory(POOR_ANALYSIS);
+    assert.equal(weakest?.category, "performance");
+    assert.equal(weakest?.score, 25);
+  });
+
+  test("returns null when nothing is measured", () => {
+    const emptyAnalysis: NormalizedAnalysis = {
+      ...CLEAN_ANALYSIS,
+      accessibilityScore: null as unknown as number,
+      seoScore: null as unknown as number,
+      mobileScore: null as unknown as number,
+      technicalHealthScore: null as unknown as number,
+      lighthouse: { performance: null, accessibility: null, bestPractices: null, seo: null },
+    };
+    assert.equal(findWeakestMeasuredCategory(emptyAnalysis), null);
+  });
+});
+
+function fixtureBrief(overrides: Partial<DesignBrief> = {}): DesignBrief {
+  return {
+    missionId: "mission-1",
+    businessName: "Acme Law",
+    websiteUrl: "https://acme-law.test",
+    industry: "Law Firm",
+    industryBucket: "lawFirm",
+    citedInsights: [{ category: "performance", insightId: "slow-page-load", statement: "Pages load slowly." }],
+    targetAudience: "Prospective clients evaluating credibility.",
+    positioning: "Lead with credibility and outcomes.",
+    direction: {
+      layoutFamily: "credibility-led",
+      typographicMood: "measured serif",
+      colorDirection: "deep calm neutrals",
+      motionIntensity: "restrained",
+    },
+    referencesConsidered: [{ referenceId: "lawfirm-credibility-led", reasoning: "Informed by ... — not structurally copied (§8)." }],
+    ...overrides,
+  };
+}
+
 describe("design-brief-service: applyDesignBriefEdits (Founder Approval Gate)", () => {
   test("returns the brief unchanged and wasEdited: false when no edits are supplied", () => {
-    const brief = buildDesignBrief(baseInput());
+    const brief = fixtureBrief();
     const result = applyDesignBriefEdits(brief);
     assert.deepEqual(result.brief, brief);
     assert.equal(result.wasEdited, false);
   });
 
   test("returns the brief unchanged and wasEdited: false for an empty edits object", () => {
-    const brief = buildDesignBrief(baseInput());
+    const brief = fixtureBrief();
     const result = applyDesignBriefEdits(brief, {});
     assert.deepEqual(result.brief, brief);
     assert.equal(result.wasEdited, false);
   });
 
   test("overrides targetAudience and positioning when supplied", () => {
-    const brief = buildDesignBrief(baseInput());
+    const brief = fixtureBrief();
     const result = applyDesignBriefEdits(brief, {
       targetAudience: "Custom audience the founder typed in",
       positioning: "Custom positioning override",
@@ -155,7 +134,7 @@ describe("design-brief-service: applyDesignBriefEdits (Founder Approval Gate)", 
   });
 
   test("merges partial direction edits without discarding untouched direction fields", () => {
-    const brief = buildDesignBrief(baseInput({ industry: "Law Firm" }));
+    const brief = fixtureBrief();
     const result = applyDesignBriefEdits(brief, { direction: { typographicMood: "bolder serif" } });
     assert.equal(result.brief.direction.typographicMood, "bolder serif");
     assert.equal(result.brief.direction.layoutFamily, brief.direction.layoutFamily);
@@ -163,7 +142,7 @@ describe("design-brief-service: applyDesignBriefEdits (Founder Approval Gate)", 
   });
 
   test("never touches citedInsights or referencesConsidered — those are not editable", () => {
-    const brief = buildDesignBrief(baseInput());
+    const brief = fixtureBrief();
     const result = applyDesignBriefEdits(brief, { targetAudience: "Something else" });
     assert.deepEqual(result.brief.citedInsights, brief.citedInsights);
     assert.deepEqual(result.brief.referencesConsidered, brief.referencesConsidered);
