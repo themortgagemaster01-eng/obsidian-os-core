@@ -103,4 +103,28 @@ describe("anthropic-provider", () => {
       /did not contain expected text content/
     );
   });
+
+  test("calls onUsage with token counts when the response reports them", async () => {
+    mockFetchOnce({
+      ok: true,
+      json: { content: [{ type: "text", text: "hello" }], usage: { input_tokens: 120, output_tokens: 45 } },
+    });
+
+    const usages: { inputTokens: number; outputTokens: number }[] = [];
+    const provider = new AnthropicLlmProvider();
+    await provider.complete({ systemPrompt: "sys", userPrompt: "user", onUsage: (u) => usages.push(u) });
+
+    assert.equal(usages.length, 1);
+    assert.deepEqual(usages[0], { inputTokens: 120, outputTokens: 45 });
+  });
+
+  test("does not call onUsage, and does not throw, when the response has no usage field", async () => {
+    mockFetchOnce({ ok: true, json: { content: [{ type: "text", text: "hello" }] } });
+
+    let called = false;
+    const provider = new AnthropicLlmProvider();
+    await provider.complete({ systemPrompt: "sys", userPrompt: "user", onUsage: () => (called = true) });
+
+    assert.equal(called, false);
+  });
 });

@@ -16,6 +16,7 @@ export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5";
 /** Anthropic's documented Messages API response shape, narrowed to the fields this provider actually reads. */
 interface AnthropicMessagesResponse {
   content?: { type: string; text?: string }[];
+  usage?: { input_tokens?: number; output_tokens?: number };
 }
 
 /**
@@ -82,6 +83,10 @@ export class AnthropicLlmProvider implements LlmProvider {
     const text = data.content?.find((block) => block.type === "text")?.text;
     if (typeof text !== "string") {
       throw new Error("Anthropic API response did not contain expected text content.");
+    }
+
+    if (request.onUsage && data.usage?.input_tokens !== undefined && data.usage?.output_tokens !== undefined) {
+      request.onUsage({ inputTokens: data.usage.input_tokens, outputTokens: data.usage.output_tokens });
     }
 
     return request.expectJson ? `{${text}` : text;

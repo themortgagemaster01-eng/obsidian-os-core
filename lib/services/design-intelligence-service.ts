@@ -1,4 +1,4 @@
-import type { LlmProvider } from "@/lib/llm/provider";
+import type { LlmProvider, LlmUsage } from "@/lib/llm/provider";
 import { extractJsonFromLlmResponse } from "@/lib/llm/json-response";
 
 import type { AnalysisCategory } from "@/lib/services/analysis-types";
@@ -315,10 +315,16 @@ const DESIGN_INTELLIGENCE_MAX_TOKENS = 4096;
  * resolution, reference selection) stays in design-brief-service.ts as
  * deterministic fact-gathering, per §2's "Analysis only gathers facts"
  * principle applied one layer up to the facts THIS engine consumes.
+ *
+ * `onUsage`, when supplied, is passed straight through to the provider —
+ * this is real spend once a live API key is configured, so callers that
+ * want to log or track cost per call have a way to observe it without this
+ * function needing to know anything about persistence or logging itself.
  */
 export async function generateDesignIntelligence(
   provider: LlmProvider,
-  input: DesignIntelligenceInput
+  input: DesignIntelligenceInput,
+  onUsage?: (usage: LlmUsage) => void
 ): Promise<DesignIntelligenceResult> {
   const { systemPrompt, userPrompt } = buildDesignIntelligencePrompt(input);
   const raw = await provider.complete({
@@ -326,6 +332,7 @@ export async function generateDesignIntelligence(
     userPrompt,
     maxTokens: DESIGN_INTELLIGENCE_MAX_TOKENS,
     expectJson: true,
+    onUsage,
   });
   return parseDesignIntelligenceResponse(raw);
 }

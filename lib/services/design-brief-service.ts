@@ -273,14 +273,27 @@ export async function runDesignBrief(
     // --- The one creative decision, delegated entirely to Design
     // Intelligence's LLM call (§2: "Design Intelligence is the ONLY
     // creative layer") ---
-    const { designBrief: creative, designMemory, reasoning } = await generateDesignIntelligence(deps.llmProvider, {
-      businessName: mission.business_name,
-      industry: company?.industry ?? null,
-      industryBucket,
-      citedInsights,
-      weakestCategory,
-      candidateReferences,
-    });
+    const { designBrief: creative, designMemory, reasoning } = await generateDesignIntelligence(
+      deps.llmProvider,
+      {
+        businessName: mission.business_name,
+        industry: company?.industry ?? null,
+        industryBucket,
+        citedInsights,
+        weakestCategory,
+        candidateReferences,
+      },
+      // Real spend once a live key is configured — logged per run so cost
+      // is visible in server logs rather than invisible until a bill
+      // arrives. Not persisted to a table; no cost-tracking feature has
+      // been requested beyond visibility.
+      (usage) => {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[design-brief ${designBriefId}] Anthropic usage: ${usage.inputTokens} input tokens, ${usage.outputTokens} output tokens`
+        );
+      }
+    );
 
     const brief: DesignBrief = {
       missionId: mission.id,

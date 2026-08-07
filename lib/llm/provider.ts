@@ -11,6 +11,12 @@
  * codebase for the same kind of "swappable external dependency" problem.
  */
 
+/** Token counts for one completion — real spend now that a live API key exists, so callers that care about cost can observe it per call. */
+export interface LlmUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface LlmMessageRequest {
   systemPrompt: string;
   userPrompt: string;
@@ -27,6 +33,8 @@ export interface LlmMessageRequest {
    * fences even when explicitly instructed not to.
    */
   expectJson?: boolean;
+  /** Opportunistic — called with token usage if the provider's response reports it. Not every provider/response is guaranteed to; absence is not an error. */
+  onUsage?: (usage: LlmUsage) => void;
 }
 
 export interface LlmProvider {
