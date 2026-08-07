@@ -79,3 +79,27 @@ Verified via two independent real end-to-end runs (`katzsdelicatessen.com`, `ves
 **Proposed Investigation:** Same family of fix as item 1 — mark `axe-core` (and whatever Puppeteer/axe integration package is used) as an external package via `next.config.mjs`'s `serverComponentsExternalPackages` so webpack stops bundling/tracing through its CJS internals. Worth investigating items 1 and 3 together, since they're likely the same root cause hitting two different adapters.
 
 **Resolution (2026-08-07):** Root cause confirmed to genuinely be webpack-bundling-specific (unlike item 1's lighthouse, this one really is exactly what it looked like). `axe-core`'s own main entry is plain CJS (no `"type": "module"`), and `require("axe-core").source` — the exact call `accessibility-adapter.ts` makes — works correctly under plain `node -e`, no bundler involved, returning the expected ~1.3MB UMD source string cleanly. That confirms the package itself isn't broken; something specific to Next's webpack bundling of it was. Added `axe-core` to `next.config.mjs`'s `experimental.serverComponentsExternalPackages` alongside `lighthouse`/`chrome-launcher` (see item 1's resolution for why that's the correct config key for this repo's Next 14.2.35, and why `puppeteer` — used in this same adapter — never needed it). No code changes were needed in `accessibility-adapter.ts` itself; the existing `require`-free `import { source as axeSource } from "axe-core"` was always correct, it just needed webpack to leave the package alone. Verified via two independent real end-to-end runs (`katzsdelicatessen.com`: 3 real violations, 90-something passes; `veslofamilyrestaurant.com`: 2 real violations, 41 passes, 3 incomplete) — zero `fetchError`, real violation data with real `impact`/`nodeCount` values in both.
+
+---
+
+## 4. Windows Chrome Temporary Directory Cleanup
+
+**Description:** Temporary Chrome profile directories may remain after analysis if Windows prevents deletion during browser shutdown.
+
+**Impact:** Low
+
+**Severity:** Low
+
+**Risk:** Temporary disk usage increases over time.
+
+**Recommended Resolution:** Investigate retry logic or deferred cleanup after browser termination.
+
+**Status:** Deferred
+
+**Note:** Not a Sprint 3 blocker.
+
+**Engineering detail (for the "investigate" step, when picked up):** Surfaced 2026-08-07 while validating the item 1 fix above — with `lighthouse` finally invocable, `runLighthouseAdapter()` in `lib/adapters/lighthouse-adapter.ts` reached its `finally` block for the first time, where `chrome-launcher`'s `kill()` synchronously calls `destroyTmp()` (`chrome-launcher/dist/chrome-launcher.js`), which `rm`'s the launched instance's temp user-data-dir immediately after force-killing the Chrome process via `taskkill`. On this Windows machine, the OS can still be holding a file lock on that directory at the instant `rmSync` runs — observed reliably in this environment — throwing `EPERM`. Because this happened inside the adapter's own `finally` block, it wasn't caught by the adapter's `try/catch` around the actual Lighthouse scan, and because all seven Sprint 3 adapters run under one `Promise.all` in `lib/services/analysis-service.ts`, an uncaught `EPERM` here failed the *entire* analysis run — discarding six other adapters' real, already-succeeded results (including axe-core's, item 3 above) over what is ultimately a housekeeping failure, not a measurement failure.
+
+**Why the current guard is safe:** `lib/adapters/lighthouse-adapter.ts`'s `finally` block wraps only `chrome?.kill()` in its own `try/catch`, logging via `console.warn` on failure rather than staying silent. This is scoped narrowly to cleanup: it runs after the Lighthouse scan has already either returned a real result or been recorded as a graceful `fetchError` in the adapter's own `catch` block above it, so swallowing a cleanup exception here cannot mask, alter, or fabricate a measurement — it only prevents a disk-cleanup failure from crashing a request that has already done its real work. The `console.warn` keeps the failure visible in server logs (not hidden) so a future, worse failure mode than "temp dir didn't delete" — e.g. Chrome not actually terminating — would still surface to whoever is watching logs, rather than failing silently forever.
+
+**Remaining limitations:** The directory leak itself is not fixed, only prevented from crashing the analysis run — an orphaned `lighthouse.*` directory under the OS temp folder persists on disk after an `EPERM`. No retry loop or deferred cleanup was implemented (that's the "Recommended Resolution" above, deliberately left for a future pass). Whether this is Windows-dev-only or could recur on the eventual production hosting platform is unconfirmed — not tested on Linux/CI in this pass. Confidence is high that the guard itself (catch + log, never crash) is correct and safe regardless of platform; confidence is lower on how often the underlying race actually fires outside this specific machine.
