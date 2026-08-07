@@ -35,12 +35,18 @@ export function CategoryScorecards({ report }: { report: OpportunityReport }) {
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-2">
-          {report.findings.map((finding) => {
+          {report.findings.map((finding, index) => {
             const confidence: ConfidenceEntry = report.confidence[CONFIDENCE_KEY[finding.category]];
             const measured = confidence.level !== "Unavailable";
+            // An odd count would otherwise leave the grid's last cell empty
+            // on wider screens — give the final item the full row instead.
+            const isDanglingLast = index === report.findings.length - 1 && report.findings.length % 2 === 1;
 
             return (
-              <div key={finding.category} className="space-y-3 bg-panel p-5">
+              <div
+                key={finding.category}
+                className={`space-y-3 bg-panel p-5 ${isDanglingLast ? "sm:col-span-2" : ""}`}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <p className="text-sm font-medium text-foreground">
                     {CATEGORY_LABELS[finding.category]}
