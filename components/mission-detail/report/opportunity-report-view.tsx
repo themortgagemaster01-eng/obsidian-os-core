@@ -7,6 +7,7 @@ import { TechnologyStack } from "@/components/mission-detail/report/technology-s
 import { ScreenshotSection } from "@/components/mission-detail/report/screenshot-section";
 import { EvidenceTable } from "@/components/mission-detail/report/evidence-table";
 import { Recommendations } from "@/components/mission-detail/report/recommendations";
+import { ExecutiveConclusion } from "@/components/mission-detail/report/executive-conclusion";
 
 /**
  * Renders the OpportunityReport object in the exact section order specified
@@ -33,6 +34,7 @@ export function OpportunityReportView({
       <ScreenshotSection screenshotUrl={screenshotUrl} />
       <EvidenceTable report={report} />
       <Recommendations report={report} />
+      <ExecutiveConclusion report={report} />
     </div>
   );
 }

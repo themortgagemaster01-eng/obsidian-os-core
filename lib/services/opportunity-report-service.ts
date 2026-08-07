@@ -38,6 +38,15 @@ export interface OpportunityReport {
   evidence: { claim: string; source: string }[];
   recommendations: { title: string; detail: string; severity: InsightSeverity }[];
   /**
+   * The report's closing section (final field, rendered last — founder
+   * addition post-Phase-3). Answers "why is this business worth
+   * contacting today": overall opportunity, its biggest strength and
+   * biggest gap, and why it deserves attention. Built only from values
+   * already computed above (scores, recommendations, business value) —
+   * no new measurement, scoring, or persuasive invention.
+   */
+  executiveConclusion: string;
+  /**
    * Confidence metadata (founder-requested, Phase 2 gate #2): internal
    * quality signal for each major section, NOT meant to inflate certainty.
    * A category whose underlying check failed reads "Unavailable" here
@@ -246,6 +255,65 @@ function buildRecommendations(insights: Insight[]): OpportunityReport["recommend
 }
 
 // ---------------------------------------------------------------------
+// Executive Conclusion — the report's final section. Closes the report
+// with the overall opportunity, the biggest strength, the biggest gap,
+// and why it deserves attention, so the report ends with confidence
+// rather than just stopping after a findings list. Template-based, same
+// approach as buildExecutiveSummary above — every claim here traces to a
+// value already computed by opportunity-scoring-service.ts or already
+// built above in this file, nothing new is measured or scored.
+// ---------------------------------------------------------------------
+
+const CONCLUSION_OPENER: Record<ScoreBand, string> = {
+  good: "Overall, this business's website is in strong shape, with only a handful of smaller opportunities left to capture.",
+  moderate: "Overall, this business has a real, actionable opportunity: a workable website held back by a specific, fixable set of issues.",
+  poor: "Overall, this business represents a strong opportunity — real barriers are actively costing it customers, and closing them would make a meaningful difference.",
+  unknown: "Overall, this analysis wasn't able to fully assess the opportunity here.",
+};
+
+const CATEGORY_LABEL: Record<AnalysisCategory, string> = {
+  performance: "Page speed",
+  accessibility: "Accessibility",
+  seo: "Search visibility",
+  mobile: "Mobile experience",
+  technicalHealth: "Technical health",
+};
+
+function buildExecutiveConclusion(
+  scoreResult: OpportunityScoreResult,
+  recommendations: OpportunityReport["recommendations"],
+  businessOpportunity: OpportunityReport["businessOpportunity"]
+): string {
+  const opener = CONCLUSION_OPENER[scoreBand(scoreResult.overallScore)];
+  const measured = scoreResult.categories.filter(
+    (c): c is typeof c & { score: number } => c.score !== null
+  );
+
+  const parts: string[] = [opener];
+
+  // Only frame a "strength" when there's more than one measured category
+  // to contrast it against — with just one, calling it both a strength
+  // and (potentially) the biggest gap would contradict itself.
+  if (measured.length > 1) {
+    const strongest = measured.reduce((a, b) => (b.score > a.score ? b : a));
+    if (strongest.score >= 70) {
+      parts.push(`${CATEGORY_LABEL[strongest.category]} is a real strength worth preserving through any changes.`);
+    }
+  }
+
+  if (measured.length > 0 && recommendations.length > 0) {
+    const weakest = measured.reduce((a, b) => (b.score < a.score ? b : a));
+    parts.push(
+      `The most pressing gap is ${CATEGORY_LABEL[weakest.category].toLowerCase()}, starting with "${recommendations[0].title}."`
+    );
+  }
+
+  parts.push(businessOpportunity.potentialBusinessValue);
+
+  return parts.join(" ");
+}
+
+// ---------------------------------------------------------------------
 // Confidence metadata (founder-requested, Phase 2 gate #2) — internal
 // quality signal per major section, computed from MeasurementStatus
 // rather than inferred from score values, specifically so a failed check
@@ -371,9 +439,12 @@ export function assembleOpportunityReport(
   insights: Insight[],
   scoreResult: OpportunityScoreResult
 ): OpportunityReport {
+  const businessOpportunity = buildBusinessOpportunity(scoreResult);
+  const recommendations = buildRecommendations(insights);
+
   return {
     executiveSummary: buildExecutiveSummary(scoreResult.overallScore, insights),
-    businessOpportunity: buildBusinessOpportunity(scoreResult),
+    businessOpportunity,
     scores: {
       overall: scoreResult.overallScore,
       performance: scoreForCategory(scoreResult, "performance"),
@@ -385,7 +456,8 @@ export function assembleOpportunityReport(
     findings: buildFindings(scoreResult, insights),
     technologyStack: analysis.technologyStack,
     evidence: buildEvidence(insights),
-    recommendations: buildRecommendations(insights),
+    recommendations,
+    executiveConclusion: buildExecutiveConclusion(scoreResult, recommendations, businessOpportunity),
     confidence: buildConfidence(analysis, scoreResult),
   };
 }
