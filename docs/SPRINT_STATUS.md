@@ -83,6 +83,21 @@ Commits `f3fe479`..`7a1ec8e`, on top of `0a3a5f0`. Went through a design review 
 
 ---
 
-## Sprint 4 (next) — Website Generation, design phase only
+## Sprint 4 — Website Generation — Phase 1 (Design Intelligence Foundation) done; later phases not authorized
 
-**Status: design review only, no implementation.** See `docs/SPRINT_4_DESIGN_REVIEW.md`. Per `docs/MASTER_BLUEPRINT.md`'s named pipeline (ADR-010), Website Generation is the next stage after the Analysis/Opportunity-Report work Sprint 3 completed. The founder has approved Sprint 3's close and directed that Sprint 4 begin with design-only work — architecture, workflow, Mission Engine integration points, the design pipeline itself, AI responsibilities, acceptance criteria, risks, and open questions written down and reviewed before any code is written, per standing process. No Sprint 4 implementation is authorized by this status update or by the design review document itself.
+**Status: Phase 1 implemented; Phase 2 (Website Generation Pipeline) and beyond not started, not authorized by this update.** The design-only planning pass (`docs/SPRINT_4_DESIGN_REVIEW.md`, `docs/SPRINT_4_ARCHITECTURE_RECOMMENDATION.md`, `docs/SPRINT_4_DESIGN_INTELLIGENCE_RECOMMENDATION.md`, `docs/DESIGN_INTELLIGENCE.md`) was reviewed and the founder authorized Phase 1 specifically: translating `docs/DESIGN_INTELLIGENCE.md`'s philosophy into a lightweight, typed rules/schema module, per the Design Intelligence Recommendation's explicit guidance to build the schema/rules layer now and defer everything heavier (a queryable reference-library integration, a full component library, a versioned rules engine) until there's real evidence it's needed.
+
+**What was built:** `lib/design-intelligence/` — a read-only knowledge/constraints layer with no orchestration, no adapter access, and no `transitionMissionState()` calls, matching the ownership boundary both design docs set for it:
+
+- `types.ts` — shared `TypeRole` and `EasingCurve` schema types.
+- `design-rules.ts` — the general Premium Design Principles (§1-§2) as structured, citable data, plus the sitewide spacing scale schema and validator (§4).
+- `typography-rules.ts` — the named type-role scale, the two-family pairing limit, and readability (line length/line height) validators (§3).
+- `layout-rules.ts` — the named generic-SaaS-template pattern (made checkable, per §5's own instruction), grid rhythm schema, and the structural-diversity proxy `docs/SPRINT_4_DESIGN_REVIEW.md` §12's acceptance criterion 3 proposed.
+- `motion-rules.ts` — the tunable default duration band plus the non-negotiable bounce/spring/purposeless-motion ban (§6).
+- `never-generate-rules.ts` — all ten entries from `docs/DESIGN_INTELLIGENCE.md` §11, as structured data.
+
+Each module ships with real `node:test` coverage (60 tests total across the existing suite plus this addition) exercising the actual validators and lookups, not placeholder assertions. `npm test` and `npm run build` both pass clean. Nothing in this module has a caller yet — `design-brief-service.ts` and `design-qa-service.ts`, the two future consumers named in the Design Review, are Phase 2/3 work and are not part of this change.
+
+**Deliberately not done in Phase 1, per scope:** Trust Patterns (§8), Conversion Patterns (§9), Industry Adaptation (§10), Mobile Standards (§7), the Design QA checklist (§12), and any color-role schema — none of these were named in the founder's Phase 1 authorization (Design rules, Typography rules, Layout rules, Motion rules, Never Generate rules) and none are built here. Per `docs/SPRINT_4_ARCHITECTURE_RECOMMENDATION.md` §4's own stated convention, `docs/MASTER_BLUEPRINT.md` and the ADR log are intentionally not updated by this phase — this codebase's precedent is that ADRs record what was built at a sprint's actual closure (Sprint 3's ADR-011 through ADR-014 were all written at closure, not per-phase), and Sprint 4 is not closed.
+
+**Phase 2 (Website Generation Pipeline) and beyond are not authorized by this update** — per the phase-gated rhythm Sprint 3 and this planning pass both used, implementation stops here for founder review before `design-brief-service.ts` or any generation code is written.
