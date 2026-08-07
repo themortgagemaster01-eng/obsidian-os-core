@@ -22,8 +22,8 @@ function isPlausibleUrl(value: string): boolean {
   const candidate = value.trim();
   if (candidate.length === 0) return false;
   try {
-    new URL(candidate.startsWith("http") ? candidate : `https://${candidate}`);
-    return /\.[a-z]{2,}$/i.test(candidate.split("/")[0] ?? "");
+    const url = new URL(candidate.startsWith("http") ? candidate : `https://${candidate}`);
+    return /\.[a-z]{2,}$/i.test(url.hostname);
   } catch {
     return false;
   }
