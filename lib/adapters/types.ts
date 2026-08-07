@@ -20,6 +20,66 @@ export interface CrawlPage {
   fetchError?: string;
 }
 
+/**
+ * docs/ARCHITECTURE_SPECIFICATION_V1.md's expanded crawler shape — real,
+ * structured business facts the Analysis Engine gathers so downstream
+ * engines (Design Intelligence, Generation) never have to guess or
+ * fabricate contact/trust content (docs/DESIGN_INTELLIGENCE.md §8's
+ * zero-fabrication rule). Extraction is mechanical (schema.org JSON-LD when
+ * present, DOM/regex heuristics otherwise) — no interpretation, no scoring,
+ * matching this adapter's I/O-only charter. An empty array or null field
+ * means "not detected by this heuristic," never "confirmed absent" — see
+ * lib/adapters/crawl-adapter.ts's doc comments for each field's specific
+ * detection method and honest limitations.
+ */
+export interface ContactInfo {
+  phones: string[];
+  emails: string[];
+  address: string | null;
+  hours: string | null;
+}
+
+export interface SocialLinks {
+  facebook: string | null;
+  instagram: string | null;
+  twitter: string | null;
+  linkedin: string | null;
+  youtube: string | null;
+  tiktok: string | null;
+  yelp: string | null;
+}
+
+/** A best-effort structural match for a content category (services, team, FAQ, etc.) — the heading that identified it plus a bounded text excerpt, never invented copy. */
+export interface ContentSection {
+  heading: string;
+  excerpt: string;
+}
+
+export interface ReviewsSummary {
+  averageRating: number | null;
+  count: number | null;
+  /** Where this came from, e.g. "schema.org structured data" — null when nothing was found, never a guessed figure. */
+  source: string | null;
+}
+
+export interface GalleryImage {
+  src: string;
+  alt: string | null;
+}
+
+export interface FormInfo {
+  action: string | null;
+  method: string | null;
+  fieldCount: number;
+  hasEmailField: boolean;
+  hasPhoneField: boolean;
+}
+
+export interface MapEmbed {
+  provider: "google" | "other";
+  src: string;
+}
+
 export interface CrawlRawResult {
   requestedUrl: string;
   finalUrl: string;
@@ -34,6 +94,19 @@ export interface CrawlRawResult {
   robotsTxtFound: boolean;
   sitemapFound: boolean;
   htmlByteSize: number;
+  contact: ContactInfo;
+  socials: SocialLinks;
+  certifications: ContentSection[];
+  licenses: ContentSection[];
+  services: ContentSection[];
+  products: ContentSection[];
+  team: ContentSection[];
+  faq: ContentSection[];
+  testimonials: ContentSection[];
+  reviews: ReviewsSummary;
+  gallery: GalleryImage[];
+  forms: FormInfo[];
+  maps: MapEmbed[];
   fetchError?: string;
 }
 
