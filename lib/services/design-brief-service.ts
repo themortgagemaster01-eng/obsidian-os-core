@@ -9,6 +9,7 @@ import { resolveIndustryBucket, selectReferenceDirections, type IndustryBucket }
 import { generateDesignIntelligence, type DesignMemory } from "@/lib/services/design-intelligence-service";
 import type { LlmProvider } from "@/lib/llm/provider";
 import { createAnthropicProviderFromEnv } from "@/lib/llm/anthropic-provider";
+import { MetricsLlmProvider } from "@/lib/llm/metrics";
 
 import {
   designBriefRepository,
@@ -166,7 +167,9 @@ export function createDesignBriefServiceDeps(client: TypedClient): DesignBriefSe
     companyRepository,
     workflowDeps: createMissionWorkflowDeps(client),
     eventBus: createEventBus(client),
-    llmProvider: createAnthropicProviderFromEnv(),
+    // The production Design Brief path must emit operational metrics for
+    // every LLM call, so wrap the concrete provider at this boundary.
+    llmProvider: new MetricsLlmProvider(createAnthropicProviderFromEnv()),
   };
 }
 

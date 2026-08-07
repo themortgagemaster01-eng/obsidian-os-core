@@ -190,13 +190,18 @@ describe("design-generation-service: assembleComponents", () => {
 });
 
 describe("design-generation-service: generateWebsiteStructure", () => {
-  test("composes generateWireframe and assembleComponents into one structure with matching section counts", () => {
+  test("composes generation and deterministic refinement into one structure with matching section counts", () => {
     const brief = briefFor("dentistMedical", "credibility-led");
-    const { wireframe, components } = generateWebsiteStructure(brief, { hasRealTestimonials: false });
+    const { wireframe, components, refinedDesign } = generateWebsiteStructure(brief, { hasRealTestimonials: false });
     assert.equal(wireframe.sections.length, components.length);
     assert.deepEqual(
       wireframe.sections.map((s) => s.type),
       components.map((c) => c.section)
     );
+    assert.ok(refinedDesign.typography);
+    assert.ok(refinedDesign.spacing);
+    assert.ok(refinedDesign.layout);
+    assert.ok(refinedDesign.motion);
+    assert.ok(refinedDesign.mobile);
   });
 });

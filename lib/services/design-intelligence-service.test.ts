@@ -152,6 +152,7 @@ describe("design-intelligence-service: generateDesignIntelligence", () => {
   test("calls the injected provider with expectJson and returns the parsed result", async () => {
     const requests: LlmMessageRequest[] = [];
     const fakeProvider: LlmProvider = {
+      name: "fake:test-model",
       async complete(request) {
         requests.push(request);
         return validResponseJson();
@@ -168,6 +169,7 @@ describe("design-intelligence-service: generateDesignIntelligence", () => {
 
   test("propagates a parse error when the provider returns garbage", async () => {
     const fakeProvider: LlmProvider = {
+      name: "fake:test-model",
       async complete() {
         return "I cannot help with that.";
       },

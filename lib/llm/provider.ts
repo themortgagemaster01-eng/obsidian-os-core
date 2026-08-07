@@ -42,6 +42,13 @@ export interface LlmMessageRequest {
 }
 
 export interface LlmProvider {
+  /**
+   * A stable identifier for logging/metrics — e.g. "anthropic:claude-sonnet-5".
+   * Concrete providers set this from their own vendor + model; never used
+   * for routing/dispatch logic anywhere, only for attributing a call in
+   * lib/llm/metrics.ts's operational logging.
+   */
+  readonly name: string;
   /** Sends a single-turn prompt and returns the model's raw text response. */
   complete(request: LlmMessageRequest): Promise<string>;
 }

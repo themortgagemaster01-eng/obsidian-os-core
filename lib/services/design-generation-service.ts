@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Json } from "@/lib/supabase/database.types";
 import type { DesignBrief, DesignBriefCitation } from "@/lib/services/design-brief-service";
+import type { DesignMemory } from "@/lib/services/design-intelligence-service";
+import { refineDesign, type RefinedDesign } from "@/lib/services/design-refinement-service";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
@@ -271,11 +273,14 @@ export function assembleComponents(
 
 export interface GenerateWebsiteStructureOptions extends GenerateWireframeOptions {
   realTestimonials?: string[];
+  /** Approved per-mission design choices from Design Intelligence. */
+  designMemory?: DesignMemory | null;
 }
 
 export interface WebsiteStructure {
   wireframe: Wireframe;
   components: ComponentNode[];
+  refinedDesign: RefinedDesign;
 }
 
 /** Convenience entry point composing the two passes above, mirroring how insight-service/opportunity-scoring-service compose at call sites. */
@@ -289,7 +294,8 @@ export function generateWebsiteStructure(
     citedInsights: brief.citedInsights,
     realTestimonials: options.realTestimonials,
   });
-  return { wireframe, components };
+  const refinedDesign = refineDesign({ wireframe }, brief, options.designMemory);
+  return { wireframe, components, refinedDesign };
 }
 
 // ===========================================================================
@@ -384,13 +390,18 @@ export async function runDesignGeneration(
     }
 
     const brief = briefRow.brief as unknown as DesignBrief;
-    const { wireframe, components } = generateWebsiteStructure(brief, { hasRealTestimonials: false });
+    const designMemory = briefRow.design_memory as unknown as DesignMemory | null;
+    const { wireframe, components, refinedDesign } = generateWebsiteStructure(brief, {
+      hasRealTestimonials: false,
+      designMemory,
+    });
 
     const updated = await deps.websiteDesignRepository.update(deps.client, websiteDesignId, {
       status: "complete",
       completed_at: new Date().toISOString(),
       wireframe: wireframe as unknown as Json,
       components: components as unknown as Json,
+      refined_design: refinedDesign as unknown as Json,
     });
 
     await deps.eventBus.publish({

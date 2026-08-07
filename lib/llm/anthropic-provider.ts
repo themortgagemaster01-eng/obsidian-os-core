@@ -38,6 +38,11 @@ export class AnthropicLlmProvider implements LlmProvider {
     this.model = model;
   }
 
+  /** e.g. "anthropic:claude-sonnet-5" — see LlmProvider.name's doc comment. */
+  get name(): string {
+    return `anthropic:${this.model}`;
+  }
+
   async complete(request: LlmMessageRequest): Promise<string> {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey || apiKey.trim().length === 0) {
