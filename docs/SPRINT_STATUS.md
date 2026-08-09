@@ -161,3 +161,31 @@ Each module ships with real `node:test` coverage (60 tests total across the exis
 **Local-environment-only actions taken to make this possible, disclosed for the record:** migrations 0010–0013 were applied directly to the local Postgres instance (no `supabase` CLI or `psql` available in this shell) via a temporary `pg` client install (`npm install --no-save`, removed afterward — never added to `package.json`). All temporary verification scripts were deleted after use; none were committed.
 
 This is genuinely the first real evidence this integration works end-to-end. It has not been run against a second business/industry, has not been tested for how it behaves under a real rate-limit or timeout, and cost has not been measured over any volume — reasonable next checks before broader use, not required before this report.
+
+---
+
+## Sprint 4 — Phase 3 (Design Refinement + LLM Metrics) — done, validated, closed
+
+**Status: implemented and closed.** Commit `1b5b73b` ("Sprint 4 Phase 3: recover design refinement and LLM metrics"). This is the fourth item from `docs/ARCHITECTURE_SPECIFICATION_V1.md`'s pipeline reframe, explicitly deferred when items 1–3 were authorized — Design Refinement (Typography/Spacing/Layout/Motion/Mobile passes) plus basic LLM operational metrics.
+
+**What was built:**
+
+- `lib/services/design-refinement-service.ts` — five pure refinement passes (`refineTypography`, `refineSpacing`, `refineLayout`, `refineMotion`, `refineMobile`), each validated against `lib/design-intelligence/`'s own real validators (never a paraphrase), composed by `refineDesign()`. Called synchronously from `design-generation-service.ts::runDesignGeneration()` — not a new pipeline stage, no new mission-state transition; Generation still doesn't judge its own output (that stays `design-qa-service.ts`, Phase 4, not yet built).
+- `lib/design-intelligence/mobile-rules.ts` — the Mobile Standards (§7) module Phase 1 deliberately deferred: touch-target and mobile-readability validators.
+- `lib/llm/metrics.ts` — `MetricsLlmProvider`, a decorator over any `LlmProvider` (provider name, model, prompt/completion tokens, cost estimate, latency, retry count, success/failure), logged via `consoleLlmMetricsSink`. Wired into the production Design Brief path in `design-brief-service.ts::createDesignBriefServiceDeps()`.
+- `supabase/migrations/0014_design_refinement.sql` — `website_designs.refined_design jsonb`.
+
+**Real end-to-end validation performed** (see prior session's validation report, reviewed and approved by the founder): full pipeline run against Veslo Family Restaurant (`veslofamilyrestaurant.com`), real Anthropic API, no mocks —
+
+- Design Brief: succeeded, specific to Veslo (cited real Insights — slow page load, small mobile text, SEO gaps, two severe accessibility issues), no fabricated claims. Model `claude-sonnet-5`, 2,677 input / 2,735 output tokens, ~35s, $0.049 estimated cost, 0 retries — real metrics from `MetricsLlmProvider` wrapping the production `AnthropicLlmProvider`, not a test mock.
+- Founder Approval Gate confirmed both directions: mission stopped at `reviewing` after the brief (no auto-advance), then correctly advanced to `designing` only after an explicit `approveDesignBrief()` call.
+- Design Generation: real, populated wireframe (6 sections) and components persisted, not an empty row.
+- Design Refinement: all five passes ran with zero violations — Typography, Spacing, Layout, Motion, Mobile all PASS.
+- Persistence: `refined_design` written and independently read back via a fresh `select` (not the in-memory result), confirming real stored data.
+- Migration 0014 applied via `supabase migration up --local`. In the course of applying it, migrations 0010–0013 were found applied to the local database's actual schema but never recorded in `supabase_migrations.schema_migrations` (a gap this same doc already disclosed after the prior session's out-of-band `pg`-client application) — repaired via `supabase migration repair --status applied 0010 0011 0012 0013` so local migration history now correctly reads 0001–0014 in full.
+
+**177 tests total, all passing.** `npm test` and `npm run build` both pass clean.
+
+**Known gap carried forward:** this doc entry was written retroactively — commit `1b5b73b` itself did not update `SPRINT_STATUS.md` in the same commit, which is a real miss against this project's own `CLAUDE.md` standard ("documentation changes land in the same commit as the architecture change they describe"). Recorded here, not silently corrected, per this project's convention of visible corrections.
+
+**Deliberately not done in Phase 3, per scope:** `design-qa-service.ts` (Phase 4 — cross-mission structural-diversity checks, Visual/Accessibility/Performance/Brand QA, regression validation) remains unbuilt and unauthorized. No founder-review UI exists yet for any approval point in this codebase. Validated against one industry bucket (restaurant, alongside the earlier Katz's Delicatessen deli run) — not yet run against a second, structurally different bucket, under a real rate-limit/timeout, or at any meaningful volume.
