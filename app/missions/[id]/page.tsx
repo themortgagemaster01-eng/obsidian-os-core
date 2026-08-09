@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, LayoutTemplate } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/server";
 import { missionRepository } from "@/lib/repositories/mission-repository";
 import { websiteAnalysisRepository } from "@/lib/repositories/website-analysis-repository";
+import { websiteDesignRepository } from "@/lib/repositories/website-design-repository";
 import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
 import { generateInsights } from "@/lib/services/insight-service";
 import { computeOpportunityScore } from "@/lib/services/opportunity-scoring-service";
@@ -44,6 +45,7 @@ export default async function MissionDetailPage({ params }: PageParams) {
   }
 
   const analysis = await websiteAnalysisRepository.findLatestByMission(supabase, mission.id);
+  const design = await websiteDesignRepository.findLatestByMission(supabase, mission.id);
 
   let report = null;
   let screenshotUrl: string | null = null;
@@ -68,6 +70,15 @@ export default async function MissionDetailPage({ params }: PageParams) {
             Mission Control
           </Link>
           <MissionHeader mission={mission} screenshotUrl={screenshotUrl} />
+          {design?.status === "complete" && (
+            <Link
+              href={`/missions/${mission.id}/preview`}
+              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors duration-200 ease-in-out hover:text-foreground"
+            >
+              <LayoutTemplate className="h-3.5 w-3.5" />
+              View Design Preview
+            </Link>
+          )}
         </div>
       </header>
 

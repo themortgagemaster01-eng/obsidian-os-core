@@ -8,7 +8,7 @@
     "export-review-package": "bash scripts/export-review-package.sh",
     "lint": "next lint",
     "start": "next start",
-    "test": "node node_modules/typescript/bin/tsc -p tsconfig.test.json && node --require ./scripts/register-path-alias.js --test .test-build/lib/services/*.test.js .test-build/lib/design-intelligence/*.test.js .test-build/lib/design-references/*.test.js .test-build/lib/adapters/*.test.js .test-build/lib/llm/*.test.js"
+    "test": "node node_modules/typescript/bin/tsc -p tsconfig.test.json && node --require ./scripts/register-path-alias.js --test .test-build/lib/services/*.test.js .test-build/lib/design-intelligence/*.test.js .test-build/lib/design-references/*.test.js .test-build/lib/adapters/*.test.js .test-build/lib/llm/*.test.js .test-build/lib/design-render/*.test.js"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.0",
