@@ -49,6 +49,12 @@ function describeEvent(event: DomainEvent): string {
       return `Website design ready: ${event.payload.sectionCount} section(s), ${event.payload.layoutFamily} layout`;
     case "WebsiteDesignFailed":
       return `Website design failed: ${event.payload.errorMessage}`;
+    case "DesignQaComplete":
+      return `Design QA complete: ${event.payload.overallVerdict}${
+        event.payload.renderedQaAvailable ? "" : " (Rendered QA unavailable)"
+      }`;
+    case "DesignQaFailed":
+      return `Design QA failed: ${event.payload.errorMessage}`;
     case "ProposalReady":
       return "Proposal ready";
     case "EmailDraftReady":

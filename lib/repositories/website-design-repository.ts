@@ -62,6 +62,26 @@ export const websiteDesignRepository = {
     if (error) throw error;
     return data;
   },
+
+  /**
+   * Every completed design run in an organization — design-qa-service.ts's
+   * batch input for lib/design-intelligence/layout-rules.ts's
+   * findDuplicateSectionStructures() (§4.3/§4.10/§4.11's cross-mission
+   * "not a template" check, that function's first real caller) and for
+   * Typography QA's "is this pairing becoming the de facto default" check.
+   * Deliberately scoped to `status = 'complete'` only — a pending/failed run
+   * has no wireframe/refined_design worth comparing against.
+   */
+  async listCompletedByOrganization(client: TypedClient, organizationId: string): Promise<WebsiteDesignRow[]> {
+    const { data, error } = await client
+      .from("website_designs")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .eq("status", "complete");
+
+    if (error) throw error;
+    return data ?? [];
+  },
 };
 
 export type { GenerationStatus };

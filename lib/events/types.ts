@@ -35,6 +35,8 @@ export type DomainEventType =
   | "DesignBriefApproved"
   | "WebsiteDesignReady"
   | "WebsiteDesignFailed"
+  | "DesignQaComplete"
+  | "DesignQaFailed"
   | "ProposalReady"
   | "EmailDraftReady"
   | "MissionApproved"
@@ -129,6 +131,22 @@ export interface WebsiteDesignFailedPayload {
   errorMessage: string;
 }
 
+/**
+ * Sprint 4 Phase 4 (Design QA, docs/SPRINT_4_PHASE_4_DESIGN_REVIEW.md).
+ * Published by lib/services/design-qa-service.ts when a QA run completes,
+ * immediately before the mission transitions `designing -> qa` — the one
+ * transition this service owns, mirroring how design-brief-service.ts owns
+ * `researching -> reviewing` and `reviewing -> designing`.
+ */
+export interface DesignQaCompletePayload {
+  overallVerdict: "PASS" | "FAIL" | "INCOMPLETE";
+  renderedQaAvailable: boolean;
+}
+
+export interface DesignQaFailedPayload {
+  errorMessage: string;
+}
+
 export interface ProposalReadyPayload {
   proposalId?: string;
   price?: number;
@@ -182,6 +200,8 @@ export type DomainEvent = DomainEventBase &
     | { type: "DesignBriefApproved"; payload: DesignBriefApprovedPayload }
     | { type: "WebsiteDesignReady"; payload: WebsiteDesignReadyPayload }
     | { type: "WebsiteDesignFailed"; payload: WebsiteDesignFailedPayload }
+    | { type: "DesignQaComplete"; payload: DesignQaCompletePayload }
+    | { type: "DesignQaFailed"; payload: DesignQaFailedPayload }
     | { type: "ProposalReady"; payload: ProposalReadyPayload }
     | { type: "EmailDraftReady"; payload: EmailDraftReadyPayload }
     | { type: "MissionApproved"; payload: MissionApprovedPayload }

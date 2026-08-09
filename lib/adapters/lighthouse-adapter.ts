@@ -28,7 +28,13 @@ interface LighthouseRunnerResult {
 }
 type LighthouseRunner = (
   url: string,
-  flags: { port?: number; output?: string; logLevel?: string; onlyCategories?: string[] }
+  flags: {
+    port?: number;
+    output?: string;
+    logLevel?: string;
+    onlyCategories?: string[];
+    extraHeaders?: Record<string, string>;
+  }
 ) => Promise<LighthouseRunnerResult | undefined>;
 
 // lighthouse's package.json declares "type": "module" — it's ESM-only, and
@@ -65,6 +71,19 @@ function toScore100(score: number | null | undefined): number | null {
   return Math.round(score * 100);
 }
 
+export interface LighthouseAdapterOptions {
+  /**
+   * Extra request headers Lighthouse's own Chrome navigation should send —
+   * in practice a real, already-authenticated session's `Cookie` header
+   * (docs/SPRINT_4_PHASE_4_DESIGN_REVIEW.md §4.7's disclosed dependency: an
+   * authenticated route has nothing for a cookie-less Lighthouse run to
+   * measure). Optional and additive — every existing caller (the Analysis
+   * Engine, auditing a target business's public site) passes none and gets
+   * byte-for-byte the same behavior as before this option existed.
+   */
+  extraHeaders?: Record<string, string>;
+}
+
 /**
  * lighthouse-adapter — runs Google Lighthouse against the target URL via a
  * locally launched headless Chrome (docs/SPRINT_3_DESIGN_REVIEW.md §1, §8:
@@ -75,7 +94,10 @@ function toScore100(score: number | null | undefined): number | null {
  * Pure function: URL in, raw findings out. Launches and tears down its own
  * Chrome instance per call, same tradeoff noted in accessibility-adapter.ts.
  */
-export async function runLighthouseAdapter(targetUrl: string): Promise<LighthouseRawResult> {
+export async function runLighthouseAdapter(
+  targetUrl: string,
+  options: LighthouseAdapterOptions = {}
+): Promise<LighthouseRawResult> {
   const emptyScores = {
     performance: null,
     accessibility: null,
@@ -93,6 +115,7 @@ export async function runLighthouseAdapter(targetUrl: string): Promise<Lighthous
       output: "json",
       logLevel: "error",
       onlyCategories: [...CATEGORIES],
+      ...(options.extraHeaders ? { extraHeaders: options.extraHeaders } : {}),
     });
 
     if (!runnerResult?.lhr) {

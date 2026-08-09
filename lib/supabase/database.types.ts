@@ -602,6 +602,7 @@ export interface Database {
           wireframe: Json | null;
           components: Json | null;
           refined_design: Json | null;
+          qa_result: Json | null;
           error_message: string | null;
           started_at: string | null;
           completed_at: string | null;
@@ -616,6 +617,7 @@ export interface Database {
           wireframe?: Json | null;
           components?: Json | null;
           refined_design?: Json | null;
+          qa_result?: Json | null;
           error_message?: string | null;
           started_at?: string | null;
           completed_at?: string | null;
@@ -630,6 +632,7 @@ export interface Database {
           wireframe?: Json | null;
           components?: Json | null;
           refined_design?: Json | null;
+          qa_result?: Json | null;
           error_message?: string | null;
           started_at?: string | null;
           completed_at?: string | null;

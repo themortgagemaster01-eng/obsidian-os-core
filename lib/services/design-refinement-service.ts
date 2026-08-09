@@ -152,7 +152,8 @@ export interface SpacingRefinement {
   violations: string[];
 }
 
-function spacingRoleFor(section: SectionType): SectionSpacingRole {
+/** Exported for design-qa-service.ts's independent re-verification of section-spacing role-proportionality (defense in depth, §4.2) — never for a caller to derive a *new* spacing decision from. */
+export function spacingRoleFor(section: SectionType): SectionSpacingRole {
   if (section === "hero") return "hero";
   if (section === "footer") return "closing";
   return "content";
@@ -168,12 +169,12 @@ function spacingRoleFor(section: SectionType): SectionSpacingRole {
  * concrete form of §4's "a hero's internal spacing is not the same scale as
  * a footer link list's."
  */
-const SECTION_PADDING_STEP_INDEX_BY_ROLE: Record<SectionSpacingRole, number> = {
+export const SECTION_PADDING_STEP_INDEX_BY_ROLE: Record<SectionSpacingRole, number> = {
   hero: 9, // 8rem
   content: 7, // 4rem
   closing: 5, // 2rem
 };
-const COMPONENT_PADDING_STEP_INDEX_BY_ROLE: Record<SectionSpacingRole, number> = {
+export const COMPONENT_PADDING_STEP_INDEX_BY_ROLE: Record<SectionSpacingRole, number> = {
   hero: 5, // 2rem
   content: 3, // 1rem
   closing: 1, // 0.5rem
@@ -251,8 +252,8 @@ export interface MotionRefinement {
   violations: string[];
 }
 
-/** The footer carries no direction-specific content (design-generation-service.ts's own RATIONALE_BY_SECTION) — no motion needed, per §6's "never exist purely to seem alive." */
-const NO_MOTION_SECTIONS: SectionType[] = ["footer"];
+/** The footer carries no direction-specific content (design-generation-service.ts's own RATIONALE_BY_SECTION) — no motion needed, per §6's "never exist purely to seem alive." Exported so design-qa-service.ts can independently re-verify "every animated section has a motion entry, every non-animated one doesn't" rather than assuming refineMotion's own output. */
+export const NO_MOTION_SECTIONS: SectionType[] = ["footer"];
 
 const RESTRAINED_DURATION_MS = Math.round((MOTION_DURATION_BAND_MS.min + MOTION_DURATION_BAND_MS.max) / 2);
 /** Outside the default band on purpose — only ever used with deliberateDeviation: true, the disclosed-deviation mechanism §6 requires. */
@@ -314,10 +315,10 @@ export interface MobileRefinement {
   violations: string[];
 }
 
-/** Sections with a primary interactive element a mobile user taps — everything else in this data model is read-only content. */
-const INTERACTIVE_SECTIONS: SectionType[] = ["hero", "contact", "faq", "schedule", "listings"];
+/** Sections with a primary interactive element a mobile user taps — everything else in this data model is read-only content. Exported for design-qa-service.ts's Conversion QA (§4.9) touch-target-uniqueness check. */
+export const INTERACTIVE_SECTIONS: SectionType[] = ["hero", "contact", "faq", "schedule", "listings"];
 
-const TOUCH_TARGET_NAME_BY_SECTION: Partial<Record<SectionType, string>> = {
+export const TOUCH_TARGET_NAME_BY_SECTION: Partial<Record<SectionType, string>> = {
   hero: "hero-primary-cta",
   contact: "contact-primary-action",
   faq: "faq-accordion-toggle",
