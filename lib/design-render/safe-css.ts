@@ -19,6 +19,24 @@
  * so an LLM's descriptive font phrase can be passed straight through, quoted.
  */
 
+/**
+ * Shared minimum opacity for de-emphasized text (slot labels, placeholder
+ * markers, secondary copy) across the design-preview renderer. A real
+ * axe-core run against the rendered Veslo Family Restaurant preview found a
+ * genuine "serious" color-contrast violation on 15 nodes — not from any
+ * Design Memory color choice (those were rejected as invalid CSS by
+ * toSafeCssColor and fell back to this renderer's own defaults), but from
+ * this renderer's own previous 0.55/0.6 opacity values blending dark text
+ * toward its light background below the WCAG AA 4.5:1 threshold for normal-
+ * size text (measured ~4.48:1 at 0.6, i.e. an actual, reproducible failure,
+ * not a false positive). 0.75 clears every text/background pairing this
+ * renderer's fallback palette actually produces with real margin (~7.4:1 for
+ * the tightest real case, dark text on the light neutral fallback) — a fix
+ * at this shared constant, not a per-business or per-run patch, so it holds
+ * for every future mission's fallback-colored preview, not just this one.
+ */
+export const MUTED_TEXT_OPACITY = 0.75;
+
 const HEX_COLOR = /^#[0-9a-f]{3,4}$|^#[0-9a-f]{6}$|^#[0-9a-f]{8}$/i;
 const FUNCTIONAL_COLOR = /^(rgb|rgba|hsl|hsla)\([^)]+\)$/i;
 const SINGLE_WORD = /^[a-z]+$/i;

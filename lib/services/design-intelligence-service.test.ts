@@ -20,6 +20,7 @@ const SAMPLE_INPUT: DesignIntelligenceInput = {
   ],
   weakestCategory: { category: "performance", score: 25 },
   candidateReferences: selectReferenceDirections("restaurant"),
+  contactEvidence: { phones: ["212-555-0100"], emails: [], address: null, hours: null },
 };
 
 function validResponseJson(overrides: Record<string, unknown> = {}): string {
@@ -80,6 +81,21 @@ describe("design-intelligence-service: buildDesignIntelligencePrompt", () => {
   test("user prompt lists candidate references with an explicit 'inspiration only' instruction", () => {
     assert.match(userPrompt, /restaurant-imagery-atmosphere/);
     assert.match(userPrompt, /inspiration for your reasoning only — never copy their structure/);
+  });
+
+  test("system prompt states the contact-evidence honesty rule", () => {
+    assert.match(systemPrompt, /Contact-evidence honesty rule, non-negotiable/);
+    assert.match(systemPrompt, /never claim, imply, or promise that it is present/);
+  });
+
+  test("user prompt marks a verified contact field as VERIFIED with its real value", () => {
+    assert.match(userPrompt, /Phone: VERIFIED — 212-555-0100/);
+  });
+
+  test("user prompt marks unverified contact fields as not verified, never inventing a value", () => {
+    assert.match(userPrompt, /Email: not verified — do not claim or imply one exists\./);
+    assert.match(userPrompt, /Address: not verified — do not claim or imply one exists\./);
+    assert.match(userPrompt, /Hours: not verified — do not claim or imply they exist\./);
   });
 });
 

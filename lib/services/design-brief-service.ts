@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Json } from "@/lib/supabase/database.types";
 import type { AnalysisCategory, NormalizedAnalysis } from "@/lib/services/analysis-types";
+import type { ContactInfo } from "@/lib/adapters/types";
 import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
 import { generateInsights, type Insight } from "@/lib/services/insight-service";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
@@ -69,6 +70,16 @@ export interface DesignBrief {
   industryBucket: IndustryBucket;
   /** §12 AC1 (docs/SPRINT_4_DESIGN_REVIEW.md): at least one citation is required — runDesignBrief() throws rather than producing an uncitable brief. */
   citedInsights: DesignBriefCitation[];
+  /**
+   * Real, mechanically-extracted contact facts (NormalizedAnalysis.contactEvidence,
+   * itself a pass-through of the crawl's own ContactInfo) — deterministic
+   * evidence, gathered here like citedInsights/referencesConsidered, never
+   * decided by the LLM. This is what design-generation-service.ts's contact
+   * slots and design-intelligence-service.ts's prompt both ground themselves
+   * in, so neither ever has to guess or imply contact evidence that was
+   * never actually captured (§8's zero-fabrication rule).
+   */
+  contactEvidence: ContactInfo;
   targetAudience: string;
   positioning: string;
   direction: {
@@ -285,6 +296,7 @@ export async function runDesignBrief(
         citedInsights,
         weakestCategory,
         candidateReferences,
+        contactEvidence: normalized.contactEvidence,
       },
       // Real spend once a live key is configured — logged per run so cost
       // is visible in server logs rather than invisible until a bill
@@ -305,6 +317,7 @@ export async function runDesignBrief(
       industry: company?.industry ?? null,
       industryBucket,
       citedInsights,
+      contactEvidence: normalized.contactEvidence,
       targetAudience: creative.targetAudience,
       positioning: creative.positioning,
       direction: creative.direction,

@@ -1,4 +1,5 @@
 import type { ComponentSlot } from "@/lib/services/design-generation-service";
+import { MUTED_TEXT_OPACITY } from "@/lib/design-render/safe-css";
 
 /**
  * Renders one ComponentSlot (lib/services/design-generation-service.ts)
@@ -19,7 +20,7 @@ export function SlotValue({ slot, textColor }: { slot: ComponentSlot; textColor:
         padding: "0.25em 0.6em",
         border: `1px dashed ${textColor}`,
         borderRadius: "0.375rem",
-        opacity: 0.55,
+        opacity: MUTED_TEXT_OPACITY,
         fontStyle: "italic",
         fontSize: "0.85em",
       }}

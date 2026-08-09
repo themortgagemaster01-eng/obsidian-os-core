@@ -21,6 +21,7 @@ const BASE: NormalizedAnalysis = {
   lighthouse: { performance: 40, accessibility: 50, bestPractices: 60, seo: 70 },
   technologyStack: [],
   measurementStatus: { crawl: true, mobile: true, seo: true, accessibility: true, lighthouse: true, techDetection: true },
+  contactEvidence: { phones: [], emails: [], address: null, hours: null },
 };
 
 describe("opportunity-scoring-service", () => {

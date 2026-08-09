@@ -10,6 +10,9 @@ import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rul
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
+import type { ContactInfo } from "@/lib/adapters/types";
+
+const NO_CONTACT_EVIDENCE: ContactInfo = { phones: [], emails: [], address: null, hours: null };
 
 const ALL_BUCKETS: IndustryBucket[] = [
   "restaurant",
@@ -22,7 +25,7 @@ const ALL_BUCKETS: IndustryBucket[] = [
   "general",
 ];
 
-function briefFor(industryBucket: IndustryBucket, layoutFamily: LayoutFamily): DesignBrief {
+function briefFor(industryBucket: IndustryBucket, layoutFamily: LayoutFamily, contactEvidence: ContactInfo = NO_CONTACT_EVIDENCE): DesignBrief {
   return {
     missionId: "mission-1",
     businessName: "Acme Co",
@@ -33,6 +36,7 @@ function briefFor(industryBucket: IndustryBucket, layoutFamily: LayoutFamily): D
       { category: "performance", insightId: "slow-page-load", statement: "Pages load slowly." },
       { category: "mobile", insightId: "mobile-experience-gap", statement: "Mobile experience is rough." },
     ],
+    contactEvidence,
     targetAudience: "Test audience",
     positioning: "Test positioning",
     direction: {
@@ -105,6 +109,7 @@ describe("design-generation-service: assembleComponents", () => {
     const imageryComponents = assembleComponents(imageryWireframe, {
       businessName: "Acme",
       citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
     });
     assert.equal(imageryComponents[0].componentKind, "ImageLedHero");
 
@@ -112,6 +117,7 @@ describe("design-generation-service: assembleComponents", () => {
     const scheduleComponents = assembleComponents(scheduleWireframe, {
       businessName: "Acme",
       citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
     });
     assert.equal(scheduleComponents[0].componentKind, "EnergeticHero");
   });
@@ -121,6 +127,7 @@ describe("design-generation-service: assembleComponents", () => {
     const components = assembleComponents(wireframe, {
       businessName: "Acme Co",
       citedInsights: briefFor("general", "editorial").citedInsights,
+      contactEvidence: NO_CONTACT_EVIDENCE,
     });
     for (const node of components) {
       for (const slot of node.slots) {
@@ -133,21 +140,58 @@ describe("design-generation-service: assembleComponents", () => {
 
   test("contact and footer sections carry the real business name, never a placeholder", () => {
     const wireframe = generateWireframe(briefFor("homeService", "credibility-led"), { hasRealTestimonials: false });
-    const components = assembleComponents(wireframe, { businessName: "Bob's Plumbing", citedInsights: [] });
+    const components = assembleComponents(wireframe, { businessName: "Bob's Plumbing", citedInsights: [], contactEvidence: NO_CONTACT_EVIDENCE });
     const contact = components.find((c) => c.section === "contact")!;
     const footer = components.find((c) => c.section === "footer")!;
     assert.equal(contact.slots.find((s) => s.name === "businessName")?.value, "Bob's Plumbing");
     assert.equal(footer.slots.find((s) => s.name === "businessName")?.value, "Bob's Plumbing");
   });
 
-  test("contact section's phone/address/hours are placeholders — the crawl adapter doesn't capture them today", () => {
+  test("contact section's phone/address/hours are placeholders when no contact evidence was captured — never fabricated", () => {
     const wireframe = generateWireframe(briefFor("general", "editorial"), { hasRealTestimonials: false });
-    const components = assembleComponents(wireframe, { businessName: "Acme", citedInsights: [] });
+    const components = assembleComponents(wireframe, { businessName: "Acme", citedInsights: [], contactEvidence: NO_CONTACT_EVIDENCE });
     const contact = components.find((c) => c.section === "contact")!;
     for (const name of ["phone", "address", "hours"]) {
       const slot = contact.slots.find((s) => s.name === name)!;
       assert.equal(slot.source, "placeholder");
+      assert.equal(slot.value, null);
     }
+  });
+
+  test("contact section uses real evidence per-field when the crawl captured it, and stays placeholder for fields it didn't — the Veslo Family Restaurant regression case (real phone, no verified address/hours)", () => {
+    const evidence: ContactInfo = { phones: ["519-744-9292"], emails: [], address: null, hours: null };
+    const wireframe = generateWireframe(briefFor("restaurant", "imagery-led"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, { businessName: "Veslo Family Restaurant", citedInsights: [], contactEvidence: evidence });
+    const contact = components.find((c) => c.section === "contact")!;
+
+    const phone = contact.slots.find((s) => s.name === "phone")!;
+    assert.equal(phone.source, "real");
+    assert.equal(phone.value, "519-744-9292");
+
+    for (const name of ["address", "hours"]) {
+      const slot = contact.slots.find((s) => s.name === name)!;
+      assert.equal(slot.source, "placeholder");
+      assert.equal(slot.value, null);
+    }
+  });
+
+  test("contact section marks all three fields real when the crawl captured all three", () => {
+    const evidence: ContactInfo = {
+      phones: ["555-000-1111"],
+      emails: ["hello@acme.test"],
+      address: "1 Main St, Springfield",
+      hours: "Mon-Fri 9am-5pm",
+    };
+    const wireframe = generateWireframe(briefFor("general", "editorial"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, { businessName: "Acme", citedInsights: [], contactEvidence: evidence });
+    const contact = components.find((c) => c.section === "contact")!;
+
+    assert.equal(contact.slots.find((s) => s.name === "phone")?.source, "real");
+    assert.equal(contact.slots.find((s) => s.name === "phone")?.value, "555-000-1111");
+    assert.equal(contact.slots.find((s) => s.name === "address")?.source, "real");
+    assert.equal(contact.slots.find((s) => s.name === "address")?.value, "1 Main St, Springfield");
+    assert.equal(contact.slots.find((s) => s.name === "hours")?.source, "real");
+    assert.equal(contact.slots.find((s) => s.name === "hours")?.value, "Mon-Fri 9am-5pm");
   });
 
   test("faq section slots are real, grounded in cited insights, capped and deduplicated by category", () => {
@@ -159,6 +203,7 @@ describe("design-generation-service: assembleComponents", () => {
         ...brief.citedInsights,
         { category: "performance", insightId: "dup", statement: "Duplicate category citation." },
       ],
+      contactEvidence: NO_CONTACT_EVIDENCE,
     });
     const faq = components.find((c) => c.section === "faq")!;
     const categories = faq.slots.map((s) => s.name);
@@ -171,7 +216,7 @@ describe("design-generation-service: assembleComponents", () => {
   test("throws if a testimonials section exists but no real testimonial text was supplied", () => {
     const wireframe = generateWireframe(briefFor("general", "editorial"), { hasRealTestimonials: true });
     assert.throws(
-      () => assembleComponents(wireframe, { businessName: "Acme", citedInsights: [] }),
+      () => assembleComponents(wireframe, { businessName: "Acme", citedInsights: [], contactEvidence: NO_CONTACT_EVIDENCE }),
       /requires real testimonial text/
     );
   });
@@ -182,6 +227,7 @@ describe("design-generation-service: assembleComponents", () => {
       businessName: "Acme",
       citedInsights: [],
       realTestimonials: ["Great service!", "Would recommend."],
+      contactEvidence: NO_CONTACT_EVIDENCE,
     });
     const testimonials = components.find((c) => c.section === "testimonials")!;
     assert.equal(testimonials.slots.length, 2);

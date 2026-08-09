@@ -14,7 +14,11 @@ import type {
   AccessibilityRawResult,
   LighthouseRawResult,
   TechDetectionRawResult,
+  ContactInfo,
 } from "@/lib/adapters/types";
+
+/** Honest empty default — no crawl, or a crawl that never produced structured facts (predates docs/ARCHITECTURE_SPECIFICATION_V1.md's expanded crawler, or the fetch failed). Never a guessed value standing in for a missing one. */
+const EMPTY_CONTACT_EVIDENCE: ContactInfo = { phones: [], emails: [], address: null, hours: null };
 
 /**
  * The five v1 Opportunity Score categories (docs/SPRINT_3_DESIGN_REVIEW.md
@@ -72,6 +76,17 @@ export interface NormalizedAnalysis {
   };
   technologyStack: string[];
   measurementStatus: MeasurementStatus;
+  /**
+   * Real, mechanically-extracted contact facts from the crawl (§ARCHITECTURE_SPECIFICATION_V1's
+   * expanded crawler) — surfaced here so downstream engines (Design Brief,
+   * Generation) can use verified contact data when it exists and honestly
+   * omit/placeholder it when it doesn't, instead of the crawl's own
+   * structured facts being silently dropped between Analysis and everything
+   * that reads NormalizedAnalysis. Empty arrays/null fields mean "not
+   * detected," never "confirmed absent" — same honesty contract as
+   * lib/adapters/types.ts's ContactInfo itself.
+   */
+  contactEvidence: ContactInfo;
 }
 
 function clampScore(value: number): number {
@@ -180,6 +195,7 @@ export function normalizedAnalysisFromRow(
       lighthouse: !!lighthouse && !lighthouse.fetchError,
       techDetection: !!tech && !tech.fetchError,
     },
+    contactEvidence: crawl?.contact ?? EMPTY_CONTACT_EVIDENCE,
   };
 }
 
@@ -228,5 +244,6 @@ export function normalizedAnalysisFromRawResults(
       lighthouse: !raw.lighthouse.fetchError,
       techDetection: !raw.techDetection.fetchError,
     },
+    contactEvidence: raw.crawl.contact ?? EMPTY_CONTACT_EVIDENCE,
   };
 }

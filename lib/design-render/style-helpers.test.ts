@@ -21,6 +21,7 @@ function briefFor(): DesignBrief {
     industry: null,
     industryBucket: "restaurant",
     citedInsights: [],
+    contactEvidence: { phones: [], emails: [], address: null, hours: null },
     targetAudience: "Test audience",
     positioning: "Test positioning",
     direction: {

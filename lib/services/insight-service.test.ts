@@ -36,6 +36,7 @@ const GOOD_ANALYSIS: NormalizedAnalysis = {
   lighthouse: { performance: 95, accessibility: 95, bestPractices: 95, seo: 95 },
   technologyStack: ["WordPress"],
   measurementStatus: { crawl: true, mobile: true, seo: true, accessibility: true, lighthouse: true, techDetection: true },
+  contactEvidence: { phones: [], emails: [], address: null, hours: null },
 };
 
 const BAD_ANALYSIS: NormalizedAnalysis = {
@@ -73,6 +74,7 @@ const BAD_ANALYSIS: NormalizedAnalysis = {
   lighthouse: { performance: 35, accessibility: 40, bestPractices: 50, seo: 45 },
   technologyStack: [],
   measurementStatus: { crawl: true, mobile: true, seo: true, accessibility: true, lighthouse: true, techDetection: true },
+  contactEvidence: { phones: [], emails: [], address: null, hours: null },
 };
 
 describe("insight-service", () => {

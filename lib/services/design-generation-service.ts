@@ -7,6 +7,7 @@ import { refineDesign, type RefinedDesign } from "@/lib/services/design-refineme
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
+import type { ContactInfo } from "@/lib/adapters/types";
 
 import {
   websiteDesignRepository,
@@ -188,6 +189,8 @@ export interface AssembleComponentsContext {
   citedInsights: DesignBriefCitation[];
   /** Real testimonial text, when captured — required if the wireframe includes a "testimonials" section (see generateWireframe's hasRealTestimonials gate). */
   realTestimonials?: string[];
+  /** Real, mechanically-extracted contact facts (DesignBrief.contactEvidence) — each field renders as a real slot only when actually captured; missing fields stay honestly placeholder, never invented (§8). */
+  contactEvidence: ContactInfo;
 }
 
 function realSlot(name: string, value: string): ComponentSlot {
@@ -202,11 +205,15 @@ function placeholderSlot(name: string): ComponentSlot {
  * Builds the slots for one section. Every slot is explicitly marked "real"
  * (with the actual value) or "placeholder" (value: null) — never a
  * plausible-sounding invented value standing in for data this pipeline
- * doesn't actually have. Several sections are placeholder-only today
- * because the Analysis stage's crawl adapter (lib/adapters/crawl-adapter.ts)
- * does not currently extract phone/address/hours/certifications — a real,
- * disclosed gap, not a design choice (see the design-generation-service
- * commit's judgment-call notes).
+ * doesn't actually have. The contact section's phone/address/hours slots
+ * use context.contactEvidence (the crawl's own captured facts, passed
+ * through unchanged) when available and fall back to placeholder otherwise
+ * — the same real-vs-placeholder discipline already applied to testimonials.
+ * credibility's yearsInBusiness/reviewCount/certifications remain
+ * placeholder-only: the crawl adapter does not currently extract those as
+ * usable structured facts for this context — a real, disclosed gap, not a
+ * design choice (see the design-generation-service commit's judgment-call
+ * notes).
  */
 function buildSlots(section: SectionType, context: AssembleComponentsContext): ComponentSlot[] {
   switch (section) {
@@ -244,9 +251,15 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
     case "contact":
       return [
         realSlot("businessName", context.businessName),
-        placeholderSlot("phone"),
-        placeholderSlot("address"),
-        placeholderSlot("hours"),
+        context.contactEvidence.phones.length > 0
+          ? realSlot("phone", context.contactEvidence.phones[0])
+          : placeholderSlot("phone"),
+        context.contactEvidence.address
+          ? realSlot("address", context.contactEvidence.address)
+          : placeholderSlot("address"),
+        context.contactEvidence.hours
+          ? realSlot("hours", context.contactEvidence.hours)
+          : placeholderSlot("hours"),
       ];
     case "footer":
       return [realSlot("businessName", context.businessName), realSlot("copyrightYear", String(new Date().getFullYear()))];
@@ -293,6 +306,7 @@ export function generateWebsiteStructure(
     businessName: brief.businessName,
     citedInsights: brief.citedInsights,
     realTestimonials: options.realTestimonials,
+    contactEvidence: brief.contactEvidence,
   });
   const refinedDesign = refineDesign({ wireframe }, brief, options.designMemory);
   return { wireframe, components, refinedDesign };

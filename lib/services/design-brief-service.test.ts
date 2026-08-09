@@ -23,6 +23,7 @@ const CLEAN_ANALYSIS: NormalizedAnalysis = {
   lighthouse: { performance: 91, accessibility: 90, bestPractices: 95, seo: 92 },
   technologyStack: [],
   measurementStatus: { crawl: true, mobile: true, seo: true, accessibility: true, lighthouse: true, techDetection: true },
+  contactEvidence: { phones: ["555-123-4567"], emails: [], address: null, hours: null },
 };
 
 const POOR_ANALYSIS: NormalizedAnalysis = {
@@ -94,6 +95,7 @@ function fixtureBrief(overrides: Partial<DesignBrief> = {}): DesignBrief {
     industry: "Law Firm",
     industryBucket: "lawFirm",
     citedInsights: [{ category: "performance", insightId: "slow-page-load", statement: "Pages load slowly." }],
+    contactEvidence: { phones: [], emails: [], address: null, hours: null },
     targetAudience: "Prospective clients evaluating credibility.",
     positioning: "Lead with credibility and outcomes.",
     direction: {

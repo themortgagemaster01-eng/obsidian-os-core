@@ -34,6 +34,7 @@ function briefFor(overrides: Partial<DesignBrief["direction"]> = {}): DesignBrie
       { category: "performance", statement: "The homepage loads slowly on mobile connections." },
       { category: "seo", statement: "The homepage is missing a meta description." },
     ],
+    contactEvidence: { phones: [], emails: [], address: null, hours: null },
     targetAudience: "Local diners",
     positioning: "A warm, family-run Italian restaurant",
     direction: {
@@ -73,6 +74,7 @@ function buildValidInput(overrides: Partial<QaStructuredInput> = {}): QaStructur
   const components = assembleComponents(wireframe, {
     businessName: brief.businessName,
     citedInsights: brief.citedInsights,
+    contactEvidence: brief.contactEvidence,
   });
   const refinedDesign = refineDesign({ wireframe }, brief, SAMPLE_DESIGN_MEMORY);
 

@@ -3,6 +3,7 @@ import { extractJsonFromLlmResponse } from "@/lib/llm/json-response";
 
 import type { AnalysisCategory } from "@/lib/services/analysis-types";
 import type { DesignBriefCitation } from "@/lib/services/design-brief-service";
+import type { ContactInfo } from "@/lib/adapters/types";
 import type { IndustryBucket, ReferenceDirection } from "@/lib/design-references/reference-library";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 
@@ -102,6 +103,8 @@ export interface DesignIntelligenceInput {
   citedInsights: DesignBriefCitation[];
   weakestCategory: { category: AnalysisCategory; score: number } | null;
   candidateReferences: ReferenceDirection[];
+  /** Real, mechanically-extracted contact facts (design-brief-service.ts's own deterministic gathering) — told to the model explicitly so it never has to guess or imply contact evidence that was never actually captured (§8). */
+  contactEvidence: ContactInfo;
 }
 
 const VALID_LAYOUT_FAMILIES: LayoutFamily[] = [
@@ -138,6 +141,8 @@ ${principles}
 
 Rules you must never violate:
 ${neverGenerate}
+
+Contact-evidence honesty rule, non-negotiable: you will be told exactly which contact facts (phone, email, address, hours) have been verified by crawling this business's real website. For any field NOT listed as verified, you must never claim, imply, or promise that it is present, prominent, findable, "impossible to miss," or otherwise available — not in "positioning," not in "direction," not anywhere in your response. You may recommend that the contact section be clear and easy to find in general terms (e.g. "make the way to reach us obvious"), but you must never assert a specific unverified phone number, email, address, or hours exists. Only reference a specific contact fact by claiming its prominence if it is explicitly listed as verified below.
 
 Hard constraints on your output:
 - At most ${MAX_TYPE_FAMILIES} type families.
@@ -184,6 +189,17 @@ Respond with ONLY a single JSON object, no prose before or after it, no markdown
 }`;
 }
 
+/** Renders contactEvidence as an explicit verified/not-verified list for the prompt — never a summary that could blur "captured" and "not captured" together. */
+function describeContactEvidence(contact: ContactInfo): string {
+  const lines = [
+    contact.phones.length > 0 ? `- Phone: VERIFIED — ${contact.phones[0]}` : "- Phone: not verified — do not claim or imply one exists.",
+    contact.emails.length > 0 ? `- Email: VERIFIED — ${contact.emails[0]}` : "- Email: not verified — do not claim or imply one exists.",
+    contact.address ? `- Address: VERIFIED — ${contact.address}` : "- Address: not verified — do not claim or imply one exists.",
+    contact.hours ? `- Hours: VERIFIED — ${contact.hours}` : "- Hours: not verified — do not claim or imply they exist.",
+  ];
+  return lines.join("\n");
+}
+
 function buildUserPrompt(input: DesignIntelligenceInput): string {
   const citations = input.citedInsights
     .map((c) => `- [${c.category}] ${c.statement}`)
@@ -208,6 +224,9 @@ Cited findings from this business's website analysis (address these, do not inve
 ${citations}
 
 ${weakest}
+
+Verified contact evidence from this business's real website (per the contact-evidence honesty rule above):
+${describeContactEvidence(input.contactEvidence)}
 
 Candidate reference directions for this industry bucket (inspiration for your reasoning only — never copy their structure):
 ${references}

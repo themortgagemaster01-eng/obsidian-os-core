@@ -11,7 +11,7 @@ import {
   remToPx,
   SECTION_HEADING_LABEL,
 } from "@/lib/design-render/style-helpers";
-import { toSafeCssColor, toSafeFontFamilyStack, toCssFontWeight } from "@/lib/design-render/safe-css";
+import { toSafeCssColor, toSafeFontFamilyStack, toCssFontWeight, MUTED_TEXT_OPACITY } from "@/lib/design-render/safe-css";
 import { SlotValue } from "@/components/design-preview/slot-value";
 
 /**
@@ -222,7 +222,7 @@ function TouchAffordance({
           border: `1px dashed ${textColor}`,
           borderRadius: "0.375rem",
           marginTop: "1rem",
-          opacity: 0.7,
+          opacity: MUTED_TEXT_OPACITY,
           fontStyle: "italic",
           fontSize: "0.85em",
           "--op-tt-w": `${target.widthPx}px`,
@@ -260,7 +260,7 @@ function SectionBody({
     const displayRole = findTypeRole(refinedDesign, "display");
     return (
       <div>
-        <p style={{ textTransform: "uppercase", letterSpacing: "0.08em", fontSize: "0.8rem", opacity: 0.75, marginBottom: "0.5rem" }}>
+        <p style={{ textTransform: "uppercase", letterSpacing: "0.08em", fontSize: "0.8rem", opacity: MUTED_TEXT_OPACITY, marginBottom: "0.5rem" }}>
           {formatLayoutFamily(wireframe.layoutFamily)}
         </p>
         {name && (
@@ -288,7 +288,7 @@ function SectionBody({
     const name = node.slots.find((s) => s.name === "businessName");
     const year = node.slots.find((s) => s.name === "copyrightYear");
     return (
-      <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>
+      <p style={{ fontSize: "0.85rem", opacity: MUTED_TEXT_OPACITY }}>
         {name && <SlotValue slot={name} textColor={textColor} />}
         {year && (
           <>
@@ -343,7 +343,7 @@ function SectionBody({
         <div style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem" }}>
           {node.slots.map((slot) => (
             <div key={slot.name} style={{ minWidth: "10rem" }}>
-              <p style={{ fontSize: "0.75rem", textTransform: "uppercase", opacity: 0.6, marginBottom: "0.25rem" }}>
+              <p style={{ fontSize: "0.75rem", textTransform: "uppercase", opacity: MUTED_TEXT_OPACITY, marginBottom: "0.25rem" }}>
                 {slot.name.replace(/([a-z])([A-Z])/g, "$1 $2")}
               </p>
               <SlotValue slot={slot} textColor={textColor} />

@@ -25,6 +25,7 @@ function briefFor(overrides: Partial<DesignBrief["direction"]> = {}): DesignBrie
     industry: null,
     industryBucket: "general",
     citedInsights: [],
+    contactEvidence: { phones: [], emails: [], address: null, hours: null },
     targetAudience: "Test audience",
     positioning: "Test positioning",
     direction: {
