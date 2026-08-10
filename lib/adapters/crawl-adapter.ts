@@ -134,6 +134,136 @@ const PHONE_REGEX = /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/g;
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const MAX_CONTACT_ITEMS = 5;
 
+// ===========================================================================
+// Visible-text signals (Crawler Extraction Heuristic Review, signal 1):
+// hours/address extraction that reads what a label element's own TEXT says,
+// not just its class/id attribute. `[class*="hours" i]` only ever matches a
+// page builder that happens to name its CSS classes "hours" — a page whose
+// markup is generic (Wix rich-text, plain <p>/<h2> tags) but whose visible
+// copy literally says "Hours of operation:" was previously invisible to
+// this extractor. This adds that as a second, independent source, still
+// no interpretation: either a real label is present and its real value is
+// read off, or nothing is returned.
+// ===========================================================================
+
+const LABELED_VALUE_MAX_CHARS = 300;
+/** How many following siblings to gather after a label-only element (e.g. a lone "Hours of operation:" heading followed by one sibling per day) before giving up. */
+const LABEL_SIBLING_LOOKAHEAD = 8;
+
+/**
+ * Finds the first element whose own flattened text is a real label (matches
+ * `labelWithColon` with non-empty remainder, e.g. "Address: 123 Main St") or
+ * is nothing but the label itself (matches `labelOnly`, e.g. "Hours of
+ * operation:") — in which case its value is gathered from however many of
+ * its following siblings keep matching `siblingContinues`, giving up after
+ * `LABEL_SIBLING_LOOKAHEAD` or the first non-matching sibling. `valuePlausible`
+ * is a last structural gate on the extracted value itself (e.g. "must contain
+ * a digit") so a label match alone never stands in for real evidence — see
+ * each call site below for why that gate is shaped the way it is.
+ */
+function extractLabeledValue(
+  $: cheerio.CheerioAPI,
+  labelWithColon: RegExp,
+  labelOnly: RegExp,
+  valuePlausible: (value: string) => boolean,
+  siblingContinues?: (siblingText: string) => boolean
+): string | null {
+  const candidates = $("h1, h2, h3, h4, h5, h6, p, dt, dd, li, span, div").toArray();
+
+  for (const el of candidates) {
+    const $el = $(el);
+    // Unlike findSectionsByKeywords, footer is NOT excluded here: contact
+    // info (hours/address) is one of the most common legitimate uses of a
+    // footer landmark on small business sites (confirmed on Veslo's own
+    // real contact page — its entire "Hours of operation" widget lives in
+    // a <footer>). The label-match + valuePlausible gates below already do
+    // the work a footer-quality check would, so nav/header/script/style
+    // stay hard-excluded but footer does not.
+    if ($el.closest("nav, header, script, style").length > 0) continue;
+
+    const text = $el.text().trim().replace(/\s+/g, " ");
+    if (text.length === 0 || text.length > LABELED_VALUE_MAX_CHARS) continue;
+
+    const withColon = text.match(labelWithColon);
+    if (withColon) {
+      const remainder = text.slice(withColon[0].length).trim();
+      if (remainder.length > 0) {
+        if (valuePlausible(remainder)) return remainder.slice(0, LABELED_VALUE_MAX_CHARS);
+        continue; // labeled, but what follows isn't a plausible value — not label-only either, so nothing more to try here
+      }
+      // Label matched with nothing after the colon (e.g. "Hours of operation:") —
+      // structurally identical to a label-only match, so fall through to the
+      // same sibling-gather below rather than giving up on this element.
+    } else if (!labelOnly.test(text)) {
+      continue;
+    }
+
+    let combined = "";
+    let sib = $el.next();
+    let count = 0;
+    while (sib.length > 0 && count < LABEL_SIBLING_LOOKAHEAD && combined.length < LABELED_VALUE_MAX_CHARS) {
+      const sibText = sib.text().trim().replace(/\s+/g, " ");
+      if (sibText) {
+        if (siblingContinues && !siblingContinues(sibText)) break;
+        combined += (combined ? " " : "") + sibText;
+      }
+      sib = sib.next();
+      count++;
+    }
+    if (combined.length > 0 && valuePlausible(combined)) {
+      return combined.slice(0, LABELED_VALUE_MAX_CHARS);
+    }
+  }
+
+  return null;
+}
+
+const HOURS_LABEL_WITH_COLON = /^(hours(\s+of\s+operation)?|business\s+hours|store\s+hours)\s*:\s*/i;
+const HOURS_LABEL_ONLY = /^(hours(\s+of\s+operation)?|business\s+hours|store\s+hours)\s*:?\s*$/i;
+/** A plausible hours *value* names a day, says "closed"/"daily"/"24/7"/"by appointment", or gives a clock time — never just any text that happened to follow the word "Hours" (guards the "Hours: please call ahead for details" false-positive case: "please call ahead" itself isn't hours data). */
+const HOURS_VALUE_PLAUSIBLE = /\b(mon|tue|wed|thu|fri|sat|sun|closed|daily|24\/7|by\s+appointment)\b|\d{1,2}(:\d{2})?\s*(am|pm)/i;
+
+/** Explicit day-name forms (not a bare 3-letter-prefix + wildcard) — a prefix+wildcard match like `\bfri[a-z]*\b` would just as happily consume "Friendly" or "Friend" as "Friday"/"Fri", which real copy ("Family-Friendly Convenience... Hours 7am-7pm") actually contains right next to real time text. Spelling out every real form keeps the day-name match exact. */
+const DAY_NAME = "(?:Mon(?:day)?|Tue(?:s(?:day)?)?|Wed(?:s|nesday)?|Thu(?:r|rs(?:day)?)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)";
+/** No label at all, last resort: a day name followed within a short window by a clock time or "closed" — e.g. an hours table with no heading whatsoever. Deliberately bounded to a single day+time pairing per match so it can't sprawl into unrelated surrounding prose. */
+const HOURS_PATTERN_NO_LABEL = new RegExp(
+  `\\b${DAY_NAME}\\b[^.\\n]{0,40}?(?:\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)|closed)`,
+  "i"
+);
+
+function extractHours($: cheerio.CheerioAPI, hoursFromJsonLd: string | null): string | null {
+  if (hoursFromJsonLd) return hoursFromJsonLd;
+
+  const hoursFromDom =
+    $('[class*="hours" i], [id*="hours" i]').first().text().trim().replace(/\s+/g, " ").slice(0, 300) || null;
+  if (hoursFromDom) return hoursFromDom;
+
+  const hoursFromLabel = extractLabeledValue(
+    $,
+    HOURS_LABEL_WITH_COLON,
+    HOURS_LABEL_ONLY,
+    (value) => HOURS_VALUE_PLAUSIBLE.test(value),
+    (siblingText) => HOURS_VALUE_PLAUSIBLE.test(siblingText)
+  );
+  if (hoursFromLabel) return hoursFromLabel;
+
+  const bodyText = $("body").text().replace(/\s+/g, " ");
+  const noLabelMatch = bodyText.match(HOURS_PATTERN_NO_LABEL);
+  return noLabelMatch ? noLabelMatch[0].trim().slice(0, 300) : null;
+}
+
+const ADDRESS_LABEL_WITH_COLON = /^(address|location)\s*:\s*/i;
+const ADDRESS_LABEL_ONLY = /^(address|location)\s*:?\s*$/i;
+/** A plausible address *value* starts with a number, per the overwhelming convention of street addresses ("100 Arnold Street...", "3027 Blue Ridge Road...") — guards the "Address these three points before..." false-positive case, where "address" is a verb, not a label. */
+const ADDRESS_VALUE_PLAUSIBLE = /^\d/;
+
+function extractAddress($: cheerio.CheerioAPI, addressFromJsonLd: string | null): string | null {
+  if (addressFromJsonLd) return addressFromJsonLd;
+  return extractLabeledValue($, ADDRESS_LABEL_WITH_COLON, ADDRESS_LABEL_ONLY, (value) =>
+    ADDRESS_VALUE_PLAUSIBLE.test(value)
+  );
+}
+
 function extractContact($: cheerio.CheerioAPI, jsonLd: JsonLdEntity[]): ContactInfo {
   const bodyText = $("body").text();
 
@@ -159,7 +289,8 @@ function extractContact($: cheerio.CheerioAPI, jsonLd: JsonLdEntity[]): ContactI
     MAX_CONTACT_ITEMS
   );
 
-  const address = jsonLd.map((e) => formatJsonLdAddress(e.address)).find((v): v is string => !!v) ?? null;
+  const addressFromJsonLd = jsonLd.map((e) => formatJsonLdAddress(e.address)).find((v): v is string => !!v) ?? null;
+  const address = extractAddress($, addressFromJsonLd);
 
   const jsonLdHours = jsonLd.map((e) => e.openingHours).find((v) => v !== undefined);
   const hoursFromJsonLd = jsonLdHours
@@ -167,8 +298,7 @@ function extractContact($: cheerio.CheerioAPI, jsonLd: JsonLdEntity[]): ContactI
       ? jsonLdHours.join("; ")
       : jsonLdHours
     : null;
-  const hoursFromDom = $('[class*="hours" i], [id*="hours" i]').first().text().trim().replace(/\s+/g, " ").slice(0, 300) || null;
-  const hours = hoursFromJsonLd ?? hoursFromDom;
+  const hours = extractHours($, hoursFromJsonLd);
 
   return { phones, emails, address, hours };
 }
@@ -268,15 +398,62 @@ function extractGallery($: cheerio.CheerioAPI, sourceUrl: string): GalleryImage[
 const MAX_SECTIONS_PER_CATEGORY = 10;
 const SECTION_EXCERPT_MAX_CHARS = 300;
 
+// ===========================================================================
+// Footer quality scoring (Crawler Extraction Heuristic Review, signal 4).
+// nav/header stay hard-excluded — they're reliably pure navigation chrome.
+// footer is different: it's often boilerplate (copyright, legal links,
+// social icons) but small real-business sites also legitimately put a real
+// services/location list nowhere else but the footer. A blanket exclusion
+// discarded both; this scores footer candidates instead of discarding them
+// outright, on structural properties (item length, link targets) rather
+// than on anything site-specific.
+// ===========================================================================
+
+const FOOTER_BOILERPLATE_TEXT_PATTERN =
+  /©|all rights reserved|privacy policy|terms (of service|and conditions)|cookie policy/i;
+/** Reuses the same social-domain patterns extractSocials already matches against, plus common legal-page paths — a footer link list dominated by these is almost certainly nav/legal boilerplate, not business content. */
+const FOOTER_BOILERPLATE_HREF_PATTERN =
+  /(facebook|instagram|twitter|x\.com|linkedin|youtube|tiktok|yelp)\.com|\/(privacy|terms|cookie)/i;
+/** Real service/offering list items ("Children's Dental Care", "Lawn Cleanup Services") run well above this; generic nav links ("Home", "About", "Contact") run well below it. */
+const FOOTER_MIN_AVG_ITEM_CHARS = 12;
+
+function footerCandidatePassesQualityBar($: cheerio.CheerioAPI, $el: ReturnType<cheerio.CheerioAPI>): boolean {
+  const text = $el.text().trim().replace(/\s+/g, " ");
+  if (FOOTER_BOILERPLATE_TEXT_PATTERN.test(text)) return false;
+
+  const hrefs = $el
+    .find("a[href]")
+    .toArray()
+    .map((a) => $(a).attr("href") ?? "");
+  if (hrefs.length > 0) {
+    const boilerplateHrefCount = hrefs.filter((h) => FOOTER_BOILERPLATE_HREF_PATTERN.test(h)).length;
+    if (boilerplateHrefCount / hrefs.length > 0.5) return false;
+  }
+
+  const items = $el
+    .find("li, a")
+    .toArray()
+    .map((el) => $(el).text().trim())
+    .filter((t) => t.length > 0);
+  if (items.length === 0) {
+    // Not a list — a real (non-boilerplate) block of substantial text is
+    // still plausible business content; a trivial one-word fragment isn't.
+    return text.length >= FOOTER_MIN_AVG_ITEM_CHARS * 2;
+  }
+  const avgItemChars = items.reduce((sum, t) => sum + t.length, 0) / items.length;
+  return avgItemChars >= FOOTER_MIN_AVG_ITEM_CHARS;
+}
+
 /**
  * Best-effort structural detection for a content category: elements whose
  * class/id attribute contains one of the given keywords. This is a
  * deliberately narrow heuristic — a site using different markup
  * conventions will correctly produce an empty array rather than a guessed
  * result, per the honest-empty-default discipline this module follows
- * throughout. Excludes obvious navigation chrome (nav/header/footer) to
- * reduce false positives from generic keywords appearing in menu class
- * names.
+ * throughout. Excludes obvious navigation chrome (nav/header — always pure
+ * boilerplate); footer content is scored rather than blanket-excluded (see
+ * footerCandidatePassesQualityBar above) since it sometimes carries real
+ * business content a small site has nowhere else to put.
  */
 function findSectionsByKeywords($: cheerio.CheerioAPI, keywords: string[], sourceUrl: string): ContentSection[] {
   const selector = keywords.map((k) => `[class*="${k}" i], [id*="${k}" i]`).join(", ");
@@ -286,7 +463,8 @@ function findSectionsByKeywords($: cheerio.CheerioAPI, keywords: string[], sourc
   $(selector).each((_, el) => {
     if (sections.length >= MAX_SECTIONS_PER_CATEGORY) return;
     const $el = $(el);
-    if ($el.closest("nav, header, footer").length > 0) return;
+    if ($el.closest("nav, header").length > 0) return;
+    if ($el.closest("footer").length > 0 && !footerCandidatePassesQualityBar($, $el)) return;
 
     const heading = $el.find("h1, h2, h3, h4").first().text().trim() || $el.attr("id") || keywords[0];
     const excerpt = $el.text().trim().replace(/\s+/g, " ").slice(0, SECTION_EXCERPT_MAX_CHARS);
@@ -302,6 +480,121 @@ function findSectionsByKeywords($: cheerio.CheerioAPI, keywords: string[], sourc
   return sections;
 }
 
+// ===========================================================================
+// Page URL/title classification (Crawler Extraction Heuristic Review,
+// signal 2). A sampled sub-page's own URL path and <title> already say what
+// it's about in plain English ("/testimonials/", "Testimonials — Business
+// Name") — independent of whatever CSS classes its theme/plugin happens to
+// use internally, and far more stable across sites than class naming. This
+// is the SAME category vocabulary findSectionsByKeywords already uses for
+// CSS-class matching, just checked against a second surface. A match here
+// is a signal that this page is likely about that category — it only ever
+// triggers a bounded, still-structural fallback below, never a blanket
+// "trust everything on this page."
+// ===========================================================================
+
+type PageFallbackCategory = "certifications" | "licenses" | "services" | "products" | "team" | "faq";
+
+const CATEGORY_URL_TITLE_WORDS: Record<PageFallbackCategory, string[]> = {
+  certifications: ["certification", "certifications", "accreditation", "accreditations"],
+  licenses: ["license", "licenses", "licensing"],
+  services: ["service", "services", "offering", "offerings"],
+  products: ["product", "products"],
+  team: ["team", "staff"],
+  faq: ["faq", "faqs"],
+};
+
+function pageWords(sourceUrl: string, pageTitle: string): Set<string> {
+  let path = "";
+  try {
+    path = new URL(sourceUrl).pathname;
+  } catch {
+    path = sourceUrl;
+  }
+  return new Set(`${path} ${pageTitle}`.toLowerCase().split(/[^a-z]+/).filter(Boolean));
+}
+
+function classifyPageByUrlAndTitle(sourceUrl: string, pageTitle: string): PageFallbackCategory[] {
+  const words = pageWords(sourceUrl, pageTitle);
+  return (Object.keys(CATEGORY_URL_TITLE_WORDS) as PageFallbackCategory[]).filter((category) =>
+    CATEGORY_URL_TITLE_WORDS[category].some((label) => words.has(label))
+  );
+}
+
+/**
+ * A page already classified (by URL/title, above) as being about a category
+ * — real business content, just not sitting in a CSS-class-matchable
+ * container. Prefers a `<main>`/`<article>` region when the page marks one,
+ * else the whole body with nav/header/footer/script/style stripped. Still a
+ * real, bounded excerpt of the page's own real text — never a generated
+ * summary or invented content.
+ */
+function extractMainPageContent($: cheerio.CheerioAPI): string {
+  const $body = $("body").clone();
+  $body.find("nav, header, footer, script, style").remove();
+  const main = $body.find("main, article").first();
+  const text = (main.length > 0 ? main.text() : $body.text()).trim().replace(/\s+/g, " ");
+  return text.slice(0, SECTION_EXCERPT_MAX_CHARS);
+}
+
+// ===========================================================================
+// Testimonial structure detection (Crawler Extraction Heuristic Review,
+// signal 3). Real customer testimonials have a recognizable SHAPE — verbatim
+// text wrapped in quotation marks, usually paired with a short name and/or a
+// dash-attribution line — regardless of what CSS class (if any, and however
+// named) a theme wraps them in. This never requires the word "testimonial"
+// anywhere in the markup. It also never invents an attribution: when no
+// name/attribution is structurally present next to the quote, the heading
+// falls back to the same kind of generic category label findSectionsByKeywords
+// already uses when it has nothing better — never a fabricated person.
+// ===========================================================================
+
+const QUOTE_WRAPPED_PATTERN = /^["'“‘]([\s\S]+)["'”’]$/;
+const MIN_QUOTE_CHARS = 20;
+const MAX_QUOTE_CHARS = 600;
+/** A short dash-led line right after a quote — "– Estate Planning Client", "- Kim" — is a real attribution the site itself published, not an invented one; this only ever reads it, never writes it. */
+const ATTRIBUTION_PATTERN = /^[-–—]\s*(.{1,80})$/;
+/** A short line of 1-4 capitalized words right before a quote plausibly names who said it (e.g. "Carolyn M. Grimes") — a coarse but bounded structural check, not a claim of certainty. */
+const NAME_LIKE_PATTERN = /^[A-Z][\w.'-]*(\s+[A-Z][\w.'-]*){0,3}$/;
+
+function findTestimonialsByStructure($: cheerio.CheerioAPI, sourceUrl: string): ContentSection[] {
+  const sections: ContentSection[] = [];
+  const seen = new Set<string>();
+
+  $("p, blockquote, li, div, span").each((_, el) => {
+    if (sections.length >= MAX_SECTIONS_PER_CATEGORY) return;
+    const $el = $(el);
+    if ($el.closest("nav, header, script, style").length > 0) return;
+    if ($el.children().length > 0) return; // leaf text only — its own wrapping ancestor would otherwise re-match the same words
+
+    const text = $el.text().trim().replace(/\s+/g, " ");
+    if (text.length < MIN_QUOTE_CHARS || text.length > MAX_QUOTE_CHARS) return;
+    const quoteMatch = text.match(QUOTE_WRAPPED_PATTERN);
+    if (!quoteMatch) return;
+    const quote = quoteMatch[1].trim();
+    if (quote.length < MIN_QUOTE_CHARS) return;
+    if ($el.closest("footer").length > 0 && !footerCandidatePassesQualityBar($, $el)) return;
+
+    const prevText = $el.prev().text().trim().replace(/\s+/g, " ");
+    const nextText = $el.next().text().trim().replace(/\s+/g, " ");
+    let heading = "Testimonial";
+    const attribution = nextText.match(ATTRIBUTION_PATTERN);
+    if (attribution) {
+      heading = attribution[1].trim() || heading;
+    } else if (prevText && prevText.length <= 80 && NAME_LIKE_PATTERN.test(prevText)) {
+      heading = prevText;
+    }
+
+    const dedupeKey = `${heading}:${quote.slice(0, 60)}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+
+    sections.push({ heading, excerpt: quote.slice(0, SECTION_EXCERPT_MAX_CHARS), sourceUrl });
+  });
+
+  return sections;
+}
+
 /**
  * The full structured-facts extraction pass — pure, given an already-loaded
  * page and the URL it came from. `sourceUrl` is threaded onto every
@@ -311,17 +604,47 @@ function findSectionsByKeywords($: cheerio.CheerioAPI, keywords: string[], sourc
  */
 export function extractStructuredFacts($: cheerio.CheerioAPI, sourceUrl: string) {
   const jsonLd = parseJsonLdEntities($);
+  const pageTitle = $("title").first().text().trim();
 
-  return {
-    contact: extractContact($, jsonLd),
-    socials: extractSocials($, jsonLd),
+  const bySections: Record<PageFallbackCategory, ContentSection[]> = {
     certifications: findSectionsByKeywords($, ["certif", "accredit"], sourceUrl),
     licenses: findSectionsByKeywords($, ["licens"], sourceUrl),
     services: findSectionsByKeywords($, ["service", "offering"], sourceUrl),
     products: findSectionsByKeywords($, ["product", "shop-item", "store-item"], sourceUrl),
     team: findSectionsByKeywords($, ["team", "staff"], sourceUrl),
     faq: findSectionsByKeywords($, ["faq", "accordion"], sourceUrl),
-    testimonials: findSectionsByKeywords($, ["testimonial"], sourceUrl),
+  };
+
+  // Page-level fallback (signal 2): when this specific page's own URL/title
+  // says it's about a category the CSS-class scan above found nothing for,
+  // take the page's real main content as ONE evidence item headed by the
+  // page's own real title. Never overrides a scan that already found
+  // something, and deliberately excludes testimonials — those come only
+  // from real quote structure (findTestimonialsByStructure) so a whole page
+  // of prose is never treated as if it were itself a verbatim customer
+  // quote.
+  for (const category of classifyPageByUrlAndTitle(sourceUrl, pageTitle)) {
+    if (bySections[category].length > 0) continue;
+    const content = extractMainPageContent($);
+    if (content.length === 0) continue;
+    bySections[category] = [{ heading: pageTitle || category, excerpt: content, sourceUrl }];
+  }
+
+  const testimonials = mergeSections([
+    findSectionsByKeywords($, ["testimonial"], sourceUrl),
+    findTestimonialsByStructure($, sourceUrl),
+  ]);
+
+  return {
+    contact: extractContact($, jsonLd),
+    socials: extractSocials($, jsonLd),
+    certifications: bySections.certifications,
+    licenses: bySections.licenses,
+    services: bySections.services,
+    products: bySections.products,
+    team: bySections.team,
+    faq: bySections.faq,
+    testimonials,
     reviews: extractReviews(jsonLd),
     gallery: extractGallery($, sourceUrl),
     forms: extractForms($),

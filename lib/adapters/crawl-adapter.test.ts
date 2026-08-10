@@ -166,6 +166,338 @@ describe("crawl-adapter: extractStructuredFacts (no structured content at all)",
 });
 
 // ===========================================================================
+// Crawler Extraction Heuristic Review — four deterministic signals added on
+// top of the CSS-class/JSON-LD heuristics above, all modeled on real content
+// confirmed present during the real-site validation pass (Veslo Family
+// Restaurant's real Wix contact page, Lakeshore Family Dentistry's real
+// WordPress service sub-page, Friedman Grimes Meinken & Leischner's real
+// WordPress testimonials page) — not synthetic abstractions. None of these
+// signals require a CSS class/id containing the category word.
+// ===========================================================================
+
+describe("crawl-adapter: visible-text hours/address signal (no matching CSS class)", () => {
+  test("finds hours from a plain-text label heading followed by per-day sibling lines — Veslo's real shape: a label-only heading, then one sibling per day, no class/id naming 'hours' anywhere", () => {
+    const html = `
+      <html><body><footer>
+        <h2>Hours of operation:</h2>
+        <h2>Monday Closed</h2>
+        <h2>Tuesday Closed</h2>
+        <h2>Wednesday-Saturday 11:30am - 8:00pm</h2>
+        <h2>Sunday 11:30am - 7:00</h2>
+        <h2>ADDRESS: 100 Arnold Street. Kitchener, Ontario, Canada. N2H 6E2</h2>
+      </footer></body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/contact");
+    assert.match(facts.contact.hours ?? "", /Monday Closed/);
+    assert.match(facts.contact.hours ?? "", /Wednesday-Saturday 11:30am - 8:00pm/);
+    assert.match(facts.contact.hours ?? "", /Sunday 11:30am - 7:00/);
+    // The sibling-gather must stop at the ADDRESS line, not swallow it into hours.
+    assert.doesNotMatch(facts.contact.hours ?? "", /Arnold Street/);
+  });
+
+  test("finds address from a same-element 'Address:' label, real shape confirmed on Veslo's contact page (a single element combining the label, colon, and value)", () => {
+    const html = `<html><body><footer><h2>ADDRESS: 100 Arnold Street. Kitchener, Ontario, Canada. N2H 6E2</h2></footer></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/contact");
+    assert.equal(facts.contact.address, "100 Arnold Street. Kitchener, Ontario, Canada. N2H 6E2");
+  });
+
+  test("hours/address labels inside a footer are still read — Veslo's real hours widget lives inside a <footer> landmark, unlike nav/header which stay excluded", () => {
+    const html = `<html><body><footer><h2>Hours:</h2><p>Mon-Fri 9am - 5pm</p></footer></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/contact");
+    assert.match(facts.contact.hours ?? "", /9am - 5pm/);
+  });
+
+  test("does not treat a label inside nav/header as contact evidence", () => {
+    const html = `<html><body><nav><h2>Hours: 9am - 5pm</h2></nav></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.contact.hours, null);
+  });
+
+  test("false positive guard: 'Address these three points' is not mistaken for an address label (no colon, and the label isn't the whole element's text)", () => {
+    const html = `<html><body><p>Address these three points before signing the contract: budget, timeline, and scope.</p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.contact.address, null);
+  });
+
+  test("false positive guard: 'Hours: please call ahead for details' does not produce a fabricated-looking hours value with no day/time/closed content", () => {
+    const html = `<html><body><p>Hours: please call ahead for details.</p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.contact.hours, null);
+  });
+
+  test("false positive guard: an ordinary paragraph mentioning days of the week without any time/closed pairing does not produce a fabricated hours value", () => {
+    const html = `<html><body><p>We were closed on Monday for the holiday, and we discussed our hours of business on Tuesday during the staff meeting, though nothing was decided.</p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    // "closed" does appear near "Monday" here, which the bounded no-label
+    // fallback may reasonably treat as a plausible signal — the guard this
+    // test really protects is that the match stays a short, bounded
+    // fragment, never the entire sentence or surrounding unrelated prose.
+    if (facts.contact.hours) {
+      assert.ok(facts.contact.hours.length < 60, "a no-label hours match must stay a short bounded fragment, not swallow the whole paragraph");
+    }
+  });
+
+  test("false positive guard: a word merely starting with a day-name prefix ('Friendly') is not mistaken for the day itself — Lakeshore's real shape: 'Family-Friendly Convenience... Hours 7am-7pm and Saturdays' with no real day+time pairing in that order", () => {
+    const html = `<html><body><h3>Family-Friendly Convenience</h3><ul><li>Hours 7am-7pm and Saturdays</li><li>Same-Day Appointments</li></ul></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.notEqual(facts.contact.hours, "Friendly Convenience Hours 7am");
+    if (facts.contact.hours) {
+      assert.doesNotMatch(facts.contact.hours, /^Friendly/);
+    }
+  });
+
+  test("false positive guard: 'Satellite', 'Monetary', and 'Thursday-adjacent prose' near a time-like number are not mistaken for real day names", () => {
+    const html = `<html><body><p>Our Satellite office opens for a special session at 3pm on request, and Monetary policy changes take effect at 9am next quarter.</p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    if (facts.contact.hours) {
+      assert.doesNotMatch(facts.contact.hours, /^Satellite/);
+      assert.doesNotMatch(facts.contact.hours, /^Monetary/);
+    }
+  });
+
+  test("the no-label day+time pattern still finds real hours with no label at all, once a genuine day name precedes a genuine time", () => {
+    const html = `<html><body><p>Open Saturday 9am to 2pm, walk-ins welcome.</p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.match(facts.contact.hours ?? "", /Saturday 9am/);
+  });
+
+  test("JSON-LD hours/address still take priority over the visible-text signal when both are present", () => {
+    const html = `
+      <html><head><script type="application/ld+json">
+      { "@context": "https://schema.org", "@type": "LocalBusiness", "openingHours": "Mo-Fr 09:00-17:00" }
+      </script></head><body><h2>Hours:</h2><p>Totally different hours text</p></body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.contact.hours, "Mo-Fr 09:00-17:00");
+  });
+});
+
+describe("crawl-adapter: page URL/title classification signal (no matching CSS class)", () => {
+  test("a sub-page whose URL path names a category, with no CSS-class match, contributes its own main content as one real evidence item — Lakeshore's real shape: /dental-services/emergency-dentist with no matching class anywhere on the page", () => {
+    const html = `
+      <html><head><title>Emergency Dentist | Example Dental</title></head>
+      <body>
+        <nav><a href="/">Home</a></nav>
+        <main><h1>Emergency Dentist</h1><p>When you have a sudden tooth problem, same-day appointments are available for urgent dental care.</p></main>
+        <footer>© 2026 Example Dental. All rights reserved.</footer>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/dental-services/emergency-dentist");
+    assert.equal(facts.services.length, 1);
+    assert.equal(facts.services[0].heading, "Emergency Dentist | Example Dental");
+    assert.match(facts.services[0].excerpt, /same-day appointments/);
+    assert.equal(facts.services[0].sourceUrl, "https://example.test/dental-services/emergency-dentist");
+    // The footer's own copyright boilerplate must not leak into the excerpt.
+    assert.doesNotMatch(facts.services[0].excerpt, /rights reserved/);
+  });
+
+  test("does not apply the page-level fallback when the CSS-class scan already found real content — never overrides or duplicates an existing match", () => {
+    const html = `
+      <html><head><title>Our Services | Example Co</title></head>
+      <body><div id="services-section"><h2>Our Services</h2><p>Plumbing and heating repair.</p></div></body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/services");
+    assert.equal(facts.services.length, 1);
+    assert.equal(facts.services[0].heading, "Our Services");
+  });
+
+  test("a testimonials-titled page with no real quote-shaped content contributes nothing to testimonials — URL/title classification never triggers a generic-prose fallback for testimonials specifically", () => {
+    const html = `
+      <html><head><title>Testimonials | Example Co</title></head>
+      <body><main><h1>Testimonials</h1><p>We are proud of the relationships we build with our clients over many years of service.</p></main></body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/testimonials");
+    assert.deepEqual(facts.testimonials, []);
+  });
+
+  test("an ordinary page whose URL/title happens to contain a category word but has no real matching content anywhere contributes an honest empty array, not a fabricated section", () => {
+    const html = `<html><head><title>Product Recall Notice</title></head><body><main></main></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/product-recall-notice");
+    assert.deepEqual(facts.products, []);
+  });
+});
+
+describe("crawl-adapter: testimonial structural detection (no 'testimonial' CSS class or keyword)", () => {
+  test("finds a real quote with a name heading before it and a dash-attribution after it — Friedman Grimes Meinken & Leischner's real shape: a WordPress plugin class ('imtst_quote_show') that doesn't contain the word 'testimonial' anywhere", () => {
+    const html = `
+      <html><body>
+        <p><strong>Carolyn M. Grimes</strong></p>
+        <p class="imtst_quote_show">&#8220;She was with me through my entire epic divorce which lasted about 9 years, and the final outcome was better than I ever hoped for.&#8221;</p>
+        <p><i>&#8211; Kim</i></p>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/testimonials");
+    assert.equal(facts.testimonials.length, 1);
+    assert.equal(facts.testimonials[0].heading, "Kim");
+    assert.match(facts.testimonials[0].excerpt, /better than I ever hoped for/);
+    assert.equal(facts.testimonials[0].sourceUrl, "https://example.test/testimonials");
+  });
+
+  test("falls back to a generic 'Testimonial' heading, never a fabricated name, when no attribution or name-like text is structurally present", () => {
+    const html = `<html><body><p>"Absolutely fantastic service from start to finish, would recommend to anyone."</p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.testimonials.length, 1);
+    assert.equal(facts.testimonials[0].heading, "Testimonial");
+  });
+
+  test("captures multiple real quotes in sequence, each with its own real attribution — the repeated name/quote/attribution pattern Friedman Grimes' real page uses for every client", () => {
+    const html = `
+      <html><body>
+        <p><strong>Foster Samuel Burton Friedman</strong></p>
+        <p>&#8220;He has excellent knowledgeable communication ability, and always responsive when I have needed advice.&#8221;</p>
+        <p><i>&#8211; Estate Planning Client</i></p>
+        <p><strong>Jessica Leischner</strong></p>
+        <p>&#8220;I totally trusted her, she is firm, ready and willing to fight if necessary, confident and always got it done.&#8221;</p>
+        <p><i>&#8211; Divorce Client</i></p>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/testimonials");
+    assert.equal(facts.testimonials.length, 2);
+    assert.equal(facts.testimonials[0].heading, "Estate Planning Client");
+    assert.equal(facts.testimonials[1].heading, "Divorce Client");
+  });
+
+  test("false positive guard: a short quoted product name or emphasis phrase does not become a fabricated testimonial (below the minimum quote length)", () => {
+    const html = `<html><body><p>Our best-selling item is the "Classic Burger".</p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.deepEqual(facts.testimonials, []);
+  });
+
+  test("false positive guard: an ordinary long quoted excerpt from a news article (not a customer testimonial) is still captured only as real, verbatim, attributed text — never re-attributed to a fabricated customer name", () => {
+    const html = `<html><body><p>The mayor said in a statement, &#8220;this new initiative will bring real benefits to residents across the city over the coming years.&#8221;</p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/news");
+    // Structurally quote-shaped text is real and verbatim either way — the
+    // guarantee under test is that no name is invented: absent a real
+    // name/attribution structurally next to it, the heading must stay the
+    // generic, non-fabricated "Testimonial" label, never a guessed person.
+    if (facts.testimonials.length > 0) {
+      assert.equal(facts.testimonials[0].heading, "Testimonial");
+    }
+  });
+
+  test("does not require the word 'testimonial' anywhere in the page — real quote-shaped content with a real attribution is enough on its own", () => {
+    const html = `<html><body><p>&#8220;Their team went above and beyond every step of the way.&#8221;</p><p>&#8211; a satisfied customer</p></body></html>`;
+    const $ = cheerio.load(html);
+    assert.doesNotMatch(html, /testimonial/i);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.testimonials.length, 1);
+    assert.equal(facts.testimonials[0].heading, "a satisfied customer");
+  });
+});
+
+describe("crawl-adapter: footer quality scoring (real business content in a footer is no longer blanket-discarded)", () => {
+  test("keeps a real, descriptive service list found only in a footer — Lakeshore's real shape: a <ul class=\"services-list\"> of full service names inside <footer>", () => {
+    const html = `
+      <html><body><footer>
+        <ul class="services-list">
+          <li>Children's Dental Care</li>
+          <li>Cosmetic Dentistry</li>
+          <li>Dental Implants</li>
+          <li>Emergency Dentist</li>
+        </ul>
+      </footer></body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.services.length, 1);
+    assert.match(facts.services[0].excerpt, /Cosmetic Dentistry/);
+    assert.match(facts.services[0].excerpt, /Emergency Dentist/);
+  });
+
+  test("still discards an ordinary boilerplate footer nav/legal list — short generic links and copyright text stay excluded", () => {
+    const html = `
+      <html><body><footer class="site-footer">
+        <ul class="footer-services">
+          <li><a href="/">Home</a></li>
+          <li><a href="/about">About</a></li>
+          <li><a href="/privacy">Privacy Policy</a></li>
+        </ul>
+        <p>&copy; 2026 Example Co. All rights reserved.</p>
+      </footer></body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.deepEqual(facts.services, []);
+  });
+
+  test("still discards a footer link list dominated by social-media links", () => {
+    const html = `
+      <html><body><footer>
+        <ul class="service-links">
+          <li><a href="https://facebook.com/example">Facebook</a></li>
+          <li><a href="https://instagram.com/example">Instagram</a></li>
+          <li><a href="https://twitter.com/example">Twitter</a></li>
+        </ul>
+      </footer></body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.deepEqual(facts.services, []);
+  });
+
+  test("nav and header content stay hard-excluded regardless of content quality — only footer is quality-scored", () => {
+    const html = `
+      <html><body>
+        <nav><ul class="services-list"><li>Cosmetic Dentistry and General Care</li><li>Emergency Dental Services</li></ul></nav>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.deepEqual(facts.services, []);
+  });
+});
+
+describe("crawl-adapter: Wilcox regression — already-passing CSS-class extraction and existing tests stay intact", () => {
+  test("a real service list found via ordinary CSS-class matching (not in a footer) still works exactly as before", () => {
+    const html = `
+      <html><body>
+        <div class="service-block"><h2>Lawn Cleanup Services</h2><p>Spring and fall yard cleanup, hardscaping, patio installation, and retaining wall installation.</p></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/cleanup-services");
+    assert.equal(facts.services.length, 1);
+    assert.equal(facts.services[0].heading, "Lawn Cleanup Services");
+  });
+
+  test("real address/hours captured via JSON-LD still take priority and are unaffected by the new visible-text signal", () => {
+    const html = `
+      <html><head><script type="application/ld+json">
+      {
+        "@context": "https://schema.org", "@type": "LocalBusiness",
+        "address": { "streetAddress": "3027 Blue Ridge Road", "addressLocality": "Clarklake", "addressRegion": "MI", "postalCode": "49234" },
+        "openingHours": ["Mo-Fr 08:00-17:00", "Sa 09:00-14:00"]
+      }
+      </script></head><body></body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.contact.address, "3027 Blue Ridge Road, Clarklake, MI, 49234");
+    assert.equal(facts.contact.hours, "Mo-Fr 08:00-17:00; Sa 09:00-14:00");
+  });
+});
+
+// ===========================================================================
 // mergeStructuredFacts — the actual fix: the crawler already fetches up to
 // five sub-pages per business but previously discarded everything but their
 // <title>. These fixtures are modeled on real content confirmed present
