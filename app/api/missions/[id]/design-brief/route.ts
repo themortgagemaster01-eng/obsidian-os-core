@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { missionRepository } from "@/lib/repositories/mission-repository";
+import { designBriefRepository } from "@/lib/repositories/design-brief-repository";
 import {
   createDesignBriefRun,
   createDesignBriefServiceDeps,
@@ -11,6 +12,35 @@ import {
 
 interface RouteParams {
   params: { id: string };
+}
+
+/**
+ * GET /api/missions/:id/design-brief — read-only counterpart to the POST
+ * below, added for the Founder-facing Design Brief panel to poll while a
+ * run is `pending`/`running` (same shape as GET /api/missions/:id/analysis
+ * polling website_analyses). Returns the mission's latest design_briefs row,
+ * or `null` if one has never been created — never assembles or infers
+ * anything the row doesn't already have.
+ */
+export async function GET(_request: NextRequest, { params }: RouteParams) {
+  const supabase = createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // RLS-scoped: doubles as the authorization check, same pattern as every other mission-scoped route.
+  const mission = await missionRepository.findById(supabase, params.id);
+  if (!mission) {
+    return NextResponse.json({ error: "Mission not found" }, { status: 404 });
+  }
+
+  const designBrief = await designBriefRepository.findLatestByMission(supabase, mission.id);
+  return NextResponse.json({ designBrief });
 }
 
 /**

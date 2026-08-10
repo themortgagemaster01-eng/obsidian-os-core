@@ -12,7 +12,7 @@ import {
   SECTION_HEADING_LABEL,
 } from "@/lib/design-render/style-helpers";
 import { toSafeCssColor, toSafeFontFamilyStack, toCssFontWeight, MUTED_TEXT_OPACITY } from "@/lib/design-render/safe-css";
-import { SlotValue } from "@/components/design-preview/slot-value";
+import { SlotValue, isRealSlot } from "@/components/design-preview/slot-value";
 
 /**
  * components/design-preview/design-preview.tsx — the typed renderer at the
@@ -29,9 +29,14 @@ import { SlotValue } from "@/components/design-preview/slot-value";
  *
  * Deliberately NOT built as one component per componentKind (17 kinds,
  * several near-identical) — rendering is keyed off the 12-value SectionType
- * instead, with componentKind only adjusting small presentational details
- * (the hero's eyebrow label). Per the task's explicit instruction: reuse,
- * don't invent a new design language or a large component library.
+ * instead. Per the task's explicit instruction: reuse, don't invent a new
+ * design language or a large component library.
+ *
+ * Customer-facing by design (Product Surface Pass, Priority 3): a slot with
+ * no real evidence renders nothing (SlotValue), and a whole section with no
+ * real slots at all is omitted outright (OMIT_SECTION_IF_EMPTY below) —
+ * never the internal `[Field — placeholder]` debug syntax this component
+ * used to show, and never a fabricated value standing in for one.
  *
  * Responsive by construction, not by a separate mobile variant: this data
  * model represents a page as a single ordered column
@@ -62,6 +67,31 @@ const FALLBACK_HEADING_STACK = "Georgia, 'Times New Roman', serif";
 const FALLBACK_BODY_STACK = "system-ui, -apple-system, 'Segoe UI', sans-serif";
 
 const MOBILE_BREAKPOINT_PX = 480;
+
+/**
+ * Sections whose entire content can legitimately be nothing but placeholder
+ * slots (menu items, service descriptions, credibility stats, gallery
+ * images — none of which the crawler extracts today). Per the Product
+ * Surface Pass's placeholder rule: when a section has zero real slots, the
+ * graceful behavior is to omit the section entirely, not render an empty
+ * shell. hero/footer/contact are excluded — they always carry at least the
+ * real business name, so they're never fully empty. faq/testimonials are
+ * excluded because generateWebsiteStructure only ever includes them in the
+ * wireframe when real content backs them.
+ */
+const OMIT_SECTION_IF_EMPTY: SectionType[] = [
+  "menu",
+  "gallery",
+  "services",
+  "schedule",
+  "listings",
+  "serviceArea",
+  "credibility",
+];
+
+function hasRealContent(node: ComponentNode): boolean {
+  return node.slots.some(isRealSlot);
+}
 
 export function DesignPreview({ businessName, wireframe, components, refinedDesign, designMemory }: DesignPreviewProps) {
   const palette = designMemory?.colorPalette;
@@ -103,6 +133,7 @@ export function DesignPreview({ businessName, wireframe, components, refinedDesi
       {wireframe.sections.map(({ type, rationale }) => {
         const node = componentsBySection.get(type);
         if (!node) return null;
+        if (OMIT_SECTION_IF_EMPTY.includes(type) && !hasRealContent(node)) return null;
         return (
           <SectionShell
             key={type}
@@ -114,9 +145,7 @@ export function DesignPreview({ businessName, wireframe, components, refinedDesi
           >
             <SectionBody
               node={node}
-              wireframe={wireframe}
               refinedDesign={refinedDesign}
-              businessName={businessName}
               headingFontStack={headingFontStack}
               accent={accent}
               textColor={type === "footer" || type === "hero" ? FALLBACK.onDark : FALLBACK.text}
@@ -193,6 +222,23 @@ function SectionHeading({
   );
 }
 
+/**
+ * A real, styled call-to-action button — sized from RefinedDesign.mobile's
+ * own real computed touch-target dimensions. `label` is deliberately always
+ * generic, standard interface copy ("Contact Us", "Get in Touch") rather
+ * than a business-specific claim — that's UI convention, not evidence, so
+ * it's never subject to the fabrication rule the slot values above it are
+ * held to.
+ *
+ * Text color intentionally reuses the section's own already-chosen
+ * foreground (`textColor`, the same value every heading/label in this
+ * section already renders in) rather than pairing the accent color as a
+ * fill against a guessed contrasting text color — introducing a new,
+ * unvalidated background/foreground pairing here is exactly the class of
+ * bug the shared MUTED_TEXT_OPACITY fix (safe-css.ts) already had to
+ * correct once this session; the accent is used only as a border; a
+ * non-text UI element, held to a looser contrast bar than body text.
+ */
 function TouchAffordance({
   refinedDesign,
   section,
@@ -218,36 +264,32 @@ function TouchAffordance({
           justifyContent: "center",
           minWidth: `${target.widthPx}px`,
           minHeight: `${target.heightPx}px`,
-          padding: "0.5rem 1.25rem",
-          border: `1px dashed ${textColor}`,
+          padding: "0.5rem 1.5rem",
+          border: `1.5px solid ${accent}`,
+          color: textColor,
           borderRadius: "0.375rem",
           marginTop: "1rem",
-          opacity: MUTED_TEXT_OPACITY,
-          fontStyle: "italic",
-          fontSize: "0.85em",
+          fontWeight: 500,
+          fontSize: "0.9em",
           "--op-tt-w": `${target.widthPx}px`,
           "--op-tt-h": `${target.heightPx}px`,
         } as React.CSSProperties
       }
     >
-      [{label} — placeholder]
+      {label}
     </span>
   );
 }
 
 function SectionBody({
   node,
-  wireframe,
   refinedDesign,
-  businessName,
   headingFontStack,
   accent,
   textColor,
 }: {
   node: ComponentNode;
-  wireframe: Wireframe;
   refinedDesign: RefinedDesign;
-  businessName: string;
   headingFontStack: string;
   accent: string;
   textColor: string;
@@ -260,15 +302,12 @@ function SectionBody({
     const displayRole = findTypeRole(refinedDesign, "display");
     return (
       <div>
-        <p style={{ textTransform: "uppercase", letterSpacing: "0.08em", fontSize: "0.8rem", opacity: MUTED_TEXT_OPACITY, marginBottom: "0.5rem" }}>
-          {formatLayoutFamily(wireframe.layoutFamily)}
-        </p>
-        {name && (
+        {name && isRealSlot(name) && (
           <p style={{ fontWeight: 600, marginBottom: "0.75rem" }}>
-            <SlotValue slot={name} textColor={textColor} />
+            <SlotValue slot={name} />
           </p>
         )}
-        {headline && (
+        {headline && isRealSlot(headline) && (
           <div
             style={{
               fontFamily: headingFontStack,
@@ -276,10 +315,10 @@ function SectionBody({
               fontWeight: displayRole ? toCssFontWeight(displayRole.weight) : 600,
             }}
           >
-            <SlotValue slot={headline} textColor={textColor} />
+            <SlotValue slot={headline} />
           </div>
         )}
-        <TouchAffordance refinedDesign={refinedDesign} section="hero" label="Primary call to action" accent={accent} textColor={textColor} />
+        <TouchAffordance refinedDesign={refinedDesign} section="hero" label="Get in Touch" accent={accent} textColor={textColor} />
       </div>
     );
   }
@@ -289,11 +328,11 @@ function SectionBody({
     const year = node.slots.find((s) => s.name === "copyrightYear");
     return (
       <p style={{ fontSize: "0.85rem", opacity: MUTED_TEXT_OPACITY }}>
-        {name && <SlotValue slot={name} textColor={textColor} />}
-        {year && (
+        {name && isRealSlot(name) && <SlotValue slot={name} />}
+        {year && isRealSlot(year) && (
           <>
             {" "}
-            © <SlotValue slot={year} textColor={textColor} />
+            © <SlotValue slot={year} />
           </>
         )}
       </p>
@@ -305,13 +344,13 @@ function SectionBody({
       <div>
         <SectionHeading section={section} refinedDesign={refinedDesign} fontStack={headingFontStack} color={textColor} />
         <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-          {node.slots.map((slot) => (
+          {node.slots.filter(isRealSlot).map((slot) => (
             <details key={slot.name} style={{ border: `1px solid ${accent}33`, borderRadius: "0.5rem", padding: "0.75rem 1rem" }}>
               <summary
                 data-op-touch-target
                 style={{ cursor: "pointer", fontWeight: 500, minHeight: findTouchTarget(refinedDesign, "faq")?.heightPx ?? undefined }}
               >
-                <SlotValue slot={slot} textColor={textColor} />
+                <SlotValue slot={slot} />
               </summary>
             </details>
           ))}
@@ -325,9 +364,9 @@ function SectionBody({
       <div>
         <SectionHeading section={section} refinedDesign={refinedDesign} fontStack={headingFontStack} color={textColor} />
         <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${remToPx(refinedDesign.layout.grid.gutterRem) + 200}px, 1fr))`, gap: `${refinedDesign.layout.grid.gutterRem}rem` }}>
-          {node.slots.map((slot) => (
+          {node.slots.filter(isRealSlot).map((slot) => (
             <blockquote key={slot.name} style={{ margin: 0, padding: "1rem", border: `1px solid ${accent}33`, borderRadius: "0.5rem" }}>
-              <SlotValue slot={slot} textColor={textColor} />
+              <SlotValue slot={slot} />
             </blockquote>
           ))}
         </div>
@@ -336,17 +375,19 @@ function SectionBody({
   }
 
   if (section === "credibility" || section === "contact") {
-    const touchLabel = section === "contact" ? "Primary contact action" : undefined;
+    const realSlots = node.slots.filter(isRealSlot);
+    if (realSlots.length === 0) return null;
+    const touchLabel = section === "contact" ? "Contact Us" : undefined;
     return (
       <div>
         <SectionHeading section={section} refinedDesign={refinedDesign} fontStack={headingFontStack} color={textColor} />
         <div style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem" }}>
-          {node.slots.map((slot) => (
+          {realSlots.map((slot) => (
             <div key={slot.name} style={{ minWidth: "10rem" }}>
               <p style={{ fontSize: "0.75rem", textTransform: "uppercase", opacity: MUTED_TEXT_OPACITY, marginBottom: "0.25rem" }}>
                 {slot.name.replace(/([a-z])([A-Z])/g, "$1 $2")}
               </p>
-              <SlotValue slot={slot} textColor={textColor} />
+              <SlotValue slot={slot} />
             </div>
           ))}
         </div>
@@ -356,32 +397,31 @@ function SectionBody({
   }
 
   // Single-slot structural sections (services, menu, gallery, schedule, listings, serviceArea):
-  // exactly as many placeholder/real blocks as buildSlots() actually produced — never a fabricated multi-item grid.
+  // exactly as many real blocks as buildSlots() actually produced real values for — never a
+  // fabricated multi-item grid, and never a placeholder-only grid (the outer OMIT_SECTION_IF_EMPTY
+  // check already keeps a fully-empty one of these from reaching this function at all).
+  const realSlots = node.slots.filter(isRealSlot);
   const touchLabel =
-    section === "schedule" ? "Book a class" : section === "listings" ? "View listing" : undefined;
+    section === "schedule" ? "Book Now" : section === "listings" ? "View Listing" : undefined;
   return (
     <div>
       <SectionHeading section={section} refinedDesign={refinedDesign} fontStack={headingFontStack} color={textColor} />
       <div style={{ display: "grid", gap: `${refinedDesign.layout.grid.gutterRem}rem` }}>
-        {node.slots.map((slot) => (
+        {realSlots.map((slot) => (
           <div
             key={slot.name}
             style={{
               padding: "2rem",
-              border: `1px dashed ${textColor}55`,
+              border: `1px solid ${textColor}22`,
               borderRadius: "0.5rem",
               textAlign: "center",
             }}
           >
-            <SlotValue slot={slot} textColor={textColor} />
+            <SlotValue slot={slot} />
           </div>
         ))}
       </div>
       {touchLabel && <TouchAffordance refinedDesign={refinedDesign} section={section} label={touchLabel} accent={accent} textColor={textColor} />}
     </div>
   );
-}
-
-function formatLayoutFamily(family: string): string {
-  return family.replace(/-/g, " ");
 }

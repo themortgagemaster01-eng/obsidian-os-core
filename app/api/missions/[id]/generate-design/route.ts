@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { missionRepository } from "@/lib/repositories/mission-repository";
 import { designBriefRepository } from "@/lib/repositories/design-brief-repository";
+import { websiteDesignRepository } from "@/lib/repositories/website-design-repository";
 import {
   createDesignGenerationRun,
   createDesignGenerationServiceDeps,
@@ -12,6 +13,35 @@ import {
 
 interface RouteParams {
   params: { id: string };
+}
+
+/**
+ * GET /api/missions/:id/generate-design — read-only counterpart to the POST
+ * below, for the Founder-facing Generation/Refinement/QA panel to poll.
+ * Returns the mission's latest website_designs row as-is — this single row
+ * carries generation (`wireframe`/`components`), refinement
+ * (`refined_design`), and QA (`qa_result`) once each step has run, so one
+ * endpoint covers all three panels' polling needs without a second read
+ * path for the same table.
+ */
+export async function GET(_request: NextRequest, { params }: RouteParams) {
+  const supabase = createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const mission = await missionRepository.findById(supabase, params.id);
+  if (!mission) {
+    return NextResponse.json({ error: "Mission not found" }, { status: 404 });
+  }
+
+  const websiteDesign = await websiteDesignRepository.findLatestByMission(supabase, mission.id);
+  return NextResponse.json({ websiteDesign });
 }
 
 /**

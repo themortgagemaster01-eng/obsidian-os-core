@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { missionRepository } from "@/lib/repositories/mission-repository";
 import { websiteAnalysisRepository } from "@/lib/repositories/website-analysis-repository";
 import { websiteDesignRepository } from "@/lib/repositories/website-design-repository";
+import { designBriefRepository } from "@/lib/repositories/design-brief-repository";
 import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
 import { generateInsights } from "@/lib/services/insight-service";
 import { computeOpportunityScore } from "@/lib/services/opportunity-scoring-service";
@@ -13,6 +14,7 @@ import { assembleOpportunityReport } from "@/lib/services/opportunity-report-ser
 import { resolveScreenshotUrl } from "@/lib/presentation/resolve-screenshot-url";
 import { MissionHeader } from "@/components/mission-detail/mission-header";
 import { AnalysisPanel } from "@/components/mission-detail/analysis-panel";
+import { DesignBriefPanel } from "@/components/mission-detail/design-brief-panel";
 
 interface PageParams {
   params: { id: string };
@@ -46,6 +48,7 @@ export default async function MissionDetailPage({ params }: PageParams) {
 
   const analysis = await websiteAnalysisRepository.findLatestByMission(supabase, mission.id);
   const design = await websiteDesignRepository.findLatestByMission(supabase, mission.id);
+  const designBrief = await designBriefRepository.findLatestByMission(supabase, mission.id);
 
   let report = null;
   let screenshotUrl: string | null = null;
@@ -88,6 +91,13 @@ export default async function MissionDetailPage({ params }: PageParams) {
           initialAnalysis={analysis}
           initialReport={report}
           initialScreenshotUrl={screenshotUrl}
+        />
+        <DesignBriefPanel
+          missionId={mission.id}
+          analysisComplete={analysis?.status === "complete"}
+          initialMissionState={mission.state}
+          initialDesignBrief={designBrief}
+          initialWebsiteDesign={design}
         />
       </div>
     </main>
