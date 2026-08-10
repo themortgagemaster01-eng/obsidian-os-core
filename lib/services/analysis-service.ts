@@ -276,6 +276,7 @@ export async function runAnalysis(
       lighthouse_seo: lighthouseResult.scores.seo,
       technology_stack: technologyStack as unknown as Json,
       screenshot_url: screenshot.fullPageUrl,
+      above_fold_screenshot_url: screenshot.aboveFoldUrl,
     });
 
     await deps.eventBus.publish({

@@ -122,6 +122,30 @@ describe("design-generation-service: assembleComponents", () => {
     assert.equal(scheduleComponents[0].componentKind, "EnergeticHero");
   });
 
+  test("hero headline is placeholder when no metaDescription was captured — never fabricated", () => {
+    const wireframe = generateWireframe(briefFor("general", "editorial"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, { businessName: "Acme", citedInsights: [], contactEvidence: NO_CONTACT_EVIDENCE });
+    const hero = components.find((c) => c.section === "hero")!;
+    const headline = hero.slots.find((s) => s.name === "headline")!;
+    assert.equal(headline.source, "placeholder");
+    assert.equal(headline.value, null);
+  });
+
+  test("hero headline is real, using the business's own published copy verbatim, when the crawl captured a metaDescription — the design-richness regression case", () => {
+    const wireframe = generateWireframe(briefFor("restaurant", "imagery-led"), { hasRealTestimonials: false });
+    const metaDescription = "Veslo Family Restaurant — home-style cooking in a warm, welcoming dining room.";
+    const components = assembleComponents(wireframe, {
+      businessName: "Veslo Family Restaurant",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      metaDescription,
+    });
+    const hero = components.find((c) => c.section === "hero")!;
+    const headline = hero.slots.find((s) => s.name === "headline")!;
+    assert.equal(headline.source, "real");
+    assert.equal(headline.value, metaDescription);
+  });
+
   test("every slot is explicitly marked real or placeholder, and real slots carry a non-null value", () => {
     const wireframe = generateWireframe(briefFor("general", "editorial"), { hasRealTestimonials: false });
     const components = assembleComponents(wireframe, {

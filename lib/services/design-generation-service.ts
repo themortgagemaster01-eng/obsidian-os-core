@@ -191,6 +191,8 @@ export interface AssembleComponentsContext {
   realTestimonials?: string[];
   /** Real, mechanically-extracted contact facts (DesignBrief.contactEvidence) — each field renders as a real slot only when actually captured; missing fields stay honestly placeholder, never invented (§8). */
   contactEvidence: ContactInfo;
+  /** DesignBrief.metaDescription passed through unchanged — the business's own real published homepage copy, used as real hero headline content when present (§8: reusing a business's own words is not fabrication). */
+  metaDescription?: string | null;
 }
 
 function realSlot(name: string, value: string): ComponentSlot {
@@ -209,16 +211,27 @@ function placeholderSlot(name: string): ComponentSlot {
  * use context.contactEvidence (the crawl's own captured facts, passed
  * through unchanged) when available and fall back to placeholder otherwise
  * — the same real-vs-placeholder discipline already applied to testimonials.
- * credibility's yearsInBusiness/reviewCount/certifications remain
- * placeholder-only: the crawl adapter does not currently extract those as
- * usable structured facts for this context — a real, disclosed gap, not a
- * design choice (see the design-generation-service commit's judgment-call
- * notes).
+ * The hero's headline slot uses context.metaDescription — the business's
+ * own real, published `<meta name="description">` copy — when the crawl
+ * captured one, for the same reason: it's real content the business
+ * already publishes, not an invented tagline (§8). credibility's
+ * yearsInBusiness/reviewCount/certifications, and services/menu/gallery's
+ * content, remain placeholder-only: the crawl adapter's keyword/CSS-class
+ * heuristic (findSectionsByKeywords) does not reliably extract these from
+ * page-builder-generated sites (Wix/WordPress theme markup rarely exposes
+ * matching class/id names) — confirmed empty across all five real
+ * businesses in the industry benchmark, not a per-business gap. A crawler
+ * fix, not a Generation fix — out of scope here.
  */
 function buildSlots(section: SectionType, context: AssembleComponentsContext): ComponentSlot[] {
   switch (section) {
     case "hero":
-      return [placeholderSlot("headline"), realSlot("businessName", context.businessName)];
+      return [
+        context.metaDescription
+          ? realSlot("headline", context.metaDescription)
+          : placeholderSlot("headline"),
+        realSlot("businessName", context.businessName),
+      ];
     case "credibility":
       return [placeholderSlot("yearsInBusiness"), placeholderSlot("reviewCount"), placeholderSlot("certifications")];
     case "services":
@@ -307,6 +320,7 @@ export function generateWebsiteStructure(
     citedInsights: brief.citedInsights,
     realTestimonials: options.realTestimonials,
     contactEvidence: brief.contactEvidence,
+    metaDescription: brief.metaDescription,
   });
   const refinedDesign = refineDesign({ wireframe }, brief, options.designMemory);
   return { wireframe, components, refinedDesign };

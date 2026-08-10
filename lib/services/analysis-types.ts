@@ -87,6 +87,16 @@ export interface NormalizedAnalysis {
    * lib/adapters/types.ts's ContactInfo itself.
    */
   contactEvidence: ContactInfo;
+  /**
+   * The business's own real, published homepage `<meta name="description">`
+   * text, when the crawler captured one — real, human-written copy the
+   * business itself already publishes, surfaced here so Generation can use
+   * it as real hero content (§8: reusing a business's own words is not
+   * fabrication) instead of a hero that's always placeholder-only for
+   * headline copy. `null` when no crawl ran or the page has none — never
+   * guessed or summarized.
+   */
+  metaDescription?: string | null;
 }
 
 function clampScore(value: number): number {
@@ -196,6 +206,7 @@ export function normalizedAnalysisFromRow(
       techDetection: !!tech && !tech.fetchError,
     },
     contactEvidence: crawl?.contact ?? EMPTY_CONTACT_EVIDENCE,
+    metaDescription: crawl?.metaDescription ?? null,
   };
 }
 
@@ -245,5 +256,6 @@ export function normalizedAnalysisFromRawResults(
       techDetection: !raw.techDetection.fetchError,
     },
     contactEvidence: raw.crawl.contact ?? EMPTY_CONTACT_EVIDENCE,
+    metaDescription: raw.crawl.metaDescription ?? null,
   };
 }

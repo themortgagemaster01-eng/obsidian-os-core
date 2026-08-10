@@ -420,6 +420,7 @@ export interface Database {
           technology_stack: Json | null;
           opportunity_score: number | null;
           screenshot_url: string | null;
+          above_fold_screenshot_url: string | null;
           error_message: string | null;
           started_at: string | null;
           completed_at: string | null;
@@ -450,6 +451,7 @@ export interface Database {
           technology_stack?: Json | null;
           opportunity_score?: number | null;
           screenshot_url?: string | null;
+          above_fold_screenshot_url?: string | null;
           error_message?: string | null;
           started_at?: string | null;
           completed_at?: string | null;
@@ -480,6 +482,7 @@ export interface Database {
           technology_stack?: Json | null;
           opportunity_score?: number | null;
           screenshot_url?: string | null;
+          above_fold_screenshot_url?: string | null;
           error_message?: string | null;
           started_at?: string | null;
           completed_at?: string | null;

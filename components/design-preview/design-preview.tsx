@@ -52,6 +52,15 @@ export interface DesignPreviewProps {
   components: ComponentNode[];
   refinedDesign: RefinedDesign;
   designMemory: DesignMemory | null;
+  /**
+   * A freshly-resolved signed URL for this mission's real, already-captured
+   * website screenshot (app/missions/[id]/preview/page.tsx resolves it at
+   * request time — see that file's comment on why it's never persisted).
+   * Real business photography when a screenshot exists; `null` and
+   * gracefully omitted otherwise (§8 — never a stock/placeholder image
+   * standing in for one that was never captured).
+   */
+  heroImageUrl: string | null;
 }
 
 const FALLBACK = {
@@ -93,7 +102,14 @@ function hasRealContent(node: ComponentNode): boolean {
   return node.slots.some(isRealSlot);
 }
 
-export function DesignPreview({ businessName, wireframe, components, refinedDesign, designMemory }: DesignPreviewProps) {
+export function DesignPreview({
+  businessName,
+  wireframe,
+  components,
+  refinedDesign,
+  designMemory,
+  heroImageUrl,
+}: DesignPreviewProps) {
   const palette = designMemory?.colorPalette;
   const neutral = toSafeCssColor(palette?.neutral, FALLBACK.neutral);
   const primary = toSafeCssColor(palette?.primary, FALLBACK.primary);
@@ -142,6 +158,7 @@ export function DesignPreview({ businessName, wireframe, components, refinedDesi
             rationale={rationale}
             background={type === "footer" ? secondary : type === "hero" ? primary : neutral}
             foreground={type === "footer" || type === "hero" ? FALLBACK.onDark : FALLBACK.text}
+            backgroundImageUrl={type === "hero" ? heroImageUrl : null}
           >
             <SectionBody
               node={node}
@@ -163,6 +180,7 @@ function SectionShell({
   rationale,
   background,
   foreground,
+  backgroundImageUrl,
   children,
 }: {
   section: SectionType;
@@ -170,6 +188,8 @@ function SectionShell({
   rationale: string;
   background: string;
   foreground: string;
+  /** Real, already-captured business photography (see DesignPreviewProps.heroImageUrl) — currently only ever passed for "hero". */
+  backgroundImageUrl?: string | null;
   children: React.ReactNode;
 }) {
   const spacing = findSectionSpacing(refinedDesign, section);
@@ -182,6 +202,18 @@ function SectionShell({
       title={rationale}
       style={{
         backgroundColor: background,
+        // A fixed 0.6-opacity black scrim under the real photo, not a
+        // guessed value: hero text always renders in FALLBACK.onDark
+        // (near-white) regardless of the photo's own colors, and a scrim
+        // this dark keeps that pairing readable against any real
+        // photograph — the same "reuse an already-safe pairing rather than
+        // introduce a new, unvalidated one" discipline as the CTA borders
+        // in TouchAffordance above.
+        backgroundImage: backgroundImageUrl
+          ? `linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url("${backgroundImageUrl}")`
+          : undefined,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
         color: foreground,
         padding: `${paddingRem}rem 1.5rem`,
         borderTop: section === "hero" ? "none" : "1px solid rgba(0,0,0,0.08)",

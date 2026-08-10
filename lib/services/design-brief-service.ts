@@ -80,6 +80,8 @@ export interface DesignBrief {
    * never actually captured (§8's zero-fabrication rule).
    */
   contactEvidence: ContactInfo;
+  /** Passed through from NormalizedAnalysis.metaDescription unchanged — the business's own real published homepage description, when the crawl captured one (see analysis-types.ts's field doc). */
+  metaDescription?: string | null;
   targetAudience: string;
   positioning: string;
   direction: {
@@ -318,6 +320,7 @@ export async function runDesignBrief(
       industryBucket,
       citedInsights,
       contactEvidence: normalized.contactEvidence,
+      metaDescription: normalized.metaDescription,
       targetAudience: creative.targetAudience,
       positioning: creative.positioning,
       direction: creative.direction,

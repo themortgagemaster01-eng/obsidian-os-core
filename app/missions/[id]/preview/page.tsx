@@ -6,9 +6,11 @@ import { createClient } from "@/lib/supabase/server";
 import { missionRepository } from "@/lib/repositories/mission-repository";
 import { websiteDesignRepository } from "@/lib/repositories/website-design-repository";
 import { designBriefRepository } from "@/lib/repositories/design-brief-repository";
+import { websiteAnalysisRepository } from "@/lib/repositories/website-analysis-repository";
 import type { Wireframe, ComponentNode } from "@/lib/services/design-generation-service";
 import type { RefinedDesign } from "@/lib/services/design-refinement-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
+import { resolveScreenshotUrl } from "@/lib/presentation/resolve-screenshot-url";
 import { DesignPreview } from "@/components/design-preview/design-preview";
 import { Badge } from "@/components/ui/badge";
 
@@ -65,6 +67,23 @@ export default async function DesignPreviewPage({ params, searchParams }: PagePa
 
   const brief = await designBriefRepository.findById(supabase, design.design_brief_id);
 
+  // Real, already-captured evidence, resolved to a fresh signed URL at
+  // request time — never persisted into website_designs.components, since
+  // the signed URL itself expires in an hour (resolve-screenshot-url.ts)
+  // and the wireframe/component JSON is meant to remain valid indefinitely.
+  //
+  // Deliberately the above-fold capture, not the full-page one the
+  // Opportunity Report shows: lib/adapters/screenshot-adapter.ts has always
+  // captured both, but only full-page was ever persisted. Using the
+  // full-page image as a hero background produced a real, measured
+  // Lighthouse performance regression (a full-page PNG runs ~5x the byte
+  // size of a single-viewport one) — confirmed via a real Design QA run
+  // during the Design Generation Richness Pass. The above-fold capture is
+  // the correct asset for a hero-sized image; it just needed persisting
+  // (supabase/migrations/0016_above_fold_screenshot.sql).
+  const analysis = await websiteAnalysisRepository.findLatestByMission(supabase, mission.id);
+  const heroImageUrl = await resolveScreenshotUrl(supabase, analysis?.above_fold_screenshot_url ?? null);
+
   return (
     <main className="min-h-screen bg-background">
       <header className="border-b border-border">
@@ -83,7 +102,7 @@ export default async function DesignPreviewPage({ params, searchParams }: PagePa
         </div>
       </header>
 
-      <PreviewBody design={design} brief={brief} businessName={mission.business_name} />
+      <PreviewBody design={design} brief={brief} businessName={mission.business_name} heroImageUrl={heroImageUrl} />
     </main>
   );
 }
@@ -92,10 +111,12 @@ function PreviewBody({
   design,
   brief,
   businessName,
+  heroImageUrl,
 }: {
   design: NonNullable<Awaited<ReturnType<typeof websiteDesignRepository.findById>>>;
   brief: Awaited<ReturnType<typeof designBriefRepository.findById>>;
   businessName: string;
+  heroImageUrl: string | null;
 }) {
   if (design.status !== "complete" || !design.wireframe || !design.components || !design.refined_design) {
     return (
@@ -121,6 +142,7 @@ function PreviewBody({
         components={components}
         refinedDesign={refinedDesign}
         designMemory={designMemory}
+        heroImageUrl={heroImageUrl}
       />
     </div>
   );
