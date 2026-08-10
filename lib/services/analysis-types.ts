@@ -15,6 +15,7 @@ import type {
   LighthouseRawResult,
   TechDetectionRawResult,
   ContactInfo,
+  ContentSection,
 } from "@/lib/adapters/types";
 
 /** Honest empty default — no crawl, or a crawl that never produced structured facts (predates docs/ARCHITECTURE_SPECIFICATION_V1.md's expanded crawler, or the fetch failed). Never a guessed value standing in for a missing one. */
@@ -97,6 +98,21 @@ export interface NormalizedAnalysis {
    * guessed or summarized.
    */
   metaDescription?: string | null;
+  /**
+   * Real service/offering descriptions the crawler found — now merged
+   * across the homepage AND every already-fetched sub-page (crawl-
+   * adapter.ts's mergeStructuredFacts), not homepage-only as before. Each
+   * item keeps its own real sourceUrl. Empty when no crawl ran or nothing
+   * matched — never invented to fill a business's services section.
+   */
+  services?: ContentSection[];
+  /**
+   * Real, already-published client testimonials the crawler found — same
+   * merged-across-pages sourcing as `services`. Verbatim excerpts only,
+   * each traceable to the real page it came from; never paraphrased or
+   * fabricated.
+   */
+  testimonials?: ContentSection[];
 }
 
 function clampScore(value: number): number {
@@ -207,6 +223,8 @@ export function normalizedAnalysisFromRow(
     },
     contactEvidence: crawl?.contact ?? EMPTY_CONTACT_EVIDENCE,
     metaDescription: crawl?.metaDescription ?? null,
+    services: crawl?.services ?? [],
+    testimonials: crawl?.testimonials ?? [],
   };
 }
 
@@ -257,5 +275,7 @@ export function normalizedAnalysisFromRawResults(
     },
     contactEvidence: raw.crawl.contact ?? EMPTY_CONTACT_EVIDENCE,
     metaDescription: raw.crawl.metaDescription ?? null,
+    services: raw.crawl.services ?? [],
+    testimonials: raw.crawl.testimonials ?? [],
   };
 }

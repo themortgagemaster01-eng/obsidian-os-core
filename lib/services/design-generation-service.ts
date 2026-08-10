@@ -7,7 +7,7 @@ import { refineDesign, type RefinedDesign } from "@/lib/services/design-refineme
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
-import type { ContactInfo } from "@/lib/adapters/types";
+import type { ContactInfo, ContentSection } from "@/lib/adapters/types";
 
 import {
   websiteDesignRepository,
@@ -183,6 +183,7 @@ const COMPONENT_KIND_BY_SECTION: Record<Exclude<SectionType, "hero">, string> = 
 };
 
 const MAX_FAQ_SLOTS = 4;
+const MAX_SERVICE_SLOTS = 6;
 
 export interface AssembleComponentsContext {
   businessName: string;
@@ -193,6 +194,8 @@ export interface AssembleComponentsContext {
   contactEvidence: ContactInfo;
   /** DesignBrief.metaDescription passed through unchanged — the business's own real published homepage copy, used as real hero headline content when present (§8: reusing a business's own words is not fabrication). */
   metaDescription?: string | null;
+  /** DesignBrief.services passed through unchanged — real service/offering descriptions the crawler found (homepage or an already-fetched sub-page), each traceable to its real source page. Fills the "services" section's slots when present; stays placeholder otherwise (§8). */
+  services?: ContentSection[];
 }
 
 function realSlot(name: string, value: string): ComponentSlot {
@@ -214,14 +217,16 @@ function placeholderSlot(name: string): ComponentSlot {
  * The hero's headline slot uses context.metaDescription — the business's
  * own real, published `<meta name="description">` copy — when the crawl
  * captured one, for the same reason: it's real content the business
- * already publishes, not an invented tagline (§8). credibility's
- * yearsInBusiness/reviewCount/certifications, and services/menu/gallery's
- * content, remain placeholder-only: the crawl adapter's keyword/CSS-class
- * heuristic (findSectionsByKeywords) does not reliably extract these from
- * page-builder-generated sites (Wix/WordPress theme markup rarely exposes
- * matching class/id names) — confirmed empty across all five real
- * businesses in the industry benchmark, not a per-business gap. A crawler
- * fix, not a Generation fix — out of scope here.
+ * already publishes, not an invented tagline (§8). The services section's
+ * slots use context.services — real service/offering text the crawler
+ * found on the homepage or an already-fetched sub-page (crawl-adapter.ts's
+ * mergeStructuredFacts closed the gap where that content was previously
+ * discarded after fetching) — one real slot per matched section, capped at
+ * MAX_SERVICE_SLOTS, falling back to a single placeholder when nothing was
+ * found. credibility's yearsInBusiness/reviewCount/certifications, and
+ * menu/gallery's content, remain placeholder-only: confirmed genuinely
+ * absent or (Veslo's menu specifically) client-side-rendered and invisible
+ * to a plain HTML fetch — a source-site limitation, not a Generation gap.
  */
 function buildSlots(section: SectionType, context: AssembleComponentsContext): ComponentSlot[] {
   switch (section) {
@@ -235,6 +240,11 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
     case "credibility":
       return [placeholderSlot("yearsInBusiness"), placeholderSlot("reviewCount"), placeholderSlot("certifications")];
     case "services":
+      if (context.services && context.services.length > 0) {
+        return context.services
+          .slice(0, MAX_SERVICE_SLOTS)
+          .map((section, i) => realSlot(`offering-${i + 1}`, section.excerpt));
+      }
       return [placeholderSlot("offerings")];
     case "menu":
       return [placeholderSlot("menuItems")];
@@ -321,6 +331,7 @@ export function generateWebsiteStructure(
     realTestimonials: options.realTestimonials,
     contactEvidence: brief.contactEvidence,
     metaDescription: brief.metaDescription,
+    services: brief.services,
   });
   const refinedDesign = refineDesign({ wireframe }, brief, options.designMemory);
   return { wireframe, components, refinedDesign };
@@ -381,10 +392,13 @@ export async function createDesignGenerationRun(
  * it doesn't judge; only a future design-qa-service.ts (Phase 3) owns the
  * `designing -> qa` transition.
  *
- * realTestimonials is hardcoded to none today: no capture pathway for real
- * testimonial data exists anywhere in this codebase yet, so honestly
- * omitting the testimonials section (rather than guessing) is the only
- * correct behavior available (§8).
+ * realTestimonials is real, evidence-driven: hasRealTestimonials and the
+ * testimonial text itself come from brief.testimonials (the crawler's
+ * mergeStructuredFacts output — homepage plus already-fetched sub-pages,
+ * see crawl-adapter.ts). A wireframe includes the "testimonials" section
+ * only when real testimonial text actually exists for this business (§8) —
+ * confirmed real, e.g. for a law firm whose own testimonials page the
+ * crawler already fetches, and correctly absent for a business with none.
  */
 export async function runDesignGeneration(
   deps: DesignGenerationServiceDeps,
@@ -419,8 +433,10 @@ export async function runDesignGeneration(
 
     const brief = briefRow.brief as unknown as DesignBrief;
     const designMemory = briefRow.design_memory as unknown as DesignMemory | null;
+    const realTestimonials = (brief.testimonials ?? []).map((section) => section.excerpt);
     const { wireframe, components, refinedDesign } = generateWebsiteStructure(brief, {
-      hasRealTestimonials: false,
+      hasRealTestimonials: realTestimonials.length > 0,
+      realTestimonials,
       designMemory,
     });
 

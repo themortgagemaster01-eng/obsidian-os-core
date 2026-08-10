@@ -49,10 +49,18 @@ export interface SocialLinks {
   yelp: string | null;
 }
 
-/** A best-effort structural match for a content category (services, team, FAQ, etc.) — the heading that identified it plus a bounded text excerpt, never invented copy. */
+/**
+ * A best-effort structural match for a content category (services, team,
+ * FAQ, etc.) — the heading that identified it plus a bounded text excerpt,
+ * never invented copy. `sourceUrl` is the exact page this was extracted
+ * from (the homepage or one of the crawler's already-fetched sub-pages,
+ * `pages[]`) — every extracted claim stays traceable to where it actually
+ * came from, never merged into an unattributed blob.
+ */
 export interface ContentSection {
   heading: string;
   excerpt: string;
+  sourceUrl: string;
 }
 
 export interface ReviewsSummary {
@@ -65,6 +73,8 @@ export interface ReviewsSummary {
 export interface GalleryImage {
   src: string;
   alt: string | null;
+  /** The exact page (homepage or a crawled sub-page) this image reference was found on. */
+  sourceUrl: string;
 }
 
 export interface FormInfo {

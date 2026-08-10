@@ -2,7 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import * as cheerio from "cheerio";
 
-import { extractStructuredFacts } from "@/lib/adapters/crawl-adapter";
+import { extractStructuredFacts, mergeStructuredFacts } from "@/lib/adapters/crawl-adapter";
 
 const JSON_LD_HTML = `
 <html><head>
@@ -53,7 +53,7 @@ const EMPTY_HTML = `<html><body><p>Nothing structured here.</p></body></html>`;
 
 describe("crawl-adapter: extractStructuredFacts (JSON-LD source)", () => {
   const $ = cheerio.load(JSON_LD_HTML);
-  const facts = extractStructuredFacts($);
+  const facts = extractStructuredFacts($, "https://example.test/");
 
   test("extracts contact info from schema.org JSON-LD", () => {
     assert.ok(facts.contact.phones.includes("+1-555-123-4567"));
@@ -102,7 +102,7 @@ describe("crawl-adapter: extractStructuredFacts (JSON-LD source)", () => {
 
 describe("crawl-adapter: extractStructuredFacts (DOM/regex heuristics, no JSON-LD)", () => {
   const $ = cheerio.load(HEURISTIC_ONLY_HTML);
-  const facts = extractStructuredFacts($);
+  const facts = extractStructuredFacts($, "https://example.test/");
 
   test("extracts phone numbers from tel: links and body text", () => {
     assert.ok(facts.contact.phones.includes("555-222-3333"));
@@ -144,7 +144,7 @@ describe("crawl-adapter: extractStructuredFacts (DOM/regex heuristics, no JSON-L
 describe("crawl-adapter: extractStructuredFacts (no structured content at all)", () => {
   test("returns honest empty defaults, never a guessed value", () => {
     const $ = cheerio.load(EMPTY_HTML);
-    const facts = extractStructuredFacts($);
+    const facts = extractStructuredFacts($, "https://example.test/");
 
     assert.deepEqual(facts.contact, { phones: [], emails: [], address: null, hours: null });
     assert.deepEqual(facts.socials, {
@@ -162,5 +162,136 @@ describe("crawl-adapter: extractStructuredFacts (no structured content at all)",
     assert.deepEqual(facts.maps, []);
     assert.deepEqual(facts.gallery, []);
     assert.deepEqual(facts.reviews, { averageRating: null, count: null, source: null });
+  });
+});
+
+// ===========================================================================
+// mergeStructuredFacts — the actual fix: the crawler already fetches up to
+// five sub-pages per business but previously discarded everything but their
+// <title>. These fixtures are modeled on real content confirmed present
+// during the crawler evidence-gap review (a real landscaping service list,
+// real named client testimonials on a law firm's own testimonials page,
+// real hours captured on a restaurant's own menu page) — not synthetic
+// abstractions.
+// ===========================================================================
+
+const HOMEPAGE_URL = "https://example.test/";
+const SERVICES_PAGE_URL = "https://example.test/cleanup-services";
+const TESTIMONIALS_PAGE_URL = "https://example.test/testimonials";
+const MENU_PAGE_URL = "https://example.test/menu";
+
+const HOMEPAGE_MINIMAL_HTML = `
+<html><body>
+<a href="tel:555-111-2222">Call now</a>
+</body></html>
+`;
+
+const SERVICES_SUBPAGE_HTML = `
+<html><body>
+<nav><a href="/">Home</a></nav>
+<div class="service-block"><h2>Lawn Cleanup Services</h2><p>Spring and fall yard cleanup, hardscaping, patio installation, and retaining wall installation.</p></div>
+</body></html>
+`;
+
+const TESTIMONIALS_SUBPAGE_HTML = `
+<html><body>
+<div class="testimonial-item"><h3>Carolyn M.</h3><p>She was with me through my entire divorce and the outcome was better than I ever hoped for.</p></div>
+</body></html>
+`;
+
+const MENU_SUBPAGE_NO_MATCHING_MARKUP_HTML = `
+<html><body>
+<p>Home Menu Contact</p>
+<p>Hours of operation: Monday Closed Tuesday-Saturday 11:30am - 8:00pm Sunday 11:30am - 7:00pm</p>
+<div class="hours-block">Monday Closed Tuesday-Saturday 11:30am - 8:00pm</div>
+</body></html>
+`;
+
+describe("crawl-adapter: mergeStructuredFacts (sub-page evidence, previously discarded)", () => {
+  test("a real service section found only on a sub-page reaches the merged result, with its real sourceUrl", () => {
+    const homepage = extractStructuredFacts(cheerio.load(HOMEPAGE_MINIMAL_HTML), HOMEPAGE_URL);
+    const servicesPage = extractStructuredFacts(cheerio.load(SERVICES_SUBPAGE_HTML), SERVICES_PAGE_URL);
+
+    assert.deepEqual(homepage.services, []); // the homepage itself has nothing — confirms this isn't a homepage-extraction false positive
+
+    const merged = mergeStructuredFacts([homepage, servicesPage]);
+    assert.equal(merged.services.length, 1);
+    assert.equal(merged.services[0].heading, "Lawn Cleanup Services");
+    assert.match(merged.services[0].excerpt, /hardscaping/);
+    assert.equal(merged.services[0].sourceUrl, SERVICES_PAGE_URL, "provenance must point at the real sub-page, not the homepage");
+  });
+
+  test("a real testimonial found only on a sub-page reaches the merged result, verbatim, with provenance — never paraphrased or fabricated", () => {
+    const homepage = extractStructuredFacts(cheerio.load(HOMEPAGE_MINIMAL_HTML), HOMEPAGE_URL);
+    const testimonialsPage = extractStructuredFacts(cheerio.load(TESTIMONIALS_SUBPAGE_HTML), TESTIMONIALS_PAGE_URL);
+
+    const merged = mergeStructuredFacts([homepage, testimonialsPage]);
+    assert.equal(merged.testimonials.length, 1);
+    assert.equal(merged.testimonials[0].heading, "Carolyn M.");
+    assert.match(merged.testimonials[0].excerpt, /better than I ever hoped for/);
+    assert.equal(merged.testimonials[0].sourceUrl, TESTIMONIALS_PAGE_URL);
+  });
+
+  test("contact info (e.g. hours) captured only on a sub-page fills in what the homepage didn't have — the homepage's own value always wins when it has one", () => {
+    const homepage = extractStructuredFacts(cheerio.load(HOMEPAGE_MINIMAL_HTML), HOMEPAGE_URL);
+    const menuPage = extractStructuredFacts(cheerio.load(MENU_SUBPAGE_NO_MATCHING_MARKUP_HTML), MENU_PAGE_URL);
+
+    assert.equal(homepage.contact.hours, null); // homepage genuinely has none
+
+    const merged = mergeStructuredFacts([homepage, menuPage]);
+    assert.match(merged.contact.hours ?? "", /11:30am - 8:00pm/);
+    // The homepage's real phone link must still win over anything a sub-page might also contain.
+    assert.ok(merged.contact.phones.includes("555-111-2222"));
+  });
+
+  test("merges phones across pages without duplicating, respecting the same cap a single page's own extraction already had", () => {
+    const homepage = extractStructuredFacts(cheerio.load(HOMEPAGE_MINIMAL_HTML), HOMEPAGE_URL);
+    const menuPage = extractStructuredFacts(cheerio.load(MENU_SUBPAGE_NO_MATCHING_MARKUP_HTML), MENU_PAGE_URL);
+    const merged = mergeStructuredFacts([homepage, menuPage, homepage]); // homepage counted twice on purpose
+    const occurrences = merged.contact.phones.filter((p) => p === "555-111-2222").length;
+    assert.equal(occurrences, 1, "the same real phone number must not be duplicated just because multiple pages surfaced it");
+  });
+
+  test("a sub-page with no matching content contributes nothing — never a fabricated section standing in for missing evidence", () => {
+    const homepage = extractStructuredFacts(cheerio.load(HOMEPAGE_MINIMAL_HTML), HOMEPAGE_URL);
+    const blankSubPage = extractStructuredFacts(cheerio.load("<html><body><p>Nothing relevant here.</p></body></html>"), "https://example.test/blog");
+
+    const merged = mergeStructuredFacts([homepage, blankSubPage]);
+    assert.deepEqual(merged.services, []);
+    assert.deepEqual(merged.testimonials, []);
+    assert.deepEqual(merged.team, []);
+  });
+
+  test("multiple sub-pages each contribute their own real content simultaneously", () => {
+    const homepage = extractStructuredFacts(cheerio.load(HOMEPAGE_MINIMAL_HTML), HOMEPAGE_URL);
+    const servicesPage = extractStructuredFacts(cheerio.load(SERVICES_SUBPAGE_HTML), SERVICES_PAGE_URL);
+    const testimonialsPage = extractStructuredFacts(cheerio.load(TESTIMONIALS_SUBPAGE_HTML), TESTIMONIALS_PAGE_URL);
+
+    const merged = mergeStructuredFacts([homepage, servicesPage, testimonialsPage]);
+    assert.equal(merged.services.length, 1);
+    assert.equal(merged.testimonials.length, 1);
+    assert.equal(merged.services[0].sourceUrl, SERVICES_PAGE_URL);
+    assert.equal(merged.testimonials[0].sourceUrl, TESTIMONIALS_PAGE_URL);
+  });
+
+  test("returns honest empty defaults when given no pages at all", () => {
+    const merged = mergeStructuredFacts([]);
+    assert.deepEqual(merged.services, []);
+    assert.deepEqual(merged.contact, { phones: [], emails: [], address: null, hours: null });
+  });
+
+  test("homepage's own forms/maps are preserved unchanged — sub-page contact forms are not aggregated as a business fact", () => {
+    const homepageWithForm = extractStructuredFacts(
+      cheerio.load('<html><body><form action="/submit" method="post"><input type="email" /></form></body></html>'),
+      HOMEPAGE_URL
+    );
+    const subPageWithDifferentForm = extractStructuredFacts(
+      cheerio.load('<html><body><form action="/other" method="get"></form></body></html>'),
+      SERVICES_PAGE_URL
+    );
+
+    const merged = mergeStructuredFacts([homepageWithForm, subPageWithDifferentForm]);
+    assert.equal(merged.forms.length, 1);
+    assert.equal(merged.forms[0].action, "/submit");
   });
 });

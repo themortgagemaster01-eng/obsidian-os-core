@@ -253,14 +253,14 @@ function extractMaps($: cheerio.CheerioAPI): MapEmbed[] {
 
 const MAX_GALLERY_IMAGES = 20;
 
-function extractGallery($: cheerio.CheerioAPI): GalleryImage[] {
+function extractGallery($: cheerio.CheerioAPI, sourceUrl: string): GalleryImage[] {
   const seen = new Set<string>();
   const images: GalleryImage[] = [];
   $('[class*="gallery" i] img, [id*="gallery" i] img').each((_, el) => {
     const src = $(el).attr("src");
     if (!src || seen.has(src)) return;
     seen.add(src);
-    images.push({ src, alt: $(el).attr("alt") ?? null });
+    images.push({ src, alt: $(el).attr("alt") ?? null, sourceUrl });
   });
   return images.slice(0, MAX_GALLERY_IMAGES);
 }
@@ -278,7 +278,7 @@ const SECTION_EXCERPT_MAX_CHARS = 300;
  * reduce false positives from generic keywords appearing in menu class
  * names.
  */
-function findSectionsByKeywords($: cheerio.CheerioAPI, keywords: string[]): ContentSection[] {
+function findSectionsByKeywords($: cheerio.CheerioAPI, keywords: string[], sourceUrl: string): ContentSection[] {
   const selector = keywords.map((k) => `[class*="${k}" i], [id*="${k}" i]`).join(", ");
   const sections: ContentSection[] = [];
   const seen = new Set<string>();
@@ -296,30 +296,140 @@ function findSectionsByKeywords($: cheerio.CheerioAPI, keywords: string[]): Cont
     if (seen.has(dedupeKey)) return;
     seen.add(dedupeKey);
 
-    sections.push({ heading, excerpt });
+    sections.push({ heading, excerpt, sourceUrl });
   });
 
   return sections;
 }
 
-/** The full structured-facts extraction pass — pure, given an already-loaded page. */
-export function extractStructuredFacts($: cheerio.CheerioAPI) {
+/**
+ * The full structured-facts extraction pass — pure, given an already-loaded
+ * page and the URL it came from. `sourceUrl` is threaded onto every
+ * ContentSection/GalleryImage this produces, so a caller merging results
+ * from multiple pages (see mergeStructuredFacts below) never loses track of
+ * which real page backs which claim.
+ */
+export function extractStructuredFacts($: cheerio.CheerioAPI, sourceUrl: string) {
   const jsonLd = parseJsonLdEntities($);
 
   return {
     contact: extractContact($, jsonLd),
     socials: extractSocials($, jsonLd),
-    certifications: findSectionsByKeywords($, ["certif", "accredit"]),
-    licenses: findSectionsByKeywords($, ["licens"]),
-    services: findSectionsByKeywords($, ["service", "offering"]),
-    products: findSectionsByKeywords($, ["product", "shop-item", "store-item"]),
-    team: findSectionsByKeywords($, ["team", "staff"]),
-    faq: findSectionsByKeywords($, ["faq", "accordion"]),
-    testimonials: findSectionsByKeywords($, ["testimonial"]),
+    certifications: findSectionsByKeywords($, ["certif", "accredit"], sourceUrl),
+    licenses: findSectionsByKeywords($, ["licens"], sourceUrl),
+    services: findSectionsByKeywords($, ["service", "offering"], sourceUrl),
+    products: findSectionsByKeywords($, ["product", "shop-item", "store-item"], sourceUrl),
+    team: findSectionsByKeywords($, ["team", "staff"], sourceUrl),
+    faq: findSectionsByKeywords($, ["faq", "accordion"], sourceUrl),
+    testimonials: findSectionsByKeywords($, ["testimonial"], sourceUrl),
     reviews: extractReviews(jsonLd),
-    gallery: extractGallery($),
+    gallery: extractGallery($, sourceUrl),
     forms: extractForms($),
     maps: extractMaps($),
+  };
+}
+
+type StructuredFacts = ReturnType<typeof extractStructuredFacts>;
+
+function mergeContactInfo(perPage: ContactInfo[]): ContactInfo {
+  const phones = new Set<string>();
+  const emails = new Set<string>();
+  let address: string | null = null;
+  let hours: string | null = null;
+  for (const c of perPage) {
+    c.phones.forEach((p) => phones.add(p));
+    c.emails.forEach((e) => emails.add(e));
+    if (!address && c.address) address = c.address;
+    if (!hours && c.hours) hours = c.hours;
+  }
+  return {
+    phones: [...phones].slice(0, MAX_CONTACT_ITEMS),
+    emails: [...emails].slice(0, MAX_CONTACT_ITEMS),
+    address,
+    hours,
+  };
+}
+
+function mergeSocials(perPage: SocialLinks[]): SocialLinks {
+  const result = emptySocials();
+  for (const socials of perPage) {
+    for (const key of Object.keys(result) as (keyof SocialLinks)[]) {
+      if (!result[key] && socials[key]) result[key] = socials[key];
+    }
+  }
+  return result;
+}
+
+function mergeReviews(perPage: ReviewsSummary[]): ReviewsSummary {
+  return perPage.find((r) => r.source !== null) ?? emptyReviews();
+}
+
+/** Concatenates content sections across pages, still capped and deduped exactly like a single page's own findSectionsByKeywords — a section real on two different pages collapses to one, provenance kept from whichever copy was seen first. */
+function mergeSections(perPage: ContentSection[][]): ContentSection[] {
+  const merged: ContentSection[] = [];
+  const seen = new Set<string>();
+  for (const sections of perPage) {
+    for (const section of sections) {
+      if (merged.length >= MAX_SECTIONS_PER_CATEGORY) return merged;
+      const dedupeKey = `${section.heading}:${section.excerpt.slice(0, 60)}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      merged.push(section);
+    }
+  }
+  return merged;
+}
+
+function mergeGallery(perPage: GalleryImage[][]): GalleryImage[] {
+  const merged: GalleryImage[] = [];
+  const seen = new Set<string>();
+  for (const images of perPage) {
+    for (const image of images) {
+      if (merged.length >= MAX_GALLERY_IMAGES) return merged;
+      if (seen.has(image.src)) continue;
+      seen.add(image.src);
+      merged.push(image);
+    }
+  }
+  return merged;
+}
+
+/**
+ * Merges structured facts extracted separately from the homepage and each
+ * of the crawler's already-fetched sub-pages (`CrawlRawResult.pages`) into
+ * one combined result — the fix for the crawler previously discarding
+ * everything but a sub-page's `<title>` once it had been fetched. `pages`
+ * must be ordered homepage-first: contact address/hours and forms/maps take
+ * the homepage's own value when present (its own declared facts are the
+ * most authoritative), falling through to a sub-page's only when the
+ * homepage didn't have one. Content-category sections/images/socials/
+ * reviews are unioned across every page, still capped and deduped exactly
+ * as a single page's own extraction already was — never expanding beyond
+ * what one page's worth of real content would produce, just drawing from
+ * more of it. Every item keeps the real sourceUrl it was actually found on
+ * (ContentSection/GalleryImage's own field) — nothing here invents content
+ * or blends pages into an unattributed mixture.
+ */
+export function mergeStructuredFacts(pages: StructuredFacts[]): StructuredFacts {
+  if (pages.length === 0) {
+    return emptyStructuredFacts();
+  }
+  return {
+    contact: mergeContactInfo(pages.map((p) => p.contact)),
+    socials: mergeSocials(pages.map((p) => p.socials)),
+    certifications: mergeSections(pages.map((p) => p.certifications)),
+    licenses: mergeSections(pages.map((p) => p.licenses)),
+    services: mergeSections(pages.map((p) => p.services)),
+    products: mergeSections(pages.map((p) => p.products)),
+    team: mergeSections(pages.map((p) => p.team)),
+    faq: mergeSections(pages.map((p) => p.faq)),
+    testimonials: mergeSections(pages.map((p) => p.testimonials)),
+    reviews: mergeReviews(pages.map((p) => p.reviews)),
+    gallery: mergeGallery(pages.map((p) => p.gallery)),
+    // Homepage's own only — a sub-page's contact form or map embed isn't a
+    // business fact worth aggregating the way services/testimonials are.
+    forms: pages[0].forms,
+    maps: pages[0].maps,
   };
 }
 
@@ -399,37 +509,65 @@ export async function runCrawlAdapter(targetUrl: string): Promise<CrawlRawResult
     .filter((href) => href !== finalUrl)
     .slice(0, MAX_SAMPLE_PAGES);
 
-  const pages: CrawlPage[] = await Promise.all(
-    sampleUrls.map(async (pageUrl): Promise<CrawlPage> => {
+  // Each sampled sub-page is fetched here regardless — the fix is making
+  // that already-downloaded HTML useful instead of keeping only its
+  // <title> and discarding the rest. Structured extraction runs on each
+  // sub-page's own document, with its own try/catch: a markup quirk on one
+  // sub-page must never discard that page's CrawlPage entry, and must never
+  // take down the homepage's own already-succeeded extraction.
+  const subPageResults: { page: CrawlPage; facts: StructuredFacts | null }[] = await Promise.all(
+    sampleUrls.map(async (pageUrl): Promise<{ page: CrawlPage; facts: StructuredFacts | null }> => {
       try {
         const pageResponse = await fetchWithTimeout(pageUrl);
         const pageHtml = await pageResponse.text();
-        const pageTitle = cheerio.load(pageHtml)("title").first().text().trim() || null;
-        return { url: pageUrl, statusCode: pageResponse.status, title: pageTitle };
+        const page$ = cheerio.load(pageHtml);
+        const pageTitle = page$("title").first().text().trim() || null;
+
+        let facts: StructuredFacts | null = null;
+        try {
+          facts = extractStructuredFacts(page$, pageUrl);
+        } catch {
+          // Honest: extraction failed on this sub-page, not "nothing there."
+          facts = null;
+        }
+
+        return { page: { url: pageUrl, statusCode: pageResponse.status, title: pageTitle }, facts };
       } catch (err) {
         return {
-          url: pageUrl,
-          statusCode: null,
-          title: null,
-          fetchError: err instanceof Error ? err.message : "Failed to fetch page",
+          page: {
+            url: pageUrl,
+            statusCode: null,
+            title: null,
+            fetchError: err instanceof Error ? err.message : "Failed to fetch page",
+          },
+          facts: null,
         };
       }
     })
   );
+
+  const pages: CrawlPage[] = subPageResults.map((r) => r.page);
 
   const [robotsCheck, sitemapCheck] = await Promise.all([
     fetchWithTimeout(new URL("/robots.txt", origin).toString()).catch(() => null),
     fetchWithTimeout(new URL("/sitemap.xml", origin).toString()).catch(() => null),
   ]);
 
-  let structuredFacts;
+  let homepageFacts: StructuredFacts;
   try {
-    structuredFacts = extractStructuredFacts($);
+    homepageFacts = extractStructuredFacts($, finalUrl);
   } catch {
     // A heuristic bug in structured extraction should never crash a crawl
     // that otherwise succeeded — degrade to honest empty defaults instead.
-    structuredFacts = emptyStructuredFacts();
+    homepageFacts = emptyStructuredFacts();
   }
+
+  // Homepage first, always — mergeStructuredFacts relies on that order for
+  // contact/forms/maps precedence (see its own doc comment).
+  const structuredFacts = mergeStructuredFacts([
+    homepageFacts,
+    ...subPageResults.map((r) => r.facts).filter((f): f is StructuredFacts => f !== null),
+  ]);
 
   return {
     requestedUrl: targetUrl,

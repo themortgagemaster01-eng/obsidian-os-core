@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Json } from "@/lib/supabase/database.types";
 import type { AnalysisCategory, NormalizedAnalysis } from "@/lib/services/analysis-types";
-import type { ContactInfo } from "@/lib/adapters/types";
+import type { ContactInfo, ContentSection } from "@/lib/adapters/types";
 import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
 import { generateInsights, type Insight } from "@/lib/services/insight-service";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
@@ -82,6 +82,10 @@ export interface DesignBrief {
   contactEvidence: ContactInfo;
   /** Passed through from NormalizedAnalysis.metaDescription unchanged — the business's own real published homepage description, when the crawl captured one (see analysis-types.ts's field doc). */
   metaDescription?: string | null;
+  /** Passed through from NormalizedAnalysis.services unchanged — real service/offering descriptions merged across the homepage and already-fetched sub-pages, each with real provenance. */
+  services?: ContentSection[];
+  /** Passed through from NormalizedAnalysis.testimonials unchanged — real, already-published client testimonials, verbatim, each with real provenance. */
+  testimonials?: ContentSection[];
   targetAudience: string;
   positioning: string;
   direction: {
@@ -321,6 +325,8 @@ export async function runDesignBrief(
       citedInsights,
       contactEvidence: normalized.contactEvidence,
       metaDescription: normalized.metaDescription,
+      services: normalized.services,
+      testimonials: normalized.testimonials,
       targetAudience: creative.targetAudience,
       positioning: creative.positioning,
       direction: creative.direction,
