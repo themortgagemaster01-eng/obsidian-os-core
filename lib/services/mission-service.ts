@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { missionRepository, type MissionRow } from "@/lib/repositories/mission-repository";
 import type { WebsiteDesignRow } from "@/lib/repositories/website-design-repository";
+import type { MissionState } from "@/lib/workflow/mission-state";
 import {
   createMission as workflowCreateMission,
   createMissionWorkflowDeps,
@@ -144,4 +145,143 @@ export function sortMissionsForReview(missions: MissionRow[]): MissionRow[] {
   const reviewing = missions.filter((m) => m.state === "reviewing");
   const rest = missions.filter((m) => m.state !== "reviewing");
   return [...reviewing, ...rest];
+}
+
+/**
+ * The Line — Mission Control's production-pipeline spine (Visual Redesign
+ * synthesis). Six stages a founder can look at and understand: Research,
+ * Brief, Approval, Build, QA, Preview. `preview` is deliberately not a
+ * `MissionState` — see `ProductionLineStage` below — it's a real, already
+ * computed artifact (`computeMissionsWithPreview()`), not a pipeline
+ * position, so a mission can be "in QA" and "preview ready" at once (Design
+ * Generation completes, and can produce a renderable `website_designs` row,
+ * before `design-qa-service.ts` ever runs and moves `state` to `qa`).
+ */
+export const PRODUCTION_STAGES = [
+  { key: "research", label: "Research" },
+  { key: "brief", label: "Brief" },
+  { key: "approval", label: "Approval" },
+  { key: "build", label: "Build" },
+  { key: "qa", label: "QA" },
+  { key: "preview", label: "Preview" },
+] as const;
+
+export type StageKey = (typeof PRODUCTION_STAGES)[number]["key"];
+
+/** The five `MissionState`-backed positions on the Line — `preview` excluded, see above. */
+export type ProductionLineStage = Exclude<StageKey, "preview">;
+
+/**
+ * Maps each real mission `state` to its position on the Line. `null` for
+ * states off the production line: `archived`/`rejected` (rejecting or
+ * archiving overwrites `state`, so how far the mission actually got is not
+ * recoverable from this field alone — never fabricated here) and the
+ * downstream proposal/email/approval/sent sales-pipeline states, which are
+ * real but explicitly unwired (`docs/05-Mission-Control.md`) and represent a
+ * different pipeline than the one this Line visualizes.
+ */
+const PRODUCTION_LINE_STAGE_BY_STATE: Record<MissionState, ProductionLineStage | null> = {
+  discovered: "research",
+  analyzing: "research",
+  researching: "brief",
+  reviewing: "approval",
+  designing: "build",
+  qa: "qa",
+  proposal: null,
+  email: null,
+  approval: null,
+  sent: null,
+  archived: null,
+  rejected: null,
+};
+
+export function getProductionLineStage(state: MissionState): ProductionLineStage | null {
+  return PRODUCTION_LINE_STAGE_BY_STATE[state];
+}
+
+export type ProductionLineCounts = Record<ProductionLineStage, number>;
+
+/** Real, honest counts per Line stage — never fabricated for a stage with no missions. */
+export function computeProductionLineCounts(missions: MissionRow[]): ProductionLineCounts {
+  const counts: ProductionLineCounts = { research: 0, brief: 0, approval: 0, build: 0, qa: 0 };
+  for (const mission of missions) {
+    const stage = getProductionLineStage(mission.state);
+    if (stage) counts[stage] += 1;
+  }
+  return counts;
+}
+
+export type StageStatus = "complete" | "active" | "upcoming";
+
+export interface MissionStageStep {
+  key: StageKey;
+  label: string;
+  status: StageStatus;
+}
+
+/**
+ * Signal Room — the compact per-mission stage tracker. Returns `null` for a
+ * mission off the Line (see `getProductionLineStage`): rather than guess how
+ * far a rejected/archived mission got, the tracker is omitted and the
+ * existing `StateBadge` (which already renders "Rejected"/"Archived")
+ * remains the sole, honest status indicator for those rows.
+ */
+export function computeMissionStageTrack(
+  mission: Pick<MissionRow, "state">,
+  hasPreview: boolean
+): MissionStageStep[] | null {
+  const activeStage = getProductionLineStage(mission.state);
+  if (!activeStage) return null;
+
+  const activeIndex = PRODUCTION_STAGES.findIndex((stage) => stage.key === activeStage);
+
+  return PRODUCTION_STAGES.map((stage, index) => {
+    let status: StageStatus;
+    if (stage.key === "preview") {
+      status = hasPreview ? "complete" : "upcoming";
+    } else if (index < activeIndex) {
+      status = "complete";
+    } else if (index === activeIndex) {
+      status = "active";
+    } else {
+      status = "upcoming";
+    }
+    return { key: stage.key, label: stage.label, status };
+  });
+}
+
+export interface MissionGroups {
+  /** State === "reviewing" — the Founder Approval Gate. Requires a decision now. */
+  needsReview: MissionRow[];
+  /** On the Line, no preview yet. */
+  inProduction: MissionRow[];
+  /** A real, renderable Design Preview exists. */
+  readyToPresent: MissionRow[];
+}
+
+/**
+ * Groups every mission into exactly one of three sections for the Mission
+ * List (Studio Docket synthesis) — nothing is hidden: the three groups
+ * always sum to `missions.length`. Order within each group preserves the
+ * input order (most-recent-first, from `listMissionsForOrganization`).
+ */
+export function groupMissionsForDisplay(
+  missions: MissionRow[],
+  missionsWithPreview: ReadonlySet<string> = new Set()
+): MissionGroups {
+  const needsReview: MissionRow[] = [];
+  const readyToPresent: MissionRow[] = [];
+  const inProduction: MissionRow[] = [];
+
+  for (const mission of missions) {
+    if (mission.state === "reviewing") {
+      needsReview.push(mission);
+    } else if (missionsWithPreview.has(mission.id)) {
+      readyToPresent.push(mission);
+    } else {
+      inProduction.push(mission);
+    }
+  }
+
+  return { needsReview, inProduction, readyToPresent };
 }

@@ -1,15 +1,14 @@
-import { Activity, CheckCircle2, Clock, Eye, ShieldCheck } from "lucide-react";
-
 import { createClient } from "@/lib/supabase/server";
 import {
   computeMissionControlStats,
   computeMissionsWithPreview,
+  computeProductionLineCounts,
   listMissionsForOrganization,
 } from "@/lib/services/mission-service";
 import { websiteDesignRepository } from "@/lib/repositories/website-design-repository";
-import { StatCard } from "@/components/mission-control/stat-card";
 import { MissionList } from "@/components/mission-control/mission-list";
 import { NewMissionDialog } from "@/components/mission-control/new-mission-dialog";
+import { ProductionLine } from "@/components/mission-control/production-line";
 import { SignOutButton } from "@/components/mission-control/sign-out-button";
 import { profileRepository } from "@/lib/repositories/profile-repository";
 
@@ -45,37 +44,40 @@ export default async function MissionControlPage() {
     : [];
   const missionsWithPreview = computeMissionsWithPreview(completedDesigns);
   const stats = computeMissionControlStats(missions, missionsWithPreview);
+  const lineCounts = computeProductionLineCounts(missions);
 
   return (
     <main className="min-h-screen bg-background">
       <header className="border-b border-border">
-        <div className="container flex items-center justify-between py-6">
+        <div className="container flex flex-col gap-6 py-8 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-lg font-semibold tracking-tight text-foreground">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Obsidian OS
+            </p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight text-foreground">
               Mission Control
             </h1>
-            <p className="text-sm text-muted-foreground">
-              Signed in as {user.email}
-            </p>
+            <p className="mt-1 text-sm text-muted-foreground">Signed in as {user.email}</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <NewMissionDialog />
             <SignOutButton />
           </div>
         </div>
       </header>
 
-      <div className="container space-y-8 py-8">
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <StatCard label="Active Missions" value={stats.runningMissions} icon={Activity} />
-          <StatCard label="Waiting Approval" value={stats.waitingApproval} icon={Clock} />
-          <StatCard label="QA Ready" value={stats.qaReady} icon={ShieldCheck} />
-          <StatCard label="Preview Ready" value={stats.previewReady} icon={Eye} />
-          <StatCard label="Completed Today" value={stats.completedToday} icon={CheckCircle2} />
+      <div className="container space-y-10 py-10">
+        <section aria-labelledby="pipeline-heading">
+          <h2 id="pipeline-heading" className="sr-only">
+            Production pipeline
+          </h2>
+          <ProductionLine counts={lineCounts} previewReady={stats.previewReady} />
         </section>
 
         <section className="space-y-4">
-          <h2 className="text-sm font-medium text-muted-foreground">Missions</h2>
+          <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Missions
+          </h2>
           <MissionList missions={missions} missionsWithPreview={missionsWithPreview} />
         </section>
       </div>

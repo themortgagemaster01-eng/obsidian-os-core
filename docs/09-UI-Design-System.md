@@ -36,7 +36,7 @@ Translucent panel background at 80% opacity, blurred backdrop, hairline border, 
 
 ## Typography
 
-Inter, loaded via `next/font/google` with the `--font-inter` CSS variable (`app/layout.tsx`), applied through Tailwind's `fontFamily.sans` extension. No serif or display font pairing — one typeface, weight and size do the differentiation work (e.g. `text-lg font-semibold tracking-tight` for the Mission Control header, `text-2xl font-semibold` for stat card values, `text-xs uppercase tracking-wide text-muted-foreground` for the login screen's "or" divider label).
+Inter, loaded via `next/font/google` with the `--font-inter` CSS variable (`app/layout.tsx`), applied through Tailwind's `fontFamily.sans` extension. No serif or display font pairing — one typeface, weight and size do the differentiation work (e.g. `text-3xl font-semibold tracking-tight` for the Mission Control header, `text-xs uppercase tracking-wide text-muted-foreground` for section eyebrows and the login screen's "or" divider label). The Line (`production-line.tsx`) is the one place a numeral gets special treatment — `font-mono tabular-nums` on each stage's count, so the six figures align on a fixed-width grid instead of shifting with the sans-serif's proportional digits.
 
 ## Spacing and radius
 
@@ -60,7 +60,7 @@ Hand-rolled shadcn/ui primitives built on Radix UI, living in `components/ui/`:
 - `separator.tsx` (`@radix-ui/react-separator`)
 - `skeleton.tsx`
 
-Composed into product-specific components in `components/mission-control/`: `stat-card.tsx`, `mission-list.tsx`, `state-badge.tsx`, `new-mission-dialog.tsx`, `sign-out-button.tsx`.
+Composed into product-specific components in `components/mission-control/`: `mission-list.tsx`, `state-badge.tsx`, `new-mission-dialog.tsx`, `sign-out-button.tsx`, `production-line.tsx` (The Line), `stage-tracker.tsx` (Signal Room).
 
 ## Accessibility posture
 

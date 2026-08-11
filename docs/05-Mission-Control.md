@@ -6,25 +6,44 @@ Mission Control is `app/page.tsx`, the sole authenticated screen in the product.
 
 Nothing on this page makes a direct Supabase call outside of the initial auth check and the one `profileRepository` lookup — everything else routes through `lib/services/mission-service.ts`, consistent with the layering rule in `docs/03-Software-Architecture.md`.
 
-## The stat cards
+## The Line
 
-**Dashboard Product Pass (this entry):** the dashboard previously showed 8 tiles — 3 real, and 5 CRM-style placeholders (Revenue Pipeline, Meetings Scheduled, Proposal Queue, Draft Emails, Website Builds) rendering a literal `$0`/`0` with a "Coming in a future sprint" caption. Mission Control is not a CRM and those five represented capabilities nothing in the pipeline implements — they were removed rather than left as placeholders for indefinitely-future work. The same pass also fixed a real bug: **Waiting Approval** was querying `state === "approval"` (the later proposal/email approval gate, still unbuilt — see "What doesn't exist yet: the Approval Queue" below) instead of `state === "reviewing"`, the Founder Approval Gate a mission created today actually reaches. The dashboard reported 0 waiting approvals even with a mission genuinely sitting at the gate; fixed at the query, not the state machine.
+**Visual Redesign (this entry):** the five-stat-card grid (`stat-card.tsx`, now deleted) is gone, replaced by **The Line** (`components/mission-control/production-line.tsx`) — a single horizontal read of the real production pipeline: `Research -> Brief -> Approval -> Build -> QA -> Preview`. Each node shows a real, honest count computed by `computeProductionLineCounts()` (`lib/services/mission-service.ts`), which maps each mission's real `state` onto one of five Line positions via `getProductionLineStage()`:
 
-Five cards now render in a responsive grid (`components/mission-control/stat-card.tsx`), all backed by real data, all computed in `computeMissionControlStats()` (`lib/services/mission-service.ts`):
+- **Research** — `discovered`, `analyzing`
+- **Brief** — `researching` (Design Brief generation)
+- **Approval** — `reviewing` (the Founder Approval Gate — same gate the old "Waiting Approval" tile counted, `supabase/migrations/0011_founder_approval_gate.sql`)
+- **Build** — `designing` (Design Generation + Refinement)
+- **QA** — `qa` (Design QA)
 
-- **Active Missions** — count of missions whose `state` is not `sent`, `archived`, or `rejected`. This is "everything still in motion," not "everything at a specific active state." (Formerly labeled "Running Missions.")
-- **Waiting Approval** — count of missions at `state = "reviewing"` (the Founder Approval Gate between Design Brief and Generation — `supabase/migrations/0011_founder_approval_gate.sql`).
-- **QA Ready** — count of missions at `state = "qa"`.
-- **Preview Ready** — count of missions with a completed `website_designs` row (a real, renderable Design Preview at `/missions/[id]/preview`), computed via `computeMissionsWithPreview()` from `websiteDesignRepository.listCompletedByOrganization()`.
-- **Completed Today** — count of missions at `state = "sent"` whose `state_changed_at` falls on or after local midnight today. Sprint 1 had a correctness bug here: it used `updated_at`, which could change for reasons unrelated to a state transition. Sprint 2 fixed this by introducing `state_changed_at`, maintained by a dedicated Postgres trigger (`set_mission_state_changed_at` in `0003_mission_state_machine.sql`) that only fires when `state` itself actually changes.
+**Preview**, the sixth node, is deliberately not a `MissionState` bucket — it reuses `stats.previewReady`, the same real `computeMissionsWithPreview()` count the old "Preview Ready" tile showed (a completed `website_designs` row). A mission can show as both "in QA" and "preview-ready" at once, honestly: Design Generation can produce a renderable design before `design-qa-service.ts` ever runs and moves `state` to `qa`.
 
-If a future capability (revenue, meetings, proposals, email, CRM) gets real backing data and a real table, it earns a tile then — not before.
+`archived`, `rejected`, and the downstream proposal/email/approval/sent sales-pipeline states (still unwired, see "What doesn't exist yet: the Approval Queue" below) map to `null` and are excluded from the Line's counts — rejecting or archiving a mission overwrites `state`, so how far it actually got is not recoverable from this field, and is never guessed at.
+
+The Approval node gets a "Needs decision" callout (and the Preview node a "Ready to share" callout) whenever their count is greater than zero — text-based, not color-only, per the accessibility posture below.
+
+**Final Dashboard Polish (this entry):** the first cut of the Line read as six independent tiles rather than one connected pipeline, and the original mobile treatment (a horizontally-scrollable row) hid Build/QA/Preview behind scroll the founder had to discover. Both fixed without touching `computeProductionLineCounts()` or any data/state logic:
+
+- **Desktop** — a single continuous 1px rule now runs behind all six stages (`components/mission-control/production-line.tsx`'s `hidden sm:block` variant), with a small tick-mark dot at each stage position sitting exactly on that rule (verified geometrically: each dot's vertical center matches the rule's `y` to the pixel). The six real counts read as one line with six positions, not six separate cards.
+- **Mobile (< `sm`)** — replaced the horizontal-scroll row with a vertical spine (`sm:hidden` variant): a continuous vertical rule with a tick per stage, one stage per row, numeral right-aligned. All six stages are always visible with no scrolling to discover — verified at 375px: `document.documentElement.scrollWidth === clientWidth` (no overflow), and all six stage labels present in the DOM.
+
+If revenue/meetings/proposals/email/CRM ever get real backing data, that's a new capability with its own home — not a tile bolted back onto this dashboard.
 
 ## The mission list
 
-`components/mission-control/mission-list.tsx` renders every mission as a row: business name, website URL, formatted creation date, and a `StateBadge`. `StateBadge` (`components/mission-control/state-badge.tsx`) color-codes by where the state sits in the pipeline: `success` (green) for `sent`, `warning` (amber) for `approval`/`reviewing`, `destructive` (red) for `rejected`, `outline` for `archived`, and a `navy` badge for every other in-progress state. When there are zero missions, an empty state renders instead ("No missions yet / Start your first one to begin building the pipeline") — never an empty table with just headers.
+`components/mission-control/mission-list.tsx` groups every mission into exactly one of three sections via `groupMissionsForDisplay()` (`lib/services/mission-service.ts`) — nothing is hidden, the three groups always sum to the full mission count:
 
-**Dashboard Product Pass additions:** missions at `state = "reviewing"` — the ones genuinely needing a founder decision right now — are surfaced first (`sortMissionsForReview()`, most-recent-first preserved within each group) and given a distinct card treatment (amber left-accent border, tinted background, an uppercase "Needs your review" label) so they visually stand out from ordinary in-progress rows, not just via the existing amber `StateBadge`. Any mission with a completed Design Preview also gets a direct "View Preview →" link to `/missions/[id]/preview` in its row — the same existing, RLS-scoped preview route, never a new one, and never shown for a mission without a real completed design.
+- **Needs your review** — `state === "reviewing"`. Same amber left-accent border, tinted background, and uppercase label treatment the Dashboard Product Pass introduced.
+- **Ready to present** — not reviewing, and has a completed Design Preview. Gets a direct "View Preview →" link to `/missions/[id]/preview`, the same existing, RLS-scoped route, never a new one.
+- **In production** — everything else (including `archived`/`rejected`, so nothing silently disappears from the list).
+
+A section renders only when it has at least one mission — no empty "Ready to present" heading with nothing under it. When there are zero missions total, the existing empty state renders instead ("No missions yet / Start your first one to begin building the pipeline").
+
+**Signal Room stage tracker:** each row in "Needs your review" and "In production" additionally renders a compact six-step tracker (`components/mission-control/stage-tracker.tsx`, fed by `computeMissionStageTrack()`) showing the same six Line stages for that one mission — completed stages filled, the active stage ringed and bold, upcoming stages hollow, every state also spelled out in screen-reader-only text (never color alone). The tracker is omitted (not fabricated) for a mission whose `state` maps to `null` on the Line — archived/rejected/off-Line missions rely on the existing `StateBadge` alone, which already renders "Rejected"/"Archived" honestly. `StateBadge` (`components/mission-control/state-badge.tsx`) still color-codes every row's badge by pipeline position: `success` (green) for `sent`, `warning` (amber) for `approval`/`reviewing`, `destructive` (red) for `rejected`, `outline` for `archived`, `navy` for every other in-progress state.
+
+## What doesn't exist yet: development/test-data flagging
+
+**Final Dashboard Polish (this entry):** checked whether the app has any mechanism to distinguish development/test missions from real ones in the UI — it doesn't. `missions` (`supabase/migrations/0001_init.sql`) has no `is_test`/`is_demo`/`environment` column or equivalent, there's no seed script that tags the rows it creates, and no env var (`NODE_ENV`, `DEMO_MODE`, or similar) gates anything in `app/page.tsx` or `lib/services/mission-service.ts`. The local dev database's test-oriented business names (e.g. "(evidence-payoff validation)", "(reject test)") are real rows created through the real UI/API during prior validation passes (`docs/SPRINT_STATUS.md`) — indistinguishable from a real mission at the schema level except by reading `business_name`. Per explicit instruction this pass did not build a flagging mechanism, delete rows, or alter any historical data — flagged here as a disclosed gap for a future decision, not fixed.
 
 ## What doesn't exist yet: the activity feed / mission timeline
 

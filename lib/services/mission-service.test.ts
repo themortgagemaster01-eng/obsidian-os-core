@@ -4,6 +4,10 @@ import assert from "node:assert/strict";
 import {
   computeMissionControlStats,
   computeMissionsWithPreview,
+  computeMissionStageTrack,
+  computeProductionLineCounts,
+  getProductionLineStage,
+  groupMissionsForDisplay,
   sortMissionsForReview,
 } from "@/lib/services/mission-service";
 import type { MissionRow } from "@/lib/repositories/mission-repository";
@@ -151,5 +155,118 @@ describe("sortMissionsForReview (Change 3 — surfacing missions needing founder
     const m1 = missionAt("discovered");
     const m2 = missionAt("qa");
     assert.deepEqual(sortMissionsForReview([m1, m2]), [m1, m2]);
+  });
+});
+
+describe("getProductionLineStage (Visual Redesign — The Line)", () => {
+  test("maps discovered and analyzing to research", () => {
+    assert.equal(getProductionLineStage("discovered"), "research");
+    assert.equal(getProductionLineStage("analyzing"), "research");
+  });
+
+  test("maps researching to brief, reviewing to approval, designing to build, qa to qa", () => {
+    assert.equal(getProductionLineStage("researching"), "brief");
+    assert.equal(getProductionLineStage("reviewing"), "approval");
+    assert.equal(getProductionLineStage("designing"), "build");
+    assert.equal(getProductionLineStage("qa"), "qa");
+  });
+
+  test("archived, rejected, and the unwired sales-pipeline states are off the Line", () => {
+    for (const state of ["proposal", "email", "approval", "sent", "archived", "rejected"] as const) {
+      assert.equal(getProductionLineStage(state), null, `${state} should be null`);
+    }
+  });
+});
+
+describe("computeProductionLineCounts", () => {
+  test("counts real missions per stage, ignores states off the Line", () => {
+    const counts = computeProductionLineCounts([
+      missionAt("discovered"),
+      missionAt("analyzing"),
+      missionAt("researching"),
+      missionAt("reviewing"),
+      missionAt("reviewing"),
+      missionAt("designing"),
+      missionAt("qa"),
+      missionAt("archived"),
+      missionAt("rejected"),
+      missionAt("sent"),
+    ]);
+    assert.deepEqual(counts, { research: 2, brief: 1, approval: 2, build: 1, qa: 1 });
+  });
+
+  test("every stage reads zero for an empty mission list — no fabricated counts", () => {
+    assert.deepEqual(computeProductionLineCounts([]), {
+      research: 0,
+      brief: 0,
+      approval: 0,
+      build: 0,
+      qa: 0,
+    });
+  });
+});
+
+describe("computeMissionStageTrack (Signal Room)", () => {
+  test("marks stages before the active one complete, the active one active, later ones upcoming", () => {
+    const track = computeMissionStageTrack(missionAt("designing"), false);
+    assert.ok(track);
+    assert.deepEqual(
+      track!.map((s) => [s.key, s.status]),
+      [
+        ["research", "complete"],
+        ["brief", "complete"],
+        ["approval", "complete"],
+        ["build", "active"],
+        ["qa", "upcoming"],
+        ["preview", "upcoming"],
+      ]
+    );
+  });
+
+  test("preview reflects hasPreview independently of the active stage", () => {
+    const track = computeMissionStageTrack(missionAt("qa"), true);
+    assert.ok(track);
+    const preview = track!.find((s) => s.key === "preview");
+    assert.equal(preview?.status, "complete");
+  });
+
+  test("returns null for archived and rejected missions — no fabricated history", () => {
+    assert.equal(computeMissionStageTrack(missionAt("archived"), false), null);
+    assert.equal(computeMissionStageTrack(missionAt("rejected"), false), null);
+  });
+});
+
+describe("groupMissionsForDisplay (Studio Docket mission list)", () => {
+  test("reviewing missions go to needsReview regardless of preview status", () => {
+    const m = missionAt("reviewing");
+    const groups = groupMissionsForDisplay([m], new Set([m.id]));
+    assert.deepEqual(groups.needsReview, [m]);
+    assert.deepEqual(groups.readyToPresent, []);
+  });
+
+  test("non-reviewing missions with a preview go to readyToPresent", () => {
+    const m = missionAt("qa");
+    const groups = groupMissionsForDisplay([m], new Set([m.id]));
+    assert.deepEqual(groups.readyToPresent, [m]);
+  });
+
+  test("everything else goes to inProduction", () => {
+    const m = missionAt("designing");
+    const groups = groupMissionsForDisplay([m]);
+    assert.deepEqual(groups.inProduction, [m]);
+  });
+
+  test("every mission appears in exactly one group", () => {
+    const missions = [
+      missionAt("discovered"),
+      missionAt("reviewing"),
+      missionAt("qa"),
+      missionAt("archived"),
+    ];
+    const withPreview = new Set([missions[2].id]);
+    const groups = groupMissionsForDisplay(missions, withPreview);
+    const total =
+      groups.needsReview.length + groups.inProduction.length + groups.readyToPresent.length;
+    assert.equal(total, missions.length);
   });
 });

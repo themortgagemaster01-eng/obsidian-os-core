@@ -83,7 +83,7 @@ export function NewMissionDialog() {
       <DialogTrigger asChild>
         <Button size="lg" className="gap-2">
           <Plus className="h-4 w-4" />
-          New Mission
+          Start a new production
         </Button>
       </DialogTrigger>
       <DialogContent>
