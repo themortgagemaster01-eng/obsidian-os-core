@@ -70,7 +70,7 @@ The event catalog (`lib/events/types.ts`) is a fixed, typed, discriminated union
 
 ## 7. Mission queue
 
-**Reality: does not exist as infrastructure**, but exists today as an implicit query: any mission sitting at a non-terminal state is, by definition, "queued" for whatever work happens next. `computeMissionControlStats()` (`lib/services/mission-service.ts`) reads this implicitly for the Mission Control dashboard's counters (Running / Completed Today / Waiting Approval), but there is no dedicated queue table, no priority ordering, no claim/lock mechanism to prevent two workers from picking up the same mission, and — because §6's worker doesn't exist — nothing to actually consume such a queue yet.
+**Reality: does not exist as infrastructure**, but exists today as an implicit query: any mission sitting at a non-terminal state is, by definition, "queued" for whatever work happens next. `computeMissionControlStats()` (`lib/services/mission-service.ts`) reads this implicitly for the Mission Control dashboard's counters (Active Missions / Waiting Approval / QA Ready / Preview Ready / Completed Today), but there is no dedicated queue table, no priority ordering, no claim/lock mechanism to prevent two workers from picking up the same mission, and — because §6's worker doesn't exist — nothing to actually consume such a queue yet.
 
 ---
 

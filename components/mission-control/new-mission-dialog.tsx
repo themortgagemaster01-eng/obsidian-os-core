@@ -81,7 +81,7 @@ export function NewMissionDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="gap-2">
+        <Button size="lg" className="gap-2">
           <Plus className="h-4 w-4" />
           New Mission
         </Button>

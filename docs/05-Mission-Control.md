@@ -8,18 +8,23 @@ Nothing on this page makes a direct Supabase call outside of the initial auth ch
 
 ## The stat cards
 
-Eight cards render in a responsive grid (`components/mission-control/stat-card.tsx`), split into two honesty tiers:
+**Dashboard Product Pass (this entry):** the dashboard previously showed 8 tiles — 3 real, and 5 CRM-style placeholders (Revenue Pipeline, Meetings Scheduled, Proposal Queue, Draft Emails, Website Builds) rendering a literal `$0`/`0` with a "Coming in a future sprint" caption. Mission Control is not a CRM and those five represented capabilities nothing in the pipeline implements — they were removed rather than left as placeholders for indefinitely-future work. The same pass also fixed a real bug: **Waiting Approval** was querying `state === "approval"` (the later proposal/email approval gate, still unbuilt — see "What doesn't exist yet: the Approval Queue" below) instead of `state === "reviewing"`, the Founder Approval Gate a mission created today actually reaches. The dashboard reported 0 waiting approvals even with a mission genuinely sitting at the gate; fixed at the query, not the state machine.
 
-**Real, computed stats (3):**
-- **Running Missions** — count of missions whose `state` is not `sent`, `archived`, or `rejected`. This is "everything still in motion," not "everything at a specific active state."
+Five cards now render in a responsive grid (`components/mission-control/stat-card.tsx`), all backed by real data, all computed in `computeMissionControlStats()` (`lib/services/mission-service.ts`):
+
+- **Active Missions** — count of missions whose `state` is not `sent`, `archived`, or `rejected`. This is "everything still in motion," not "everything at a specific active state." (Formerly labeled "Running Missions.")
+- **Waiting Approval** — count of missions at `state = "reviewing"` (the Founder Approval Gate between Design Brief and Generation — `supabase/migrations/0011_founder_approval_gate.sql`).
+- **QA Ready** — count of missions at `state = "qa"`.
+- **Preview Ready** — count of missions with a completed `website_designs` row (a real, renderable Design Preview at `/missions/[id]/preview`), computed via `computeMissionsWithPreview()` from `websiteDesignRepository.listCompletedByOrganization()`.
 - **Completed Today** — count of missions at `state = "sent"` whose `state_changed_at` falls on or after local midnight today. Sprint 1 had a correctness bug here: it used `updated_at`, which could change for reasons unrelated to a state transition. Sprint 2 fixed this by introducing `state_changed_at`, maintained by a dedicated Postgres trigger (`set_mission_state_changed_at` in `0003_mission_state_machine.sql`) that only fires when `state` itself actually changes.
-- **Waiting Approval** — count of missions at `state = "approval"`.
 
-**Honest placeholder stats (5):** Revenue Pipeline, Meetings Scheduled, Proposal Queue, Draft Emails, Website Builds. Each renders a literal `$0` or `0` with a `caption="Coming in a future sprint"` prop rather than a fake number or a loading shimmer. This is a deliberate product discipline documented directly in `mission-service.ts`'s doc comment — as agents come online in future sprints and start producing real data for these, each one graduates from a placeholder to a real computed value, one at a time, the same way the three real stats already have.
+If a future capability (revenue, meetings, proposals, email, CRM) gets real backing data and a real table, it earns a tile then — not before.
 
 ## The mission list
 
-`components/mission-control/mission-list.tsx` renders every mission as a row: business name, website URL, formatted creation date, and a `StateBadge`. `StateBadge` (`components/mission-control/state-badge.tsx`) color-codes by where the state sits in the pipeline: `success` (green) for `sent`, `warning` (amber) for `approval`, `destructive` (red) for `rejected`, `outline` for `archived`, and a `navy` badge for every other in-progress state — a single "in progress" visual bucket rather than 7 different colors for the 7 non-terminal, non-approval states. When there are zero missions, an empty state renders instead ("No missions yet / Start your first one to begin building the pipeline") — never an empty table with just headers.
+`components/mission-control/mission-list.tsx` renders every mission as a row: business name, website URL, formatted creation date, and a `StateBadge`. `StateBadge` (`components/mission-control/state-badge.tsx`) color-codes by where the state sits in the pipeline: `success` (green) for `sent`, `warning` (amber) for `approval`/`reviewing`, `destructive` (red) for `rejected`, `outline` for `archived`, and a `navy` badge for every other in-progress state. When there are zero missions, an empty state renders instead ("No missions yet / Start your first one to begin building the pipeline") — never an empty table with just headers.
+
+**Dashboard Product Pass additions:** missions at `state = "reviewing"` — the ones genuinely needing a founder decision right now — are surfaced first (`sortMissionsForReview()`, most-recent-first preserved within each group) and given a distinct card treatment (amber left-accent border, tinted background, an uppercase "Needs your review" label) so they visually stand out from ordinary in-progress rows, not just via the existing amber `StateBadge`. Any mission with a completed Design Preview also gets a direct "View Preview →" link to `/missions/[id]/preview` in its row — the same existing, RLS-scoped preview route, never a new one, and never shown for a mission without a real completed design.
 
 ## What doesn't exist yet: the activity feed / mission timeline
 

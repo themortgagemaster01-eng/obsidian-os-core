@@ -1,16 +1,12 @@
-import {
-  Activity,
-  CalendarClock,
-  CheckCircle2,
-  Clock,
-  DollarSign,
-  FileText,
-  Globe,
-  Mail,
-} from "lucide-react";
+import { Activity, CheckCircle2, Clock, Eye, ShieldCheck } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/server";
-import { computeMissionControlStats, listMissionsForOrganization } from "@/lib/services/mission-service";
+import {
+  computeMissionControlStats,
+  computeMissionsWithPreview,
+  listMissionsForOrganization,
+} from "@/lib/services/mission-service";
+import { websiteDesignRepository } from "@/lib/repositories/website-design-repository";
 import { StatCard } from "@/components/mission-control/stat-card";
 import { MissionList } from "@/components/mission-control/mission-list";
 import { NewMissionDialog } from "@/components/mission-control/new-mission-dialog";
@@ -44,7 +40,11 @@ export default async function MissionControlPage() {
   const missions = organizationId
     ? await listMissionsForOrganization(supabase, organizationId)
     : [];
-  const stats = computeMissionControlStats(missions);
+  const completedDesigns = organizationId
+    ? await websiteDesignRepository.listCompletedByOrganization(supabase, organizationId)
+    : [];
+  const missionsWithPreview = computeMissionsWithPreview(completedDesigns);
+  const stats = computeMissionControlStats(missions, missionsWithPreview);
 
   return (
     <main className="min-h-screen bg-background">
@@ -66,45 +66,17 @@ export default async function MissionControlPage() {
       </header>
 
       <div className="container space-y-8 py-8">
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Running Missions" value={stats.runningMissions} icon={Activity} />
-          <StatCard label="Completed Today" value={stats.completedToday} icon={CheckCircle2} />
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <StatCard label="Active Missions" value={stats.runningMissions} icon={Activity} />
           <StatCard label="Waiting Approval" value={stats.waitingApproval} icon={Clock} />
-          <StatCard
-            label="Revenue Pipeline"
-            value="$0"
-            icon={DollarSign}
-            caption="Coming in a future sprint"
-          />
-          <StatCard
-            label="Meetings Scheduled"
-            value="0"
-            icon={CalendarClock}
-            caption="Coming in a future sprint"
-          />
-          <StatCard
-            label="Proposal Queue"
-            value="0"
-            icon={FileText}
-            caption="Coming in a future sprint"
-          />
-          <StatCard
-            label="Draft Emails"
-            value="0"
-            icon={Mail}
-            caption="Coming in a future sprint"
-          />
-          <StatCard
-            label="Website Builds"
-            value="0"
-            icon={Globe}
-            caption="Coming in a future sprint"
-          />
+          <StatCard label="QA Ready" value={stats.qaReady} icon={ShieldCheck} />
+          <StatCard label="Preview Ready" value={stats.previewReady} icon={Eye} />
+          <StatCard label="Completed Today" value={stats.completedToday} icon={CheckCircle2} />
         </section>
 
         <section className="space-y-4">
           <h2 className="text-sm font-medium text-muted-foreground">Missions</h2>
-          <MissionList missions={missions} />
+          <MissionList missions={missions} missionsWithPreview={missionsWithPreview} />
         </section>
       </div>
     </main>
