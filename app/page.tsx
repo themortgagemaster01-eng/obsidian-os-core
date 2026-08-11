@@ -66,18 +66,16 @@ export default async function MissionControlPage() {
         </div>
       </header>
 
-      <div className="container space-y-10 py-10">
-        <section aria-labelledby="pipeline-heading">
+      <div className="container py-10">
+        <section aria-labelledby="pipeline-heading" className="border-b border-border pb-10">
           <h2 id="pipeline-heading" className="sr-only">
             Production pipeline
           </h2>
           <ProductionLine counts={lineCounts} previewReady={stats.previewReady} />
         </section>
 
-        <section className="space-y-4">
-          <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Missions
-          </h2>
+        <section className="pt-10">
+          <h2 className="sr-only">Missions</h2>
           <MissionList missions={missions} missionsWithPreview={missionsWithPreview} />
         </section>
       </div>

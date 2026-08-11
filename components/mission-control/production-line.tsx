@@ -25,94 +25,75 @@ function buildStageValues(counts: ProductionLineCounts, previewReady: number): S
   }));
 }
 
-function dotClasses(stage: StageValue): string {
-  if (stage.needsAction) return "border-amber-300 bg-amber-300";
-  if (stage.isReady) return "border-emerald-300 bg-emerald-300";
-  return "border-border bg-background";
-}
-
 /**
- * The Line — Mission Control's signature element (Visual Redesign
- * synthesis). One continuous read of the real production pipeline:
- * Research -> Brief -> Approval -> Build -> QA -> Preview. A single rule
- * runs behind every stage with a tick mark at each position — six real
- * counts on one line, not six independent tiles — with real, honest counts.
- * Approval is called out when it holds missions (a founder decision is
- * waiting); Preview is called out when work is ready to share. Neither
- * callout depends on color alone — each carries its own text.
+ * The Production Index — Mission Control's signature device. Replaces the
+ * old six-tile stat row with one continuous typographic line: real, honest
+ * counts per pipeline stage, read left to right as "RESEARCH · 2 · BRIEF ·
+ * 2 · APPROVAL · 0 · ...". No boxes, no tiles — the interpunct and hairline
+ * rule below do the work a grid of cards used to. The same "STAGE · value"
+ * grammar repeats at the per-mission level in StageTracker.
  *
- * Desktop renders the connected horizontal line. Mobile (< sm) renders a
- * vertical spine instead of forcing all six stages into a cramped or
- * horizontally-scrolling row — every stage stays visible without the founder
- * needing to discover hidden scroll affordance.
+ * Approval (a founder decision waiting) and Preview (work ready to share)
+ * are the two stages ever called out — never by color alone, each also
+ * carries its own text ("needs decision" / "ready"). Wraps intelligently at
+ * 375px rather than forcing six stages into a horizontal scroll.
  */
 export function ProductionLine({ counts, previewReady }: ProductionLineProps) {
   const stages = buildStageValues(counts, previewReady);
 
   return (
     <nav aria-label="Production pipeline">
-      {/* Desktop: one continuous horizontal line with a tick per stage. */}
-      <div className="relative hidden sm:block">
-        <div aria-hidden="true" className="absolute left-0 right-0 top-[7px] h-px bg-border" />
-        <ol className="relative grid grid-cols-6 gap-0">
-          {stages.map((stage) => (
-            <li key={stage.key} className="flex flex-col items-start pr-6">
+      <ol className="flex flex-wrap items-baseline gap-y-3">
+        {stages.map((stage, index) => {
+          const emphasisClass = stage.needsAction
+            ? "text-amber-300"
+            : stage.isReady
+              ? "text-emerald-300"
+              : undefined;
+
+          return (
+            <li key={stage.key} className="flex items-baseline gap-x-2">
+              {index > 0 && (
+                <span aria-hidden="true" className="mr-2 text-muted-foreground/25">
+                  ·
+                </span>
+              )}
               <span
                 aria-hidden="true"
-                className={cn("relative z-10 h-3.5 w-3.5 rounded-full border-2", dotClasses(stage))}
-              />
-              <span className="mt-3 font-mono text-3xl font-semibold tabular-nums tracking-tight text-foreground">
+                className={cn("text-xs font-medium uppercase tracking-wide", emphasisClass ?? "text-muted-foreground")}
+              >
+                {stage.label}
+              </span>
+              <span aria-hidden="true" className="text-muted-foreground/25">
+                ·
+              </span>
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "font-mono text-xl font-semibold tabular-nums tracking-tight sm:text-2xl",
+                  emphasisClass ?? "text-foreground"
+                )}
+              >
                 {stage.count}
               </span>
-              <p className="mt-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {stage.label}
-              </p>
               {stage.needsAction && (
-                <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-300">
-                  Needs decision
-                </p>
+                <span aria-hidden="true" className="ml-1 text-[11px] font-semibold uppercase tracking-wide text-amber-300">
+                  needs decision
+                </span>
               )}
               {stage.isReady && (
-                <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-300">
-                  Ready to share
-                </p>
+                <span aria-hidden="true" className="ml-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-300">
+                  ready
+                </span>
               )}
-            </li>
-          ))}
-        </ol>
-      </div>
-
-      {/* Mobile: a vertical spine — all six stages always visible, no scrolling to discover. */}
-      <ol className="relative sm:hidden">
-        <div aria-hidden="true" className="absolute left-[7px] top-1 bottom-1 w-px bg-border" />
-        {stages.map((stage, index) => (
-          <li key={stage.key} className={cn("relative flex items-center gap-4 pl-0", index > 0 && "mt-4")}>
-            <span
-              aria-hidden="true"
-              className={cn("relative z-10 h-3.5 w-3.5 shrink-0 rounded-full border-2 bg-background", dotClasses(stage))}
-            />
-            <div className="flex min-w-0 flex-1 items-baseline justify-between gap-3">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {stage.label}
-                </p>
-                {stage.needsAction && (
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-300">
-                    Needs decision
-                  </p>
-                )}
-                {stage.isReady && (
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300">
-                    Ready to share
-                  </p>
-                )}
-              </div>
-              <span className="font-mono text-2xl font-semibold tabular-nums tracking-tight text-foreground">
-                {stage.count}
+              <span className="sr-only">
+                {stage.label}: {stage.count}
+                {stage.needsAction ? ", needs decision" : ""}
+                {stage.isReady ? ", ready to share" : ""}
               </span>
-            </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ol>
     </nav>
   );

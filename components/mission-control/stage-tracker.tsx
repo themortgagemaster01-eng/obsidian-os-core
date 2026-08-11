@@ -6,11 +6,13 @@ export interface StageTrackerProps {
 }
 
 /**
- * Signal Room — the compact per-mission stage tracker (Visual Redesign
- * synthesis). Position, label, and a text status word all communicate state
- * together, not color alone: a completed stage's marker is filled and its
- * label is struck to normal weight, the active stage's marker is ringed and
- * its label bold, an upcoming stage's marker is a hollow outline.
+ * The per-mission echo of the Production Index's "STAGE · STAGE" grammar —
+ * RESEARCH · BRIEF · APPROVAL · BUILD · QA · PREVIEW, read left to right.
+ * Position in the pipeline is communicated by weight and opacity, not color
+ * alone: the active stage is bold and full-strength, completed stages are
+ * medium-weight and legible, upcoming stages fade toward the hairline. A
+ * screen reader gets the full status per stage via the sr-only text below
+ * each visual label.
  */
 export function StageTracker({ steps }: StageTrackerProps) {
   const activeStep = steps.find((s) => s.status === "active");
@@ -20,31 +22,21 @@ export function StageTracker({ steps }: StageTrackerProps) {
     : "Complete";
 
   return (
-    <div className="flex items-center gap-1 sm:gap-1.5" role="group" aria-label={summary}>
+    <div className="flex flex-wrap items-baseline gap-y-1" role="group" aria-label={summary}>
       {steps.map((step, index) => (
-        <div key={step.key} className="flex items-center gap-1 sm:gap-1.5">
+        <span key={step.key} className="inline-flex items-baseline">
+          {index > 0 && (
+            <span aria-hidden="true" className="mx-1.5 text-muted-foreground/25">
+              ·
+            </span>
+          )}
           <span
             aria-hidden="true"
             className={cn(
-              "inline-block h-1.5 w-1.5 shrink-0 rounded-full border",
-              step.status === "complete" && "border-foreground/70 bg-foreground/70",
-              step.status === "active" && "border-amber-300 bg-amber-300",
-              step.status === "upcoming" && "border-border bg-transparent"
-            )}
-          />
-          {/* Labels are hidden below `sm` to keep the tracker compact enough for a
-              375px viewport (six full labels don't fit) — the dot sequence alone
-              still communicates position, and the full label + status is always
-              present for assistive tech via the sr-only span below. */}
-          <span
-            aria-hidden="true"
-            className={cn(
-              "hidden whitespace-nowrap text-[10px] uppercase tracking-wide sm:inline",
-              step.status === "active"
-                ? "font-semibold text-foreground"
-                : step.status === "complete"
-                  ? "text-muted-foreground"
-                  : "text-muted-foreground/50"
+              "whitespace-nowrap text-[11px] uppercase tracking-wide",
+              step.status === "active" && "font-semibold text-foreground",
+              step.status === "complete" && "font-medium text-muted-foreground",
+              step.status === "upcoming" && "text-muted-foreground/40"
             )}
           >
             {step.label}
@@ -52,10 +44,7 @@ export function StageTracker({ steps }: StageTrackerProps) {
           <span className="sr-only">
             {step.label} — {step.status === "active" ? "in progress" : step.status}
           </span>
-          {index < steps.length - 1 && (
-            <span aria-hidden="true" className="h-px w-2 shrink-0 bg-border sm:w-3" />
-          )}
-        </div>
+        </span>
       ))}
     </div>
   );
