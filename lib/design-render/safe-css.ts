@@ -1,22 +1,37 @@
 /**
  * lib/design-render/safe-css.ts — small, pure guards for turning free-text
- * Design Memory fields (DesignMemory.colorPalette.*, per
+ * Design Memory fields (DesignMemory.colorPalette / typography, per
  * lib/services/design-intelligence-service.ts) into CSS values the renderer
  * can hand to React's `style` prop without risk.
  *
  * These fields are real LLM output, not a validated design-token schema —
- * docs/SPRINT_STATUS.md's own live-validation entries show real values like
- * "Warm terracotta" or "Muted gold": plausible as prose, not parseable as
- * CSS. An invalid `color` declaration is simply dropped by the browser (the
- * element inherits instead), which is safe but silently loses the intended
- * override — so a value that clearly isn't a CSS color is rejected here in
- * favor of an explicit fallback, rather than emitted and quietly ignored by
- * the browser.
+ * real values look like "Deep navy (#122A3D-range)" or "A geometric
+ * humanist sans... e.g. Söhne or similar": plausible as prose, not directly
+ * parseable/resolvable as CSS. CTO Design Intelligence Remediation directive
+ * (Issue 1) found that the color path was rejecting this prose outright and
+ * silently falling back to the same default navy/gold palette for every
+ * business, discarding real per-business color reasoning the model had
+ * already produced — so both guards below now extract a structured signal
+ * from the prose before falling back, rather than requiring the whole field
+ * to itself already be valid CSS:
  *
- * Font-family values don't need the same rejection: an arbitrary quoted
- * string is syntactically valid CSS wherever a font-family is expected, and
- * a fallback stack after it is honored if the named font doesn't resolve —
- * so an LLM's descriptive font phrase can be passed straight through, quoted.
+ * - toSafeCssColor extracts the first embedded valid `#RRGGBB`-style hex
+ *   token (e.g. pulls "#122A3D" out of "Deep navy (#122A3D-range)") before
+ *   falling back — real per-business color reaches the page instead of the
+ *   same default every time.
+ * - toSafeFontFamilyStack had a quieter version of the identical bug: an
+ *   arbitrary quoted string is syntactically valid CSS wherever a
+ *   font-family is expected, so the old code never "failed," but a
+ *   multi-sentence descriptive phrase quoted as a literal font name never
+ *   resolves to a real installed font either — every business's heading
+ *   silently fell through to the same fixed fallback stack, which is
+ *   functionally the same convergence-on-default bug wearing a different
+ *   costume. Now it extracts a plausible real font-name token (quoted
+ *   examples, or names following "e.g."/"such as"/"like") to try first, and
+ *   picks a genre-appropriate system fallback stack (serif/sans/slab/mono)
+ *   from keywords in the prose instead of one fixed stack for every
+ *   business — so distinct typographic direction actually reaches the page
+ *   even when the named font itself isn't installed.
  */
 
 /**
@@ -41,6 +56,17 @@ const HEX_COLOR = /^#[0-9a-f]{3,4}$|^#[0-9a-f]{6}$|^#[0-9a-f]{8}$/i;
 const FUNCTIONAL_COLOR = /^(rgb|rgba|hsl|hsla)\([^)]+\)$/i;
 const SINGLE_WORD = /^[a-z]+$/i;
 
+/**
+ * Matches a valid CSS hex color token embedded anywhere inside a longer
+ * string — longest-length alternative first (8/6/4/3 hex digits) with a
+ * trailing negative lookahead so e.g. "#122A3D-range" extracts exactly
+ * "#122A3D" rather than over- or under-matching.
+ */
+const EMBEDDED_HEX_TOKEN = /#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{4}|[0-9a-f]{3})(?![0-9a-f])/i;
+
+/** Matches a CSS rgb()/rgba()/hsl()/hsla() function call embedded anywhere inside a longer string. */
+const EMBEDDED_FUNCTIONAL_COLOR = /(?:rgb|rgba|hsl|hsla)\([^)]+\)/i;
+
 /** True only for strings that are actually valid CSS `<color>` syntax — hex, rgb()/hsl() functions, or a single bare keyword. Multi-word prose ("Warm terracotta") is rejected, not guessed at. */
 export function isPlausibleCssColor(value: string): boolean {
   const v = value.trim();
@@ -48,18 +74,78 @@ export function isPlausibleCssColor(value: string): boolean {
   return HEX_COLOR.test(v) || FUNCTIONAL_COLOR.test(v) || SINGLE_WORD.test(v);
 }
 
-/** Returns `raw` if it's plausible CSS color syntax, otherwise `fallback` — never emits a value that would silently fail. */
+/**
+ * Returns `raw` if it's plausible CSS color syntax; otherwise looks for a
+ * real, valid hex or rgb()/hsl() token embedded inside the prose (e.g. "Deep
+ * navy (#122A3D-range)..." -> "#122A3D") and returns that; otherwise
+ * `fallback` — never emits a value that would silently fail, but no longer
+ * discards real per-business color reasoning just because it arrived as a
+ * sentence instead of a bare token (CTO Design Intelligence Remediation
+ * directive, Issue 1).
+ */
 export function toSafeCssColor(raw: string | undefined | null, fallback: string): string {
   if (!raw) return fallback;
-  return isPlausibleCssColor(raw) ? raw.trim() : fallback;
+  const v = raw.trim();
+  if (isPlausibleCssColor(v)) return v;
+  const hexMatch = v.match(EMBEDDED_HEX_TOKEN);
+  if (hexMatch) return hexMatch[0];
+  const functionalMatch = v.match(EMBEDDED_FUNCTIONAL_COLOR);
+  if (functionalMatch) return functionalMatch[0];
+  return fallback;
 }
 
-/** Quotes an arbitrary font-family string and appends a real fallback stack — safe even when `raw` is prose, since an unresolvable quoted name just falls through to the stack. */
+const SANS_FALLBACK_STACK = '"Helvetica Neue", Arial, "Segoe UI", sans-serif';
+const SERIF_FALLBACK_STACK = 'Georgia, Cambria, "Times New Roman", serif';
+const SLAB_FALLBACK_STACK = '"Roboto Slab", "Arial Black", sans-serif';
+const MONO_FALLBACK_STACK = '"SF Mono", "Courier New", monospace';
+
+/**
+ * Picks a genre-appropriate system fallback stack from keywords in the raw
+ * typography prose, instead of always the one stack the caller supplied —
+ * this is what stops every business's heading converging on the same
+ * default font once the named font itself fails to resolve (Issue 1's
+ * typography half). Falls back to the caller's own default stack when no
+ * genre keyword is present, preserving prior behavior for non-descriptive
+ * input.
+ */
+function genreFallbackStack(raw: string, defaultStack: string): string {
+  const v = raw.toLowerCase();
+  if (/\bmono(space)?\b/.test(v)) return MONO_FALLBACK_STACK;
+  if (/\bslab\b/.test(v)) return SLAB_FALLBACK_STACK;
+  if (/sans[- ]?serif|\bsans\b|grotesk|geometric|humanist/.test(v)) return SANS_FALLBACK_STACK;
+  if (/\bserif\b|garamond|caslon|didone|transitional|old[- ]style/.test(v)) return SERIF_FALLBACK_STACK;
+  return defaultStack;
+}
+
+/** Pulls a plausible real font-name token out of descriptive prose — a quoted name, or a capitalized name following "e.g."/"such as"/"like" (e.g. "...e.g. Söhne or similar" -> "Söhne"). Returns null when nothing recognizable is found, never a guess. */
+function extractNamedFontCandidate(raw: string): string | null {
+  const afterExample = raw.match(/(?:e\.g\.,?|such as|like)\s+([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ'-]*(?:\s[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ'-]*){0,2})/);
+  if (afterExample) return afterExample[1].trim();
+  const quoted = raw.match(/["“]([^"”]{2,40})["”]/);
+  if (quoted) return quoted[1].trim();
+  return null;
+}
+
+/**
+ * Builds a real font-family stack from descriptive Design Memory typography
+ * prose: a real, extracted font-name candidate first (when the prose names
+ * one), then a genre-appropriate system fallback stack (serif/sans/slab/
+ * mono, from keywords in the prose) rather than the caller's fixed default
+ * every time — the CSS-quoting itself was never invalid (an arbitrary
+ * quoted string is always syntactically valid as a font-family), but
+ * quoting the whole sentence as a literal "font name" never resolves to a
+ * real font, so every business fell through to the same default stack —
+ * functionally the same discard-real-reasoning bug as Issue 1's color path
+ * (CTO Design Intelligence Remediation directive).
+ */
 export function toSafeFontFamilyStack(raw: string | undefined | null, fallbackStack: string): string {
   const v = raw?.trim();
   if (!v) return fallbackStack;
-  const escaped = v.replace(/"/g, '\\"');
-  return `"${escaped}", ${fallbackStack}`;
+  const candidate = extractNamedFontCandidate(v);
+  const genreStack = genreFallbackStack(v, fallbackStack);
+  if (!candidate) return genreStack;
+  const escaped = candidate.replace(/"/g, '\\"');
+  return `"${escaped}", ${genreStack}`;
 }
 
 const WEIGHT_TO_CSS: Record<"regular" | "medium" | "semibold" | "bold", number> = {

@@ -84,9 +84,16 @@ const MOBILE_BREAKPOINT_PX = 480;
  * Surface Pass's placeholder rule: when a section has zero real slots, the
  * graceful behavior is to omit the section entirely, not render an empty
  * shell. hero/footer/contact are excluded — they always carry at least the
- * real business name, so they're never fully empty. faq/testimonials are
- * excluded because generateWebsiteStructure only ever includes them in the
- * wireframe when real content backs them.
+ * real business name, so they're never fully empty. testimonials is
+ * excluded because generateWebsiteStructure only ever includes it in the
+ * wireframe when real testimonial content backs it. faq is included here
+ * (CTO Design Intelligence Remediation directive, Issue 3): the wireframe's
+ * per-bucket templates include "faq" unconditionally, but
+ * design-generation-service.ts::buildSlots("faq", ...) now only populates
+ * real slots from the business's own real, already-published FAQ content —
+ * it no longer falls back to reframing citedInsights (audit findings about
+ * the OLD site) as public-facing questions — so a business with no real FAQ
+ * evidence correctly has zero real faq slots and belongs in this list.
  */
 const OMIT_SECTION_IF_EMPTY: SectionType[] = [
   "menu",
@@ -96,6 +103,7 @@ const OMIT_SECTION_IF_EMPTY: SectionType[] = [
   "listings",
   "serviceArea",
   "credibility",
+  "faq",
 ];
 
 function hasRealContent(node: ComponentNode): boolean {

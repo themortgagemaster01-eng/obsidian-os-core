@@ -283,8 +283,29 @@ export interface AssembleComponentsContext {
   realTestimonials?: string[];
   /** Real, mechanically-extracted contact facts (DesignBrief.contactEvidence) — each field renders as a real slot only when actually captured; missing fields stay honestly placeholder, never invented (§8). */
   contactEvidence: ContactInfo;
-  /** DesignBrief.metaDescription passed through unchanged — the business's own real published homepage copy, used as real hero headline content when present (§8: reusing a business's own words is not fabrication). */
+  /**
+   * DesignBrief.metaDescription passed through unchanged — the business's
+   * own real published homepage copy, used as a candidate hero headline
+   * when present (§8: reusing a business's own words is not fabrication).
+   * buildHeroHeadline below cleans trailing CTA/location fragments off this
+   * value and reconciles any location claim it makes against
+   * contactEvidence before using it — never promoted to the headline
+   * verbatim and unchecked (CTO Design Intelligence Remediation directive,
+   * Issues 4 & 5).
+   */
   metaDescription?: string | null;
+  /**
+   * DesignBrief.heroThesis passed through unchanged — Design Intelligence's
+   * own one-sentence, evidence-grounded answer to "why does this website
+   * belong to THIS business" (see design-intelligence-service.ts). Used as
+   * the hero headline whenever metaDescription is absent or was rejected as
+   * an unreconciled/malformed candidate — real content that already exists
+   * on every Design Brief, not a fabricated fallback (CTO Design
+   * Intelligence Remediation directive, Issue 2: this is what actually
+   * fixes the empty Veslo/Alltech HVAC heroes, which had no metaDescription
+   * to fall back to at all).
+   */
+  heroThesis?: string;
   /** DesignBrief.services passed through unchanged — real service/offering descriptions the crawler found (homepage or an already-fetched sub-page), each traceable to its real source page. Fills the "services" section's slots when present; stays placeholder otherwise (§8). */
   services?: ContentSection[];
   /** DesignBrief.certifications passed through unchanged — real credentials the crawler found. Fills the credibility section's certifications slots when present; stays placeholder otherwise (§8). */
@@ -305,6 +326,86 @@ function placeholderSlot(name: string): ComponentSlot {
   return { name, source: "placeholder", value: null };
 }
 
+// ===========================================================================
+// Hero headline assembly (CTO Design Intelligence Remediation directive,
+// Issues 2, 4, 5) — previously a bare `context.metaDescription ? real :
+// placeholder` passthrough. Three real defects traced to that one line:
+// (2) businesses with no captured metaDescription got no headline at all,
+// even though Design Intelligence always produces a real, evidence-grounded
+// heroThesis for every business; (4) a metaDescription's location claim was
+// never checked against the mission's own structured contactEvidence, so a
+// stale/inaccurate old-site meta tag could contradict the real address
+// rendered two sections later on the same page; (5) a metaDescription
+// containing a trailing CTA label and/or a location fragment (both real
+// content, but boilerplate/structural rather than part of the sentence)
+// rendered as one run-on, badly punctuated sentence.
+// ===========================================================================
+
+/** Boilerplate call-to-action phrasing sometimes appended to a business's own <meta name="description"> for SEO — real content, but UI/interface language, not a claim about the business. Stripped from the end of a headline candidate, never from the middle of real prose. */
+const TRAILING_CTA_FRAGMENT =
+  /\s*(?:learn more|call (?:today|now)|contact us(?: today)?|get (?:a |your )?(?:free )?quote|book now|schedule (?:now|today|an appointment)|shop now|visit (?:us )?today)!?\s*$/i;
+
+/** A "City, ST" (or "City, State") fragment mashed onto the very end of a sentence — belongs in the contact/serviceArea slots, not spliced onto the hero headline. Only strips a clearly trailing fragment; never touches a location named mid-sentence as part of real prose. */
+const TRAILING_LOCATION_FRAGMENT = /\s*[,.]?\s*[A-Z][A-Za-z.'-]+(?:\s[A-Z][A-Za-z.'-]+)*,\s*[A-Z]{2}\.?\s*$/;
+
+/** Removes a trailing CTA fragment and/or a trailing "City, ST" fragment from a metaDescription-derived headline candidate (Issue 5 — the Wilcox Lawn & Landscaping splice bug), leaving a clean, complete sentence. Runs the location strip both before and after the CTA strip since either fragment may be outermost. */
+function stripTrailingCtaAndLocation(text: string): string {
+  let cleaned = text.trim();
+  cleaned = cleaned.replace(TRAILING_LOCATION_FRAGMENT, "").trim();
+  cleaned = cleaned.replace(TRAILING_CTA_FRAGMENT, "").trim();
+  cleaned = cleaned.replace(TRAILING_LOCATION_FRAGMENT, "").trim();
+  if (cleaned && !/[.!?]$/.test(cleaned)) cleaned += ".";
+  return cleaned;
+}
+
+/** A "3 Milwaukee locations" style multi-location claim can never be corroborated by contactEvidence, which only ever captures one real address — an unsupported claim regardless of whether contactEvidence exists at all. */
+const MULTI_LOCATION_CLAIM = /\b\d+\s+[A-Za-z]+(?:\s[A-Za-z]+)?\s+locations?\b/i;
+
+/** A "City, ST" or "City location(s)" phrase named inside the candidate headline text (not necessarily trailing). */
+const NAMED_LOCATION_CLAIM = /\b([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)?)(?:,\s*[A-Z]{2}\b|\s+locations?\b)/;
+
+/**
+ * True when a metaDescription-derived headline candidate makes a location
+ * claim the mission's own real, structured contactEvidence.address can't
+ * corroborate (Issue 4 — the Lakeshore Family Dentistry regression: a
+ * scraped meta description claimed "3 Milwaukee locations" while
+ * contactEvidence.address recorded one real Sarasota, FL address). Per the
+ * directive's resolution, contactEvidence — structured, higher-confidence
+ * evidence — wins on conflict: the caller drops the conflicting candidate
+ * entirely rather than rendering a claim that contradicts the contact card
+ * on the same page.
+ */
+function conflictsWithContactEvidence(candidate: string, address: string | null): boolean {
+  if (MULTI_LOCATION_CLAIM.test(candidate)) return true;
+  const named = candidate.match(NAMED_LOCATION_CLAIM);
+  if (!named) return false;
+  if (!address) return true;
+  return !address.toLowerCase().includes(named[1].toLowerCase());
+}
+
+/**
+ * Chooses the hero headline: a cleaned, reconciled metaDescription when one
+ * exists and survives cleanup/reconciliation, otherwise the real,
+ * evidence-grounded heroThesis Design Intelligence already produced for
+ * every business, otherwise an honest placeholder. Never fabricates new
+ * headline text — every branch either passes through real content unchanged
+ * (after stripping boilerplate CTA/location fragments) or omits the claim
+ * entirely.
+ */
+function buildHeroHeadline(context: AssembleComponentsContext): ComponentSlot {
+  const rawMeta = context.metaDescription?.trim();
+  if (rawMeta) {
+    const cleaned = stripTrailingCtaAndLocation(rawMeta);
+    if (cleaned && !conflictsWithContactEvidence(cleaned, context.contactEvidence.address)) {
+      return realSlot("headline", cleaned);
+    }
+  }
+  if (context.heroThesis?.trim()) {
+    return realSlot("headline", context.heroThesis.trim());
+  }
+  return placeholderSlot("headline");
+}
+
 /**
  * Builds the slots for one section. Every slot is explicitly marked "real"
  * (with the actual value) or "placeholder" (value: null) — never a
@@ -313,10 +414,10 @@ function placeholderSlot(name: string): ComponentSlot {
  * use context.contactEvidence (the crawl's own captured facts, passed
  * through unchanged) when available and fall back to placeholder otherwise
  * — the same real-vs-placeholder discipline already applied to testimonials.
- * The hero's headline slot uses context.metaDescription — the business's
- * own real, published `<meta name="description">` copy — when the crawl
- * captured one, for the same reason: it's real content the business
- * already publishes, not an invented tagline (§8). The services section's
+ * The hero's headline slot is built by buildHeroHeadline above — real,
+ * cleaned, evidence-reconciled content, with Design Intelligence's own
+ * heroThesis as a real (never fabricated) fallback whenever no usable
+ * metaDescription exists. The services section's
  * slots use context.services — real service/offering text the crawler
  * found on the homepage or an already-fetched sub-page (crawl-adapter.ts's
  * mergeStructuredFacts closed the gap where that content was previously
@@ -330,12 +431,7 @@ function placeholderSlot(name: string): ComponentSlot {
 function buildSlots(section: SectionType, context: AssembleComponentsContext): ComponentSlot[] {
   switch (section) {
     case "hero":
-      return [
-        context.metaDescription
-          ? realSlot("headline", context.metaDescription)
-          : placeholderSlot("headline"),
-        realSlot("businessName", context.businessName),
-      ];
+      return [buildHeroHeadline(context), realSlot("businessName", context.businessName)];
     case "credibility": {
       // yearsInBusiness stays placeholder-only — no crawler signal extracts
       // it today; a genuinely absent evidence source, not a design choice.
@@ -392,22 +488,31 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
     case "serviceArea":
       return [placeholderSlot("areasServed")];
     case "faq": {
-      // Prefer the business's own real, already-published FAQ content —
-      // genuinely better source material than reframing an Insight
-      // statement as a question — and fall back to the citation-derived
-      // approach only when the crawler found no real FAQ (§8: use real
-      // evidence when it exists, never let its absence collapse the
-      // section to nothing when a citation-backed alternative exists).
+      // Only the business's own real, already-published FAQ content backs
+      // this PUBLIC-facing section now. It used to fall back to reframing a
+      // citedInsights statement as a "question" when no real FAQ existed —
+      // CTO Design Intelligence Remediation directive, Issue 3: that
+      // fallback surfaced raw Lighthouse/axe-style audit findings about the
+      // business's OLD site (e.g. "This site has significant barriers for
+      // visitors with disabilities... legal risk under... the ADA") as if
+      // they were visitor-facing Q&A — not fabricated (citedInsights are
+      // real evidence), but the wrong voice/format for public copy, and
+      // near-identical across businesses since audit categories repeat. The
+      // citation data itself is untouched and still flows through this
+      // brief for internal/QA use (design-qa-service.ts's Trust checks,
+      // founder-facing brief review) — it's just no longer routed into the
+      // public FaqList component. With no real slots, this section is
+      // omitted entirely by the renderer's OMIT_SECTION_IF_EMPTY handling
+      // (components/design-preview/design-preview.tsx) rather than shown
+      // empty or filled with reframed audit copy (§8's zero-fabrication
+      // rule: never filler content standing in for a real FAQ that doesn't
+      // exist for this business).
       if (context.faqEvidence && context.faqEvidence.length > 0) {
         return context.faqEvidence
           .slice(0, MAX_FAQ_SLOTS)
           .map((f, i) => realSlot(`question-${i + 1}`, `${f.heading} — ${f.excerpt}`));
       }
-      const uniqueCategories = [...new Set(context.citedInsights.map((c) => c.category))].slice(0, MAX_FAQ_SLOTS);
-      return uniqueCategories.map((category) => {
-        const citation = context.citedInsights.find((c) => c.category === category)!;
-        return realSlot(`question-${category}`, citation.statement);
-      });
+      return [placeholderSlot("faqContent")];
     }
     case "contact":
       return [
@@ -469,6 +574,7 @@ export function generateWebsiteStructure(
     realTestimonials: options.realTestimonials,
     contactEvidence: brief.contactEvidence,
     metaDescription: brief.metaDescription,
+    heroThesis: brief.heroThesis,
     services: brief.services,
     certifications: brief.certifications,
     team: brief.team,

@@ -32,11 +32,51 @@ describe("safe-css", () => {
     assert.equal(toSafeCssColor(null, "#000"), "#000");
   });
 
-  test("toSafeFontFamilyStack always quotes the raw value and appends the fallback stack", () => {
+  // ===========================================================================
+  // Issue 1 (CTO Design Intelligence Remediation directive) — the color
+  // pipeline was discarding real per-business color reasoning any time it
+  // arrived as prose ("Deep navy (#122A3D-range)...") instead of a bare CSS
+  // token, silently falling back to the same default navy/gold palette for
+  // every business. Fix: extract the first embedded valid hex/functional
+  // color token before falling back.
+  // ===========================================================================
+  test("toSafeCssColor extracts a real embedded hex token from descriptive prose instead of discarding it", () => {
+    assert.equal(toSafeCssColor("Deep navy (#122A3D-range)...", "#000000"), "#122A3D");
+    assert.equal(toSafeCssColor("A warm terracotta, close to #C9622D in practice.", "#000000"), "#C9622D");
+    assert.equal(toSafeCssColor("Something like rgb(10, 20, 30) for the accent.", "#000000"), "rgb(10, 20, 30)");
+  });
+
+  test("toSafeCssColor still falls back when the prose contains no extractable color token at all", () => {
+    assert.equal(toSafeCssColor("Warm terracotta, no hex given", "#C9A227"), "#C9A227");
+  });
+
+  test("toSafeCssColor ignores an invalid-length hex run embedded in prose and falls back", () => {
+    assert.equal(toSafeCssColor("Something like #12ab5 in tone", "#C9A227"), "#C9A227");
+  });
+
+  // ===========================================================================
+  // Issue 1's typography half — quoting an entire descriptive sentence as a
+  // literal font-family never resolves to a real font, so every business
+  // fell through to the same fixed default stack (functionally the same
+  // discard-real-reasoning bug as the color path). Fix: extract a real named
+  // candidate when present, and pick a genre-appropriate fallback stack from
+  // keywords in the prose instead of one fixed stack for every business.
+  // ===========================================================================
+  test("toSafeFontFamilyStack extracts a real named font candidate following e.g./such as/like", () => {
     assert.equal(
-      toSafeFontFamilyStack("Warm serif (e.g. a humanist serif)", "Georgia, serif"),
-      '"Warm serif (e.g. a humanist serif)", Georgia, serif'
+      toSafeFontFamilyStack("A geometric humanist sans, e.g. Söhne or similar", "Georgia, serif"),
+      '"Söhne", "Helvetica Neue", Arial, "Segoe UI", sans-serif'
     );
+  });
+
+  test("toSafeFontFamilyStack picks a genre-appropriate fallback stack instead of always the caller's default", () => {
+    assert.match(toSafeFontFamilyStack("A clean grotesk sans", "Georgia, serif"), /Helvetica Neue/);
+    assert.match(toSafeFontFamilyStack("An elegant transitional serif", "Georgia, serif"), /Georgia/);
+    assert.match(toSafeFontFamilyStack("A technical monospace feel", "Georgia, serif"), /Courier New/);
+  });
+
+  test("toSafeFontFamilyStack falls back to the caller's own stack when no genre keyword or named candidate is present", () => {
+    assert.equal(toSafeFontFamilyStack("Something distinctive", "Georgia, serif"), "Georgia, serif");
     assert.equal(toSafeFontFamilyStack(undefined, "Georgia, serif"), "Georgia, serif");
   });
 

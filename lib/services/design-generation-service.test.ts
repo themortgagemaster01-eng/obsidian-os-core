@@ -133,7 +133,7 @@ describe("design-generation-service: assembleComponents", () => {
     assert.equal(scheduleComponents[0].componentKind, "EnergeticHero");
   });
 
-  test("hero headline is placeholder when no metaDescription was captured — never fabricated", () => {
+  test("hero headline is a true placeholder only when neither metaDescription nor heroThesis exist — never fabricated", () => {
     const wireframe = generateWireframe(briefFor("general", "editorial"), { hasRealTestimonials: false });
     const components = assembleComponents(wireframe, { businessName: "Acme", citedInsights: [], contactEvidence: NO_CONTACT_EVIDENCE });
     const hero = components.find((c) => c.section === "hero")!;
@@ -142,7 +142,7 @@ describe("design-generation-service: assembleComponents", () => {
     assert.equal(headline.value, null);
   });
 
-  test("hero headline is real, using the business's own published copy verbatim, when the crawl captured a metaDescription — the design-richness regression case", () => {
+  test("hero headline is real, using the business's own published copy verbatim, when the crawl captured a clean metaDescription — the design-richness regression case", () => {
     const wireframe = generateWireframe(briefFor("restaurant", "imagery-led"), { hasRealTestimonials: false });
     const metaDescription = "Veslo Family Restaurant — home-style cooking in a warm, welcoming dining room.";
     const components = assembleComponents(wireframe, {
@@ -155,6 +155,103 @@ describe("design-generation-service: assembleComponents", () => {
     const headline = hero.slots.find((s) => s.name === "headline")!;
     assert.equal(headline.source, "real");
     assert.equal(headline.value, metaDescription);
+  });
+
+  // ===========================================================================
+  // CTO Design Intelligence Remediation directive — Issue 2 (empty Veslo /
+  // Alltech HVAC heroes: no metaDescription meant no headline at all, even
+  // though Design Intelligence always produces a real heroThesis).
+  // ===========================================================================
+  test("hero headline falls back to the real, evidence-grounded heroThesis when no metaDescription was captured — the Veslo/Alltech HVAC empty-hero regression case", () => {
+    const wireframe = generateWireframe(briefFor("homeService", "credibility-led"), { hasRealTestimonials: false });
+    const heroThesis = "Alltech HVAC has kept this town's furnaces running through forty Michigan winters.";
+    const components = assembleComponents(wireframe, {
+      businessName: "Alltech HVAC",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      heroThesis,
+    });
+    const hero = components.find((c) => c.section === "hero")!;
+    const headline = hero.slots.find((s) => s.name === "headline")!;
+    assert.equal(headline.source, "real");
+    assert.equal(headline.value, heroThesis);
+  });
+
+  test("hero headline prefers a clean metaDescription over heroThesis when both exist", () => {
+    const wireframe = generateWireframe(briefFor("general", "editorial"), { hasRealTestimonials: false });
+    const metaDescription = "Acme Co — trusted local service since 1988.";
+    const components = assembleComponents(wireframe, {
+      businessName: "Acme Co",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      metaDescription,
+      heroThesis: "Should not be used since metaDescription is clean.",
+    });
+    const hero = components.find((c) => c.section === "hero")!;
+    const headline = hero.slots.find((s) => s.name === "headline")!;
+    assert.equal(headline.value, metaDescription);
+  });
+
+  // ===========================================================================
+  // CTO Design Intelligence Remediation directive — Issue 5 (Wilcox Lawn &
+  // Landscaping splice bug: metaDescription + stray CTA fragment + city/state
+  // mashed onto the end of one sentence).
+  // ===========================================================================
+  test("hero headline strips a trailing CTA fragment and location splice off metaDescription — the Wilcox Lawn & Landscaping regression case", () => {
+    const wireframe = generateWireframe(briefFor("homeService", "credibility-led"), { hasRealTestimonials: false });
+    const metaDescription = "Enhance your outdoor space with expert lawn care & landscaping. Learn more! Clarklake, MI.";
+    const components = assembleComponents(wireframe, {
+      businessName: "Wilcox Lawn & Landscaping",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      metaDescription,
+      heroThesis: "Should not be needed — the cleaned metaDescription should survive.",
+    });
+    const hero = components.find((c) => c.section === "hero")!;
+    const headline = hero.slots.find((s) => s.name === "headline")!;
+    assert.equal(headline.source, "real");
+    assert.equal(headline.value, "Enhance your outdoor space with expert lawn care & landscaping.");
+  });
+
+  // ===========================================================================
+  // CTO Design Intelligence Remediation directive — Issue 4 (Lakeshore
+  // Family Dentistry: metaDescription claimed "3 Milwaukee locations" while
+  // contactEvidence.address recorded one real Sarasota, FL address).
+  // ===========================================================================
+  test("hero headline drops a metaDescription that makes a multi-location claim contactEvidence can't corroborate, falling back to heroThesis — the Lakeshore Family Dentistry regression case", () => {
+    const wireframe = generateWireframe(briefFor("dentistMedical", "credibility-led"), { hasRealTestimonials: false });
+    const metaDescription = "Convenient family dental care at 3 Milwaukee locations, serving the whole family.";
+    const heroThesis = "Lakeshore Family Dentistry has served Sarasota families from the same office for two decades.";
+    const contactEvidence: ContactInfo = { phones: [], emails: [], address: "123 Bay St, Sarasota, FL 34236", hours: null };
+    const components = assembleComponents(wireframe, {
+      businessName: "Lakeshore Family Dentistry",
+      citedInsights: [],
+      contactEvidence,
+      metaDescription,
+      heroThesis,
+    });
+    const hero = components.find((c) => c.section === "hero")!;
+    const headline = hero.slots.find((s) => s.name === "headline")!;
+    assert.equal(headline.source, "real");
+    assert.equal(headline.value, heroThesis);
+    assert.doesNotMatch(headline.value!, /Milwaukee/);
+  });
+
+  test("hero headline drops a metaDescription naming a city that contradicts the real, verified contactEvidence.address", () => {
+    const wireframe = generateWireframe(briefFor("dentistMedical", "credibility-led"), { hasRealTestimonials: false });
+    const metaDescription = "Visit our Milwaukee, WI dental office for family-friendly care.";
+    const heroThesis = "A real, evidence-grounded fallback headline.";
+    const contactEvidence: ContactInfo = { phones: [], emails: [], address: "123 Bay St, Sarasota, FL 34236", hours: null };
+    const components = assembleComponents(wireframe, {
+      businessName: "Lakeshore Family Dentistry",
+      citedInsights: [],
+      contactEvidence,
+      metaDescription,
+      heroThesis,
+    });
+    const hero = components.find((c) => c.section === "hero")!;
+    const headline = hero.slots.find((s) => s.name === "headline")!;
+    assert.equal(headline.value, heroThesis);
   });
 
   test("every slot is explicitly marked real or placeholder, and real slots carry a non-null value", () => {
@@ -229,7 +326,17 @@ describe("design-generation-service: assembleComponents", () => {
     assert.equal(contact.slots.find((s) => s.name === "hours")?.value, "Mon-Fri 9am-5pm");
   });
 
-  test("faq section slots are real, grounded in cited insights, capped and deduplicated by category", () => {
+  // ===========================================================================
+  // CTO Design Intelligence Remediation directive — Issue 3: the FAQ section
+  // used to fall back to reframing citedInsights statements (raw
+  // Lighthouse/axe-style audit findings about the business's OLD site) as
+  // public-facing "questions" whenever no real FAQ evidence existed — near-
+  // identical across businesses and the wrong voice/format for customer-
+  // facing copy. That fallback is removed: citedInsights no longer back the
+  // public faq section at all (the citation data itself still flows through
+  // the brief unchanged, for internal/QA use).
+  // ===========================================================================
+  test("faq section never surfaces citedInsights as public-facing questions, even with several distinct categories cited", () => {
     const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
     const brief = briefFor("lawFirm", "credibility-led");
     const components = assembleComponents(wireframe, {
@@ -241,10 +348,9 @@ describe("design-generation-service: assembleComponents", () => {
       contactEvidence: NO_CONTACT_EVIDENCE,
     });
     const faq = components.find((c) => c.section === "faq")!;
-    const categories = faq.slots.map((s) => s.name);
-    assert.equal(new Set(categories).size, categories.length, "faq slots should be deduplicated by category");
     for (const slot of faq.slots) {
-      assert.equal(slot.source, "real");
+      assert.equal(slot.source, "placeholder", "faq should stay placeholder-only when no real faqEvidence exists — citedInsights must never fill it");
+      assert.equal(slot.value, null);
     }
   });
 
@@ -399,7 +505,7 @@ describe("design-generation-service: assembleComponents credibility/faq evidence
     assert.match(faq.slots[0].value!, /Yes, initial consultations are free\./);
   });
 
-  test("faq falls back to citedInsights when the crawler found no real FAQ", () => {
+  test("faq is placeholder-only (never citedInsights-derived) when the crawler found no real FAQ — the audit-copy-in-FAQ regression case", () => {
     const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
     const components = assembleComponents(wireframe, {
       businessName: "Acme Law",
@@ -407,7 +513,9 @@ describe("design-generation-service: assembleComponents credibility/faq evidence
       contactEvidence: NO_CONTACT_EVIDENCE,
     });
     const faq = components.find((c) => c.section === "faq")!;
-    assert.equal(faq.slots[0].value, "Pages load slowly.");
+    assert.equal(faq.slots.length, 1);
+    assert.equal(faq.slots[0].source, "placeholder");
+    assert.equal(faq.slots[0].value, null);
   });
 });
 
