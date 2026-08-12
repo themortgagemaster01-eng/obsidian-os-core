@@ -13,7 +13,19 @@ import type {
 } from "@/lib/adapters/types";
 
 const FETCH_TIMEOUT_MS = 15_000;
-const MAX_SAMPLE_PAGES = 5;
+/**
+ * Was 5. A real site with several distinct evidence-bearing pages (team,
+ * testimonials, FAQ, and multiple practice-area/service pages) can list
+ * more than 5 links before the budget-worth of "most useful" pages in nav
+ * order — confirmed on a real law firm site during the Evidence Depth
+ * investigation, where a 5-page budget left no room for any practice-area
+ * page once team/testimonials/about/news pages filled it. Still bounded and
+ * still fetched in parallel (Promise.all below), so wall-clock cost is
+ * governed by the slowest single page, not the count; prioritizeSampleUrls
+ * also means most sites see no extra fetches at all beyond what they'd
+ * already have filled with real evidence-bearing pages.
+ */
+const MAX_SAMPLE_PAGES = 8;
 const USER_AGENT = "ObsidianOS-AnalysisBot/1.0 (+https://obsidianos.example/bot)";
 
 async function fetchWithTimeout(url: string): Promise<Response> {
@@ -465,10 +477,28 @@ function findSectionsByKeywords($: cheerio.CheerioAPI, keywords: string[], sourc
     const $el = $(el);
     if ($el.closest("nav, header").length > 0) return;
     if ($el.closest("footer").length > 0 && !footerCandidatePassesQualityBar($, $el)) return;
+    // A nested element whose own ancestor already matches the same
+    // class/id keyword is the same real content re-matched twice (e.g. an
+    // accordion item's inner "question" div nested inside its own outer
+    // "faq-item" wrapper, both keyword-matchable) — keep only the outermost
+    // container per branch, since document order guarantees the ancestor
+    // was already visited and captured the fuller content.
+    if ($el.parents(selector).length > 0) return;
 
-    const heading = $el.find("h1, h2, h3, h4").first().text().trim() || $el.attr("id") || keywords[0];
+    const heading =
+      $el.find("h1, h2, h3, h4").first().text().trim().replace(/\s+/g, " ") || $el.attr("id") || keywords[0];
     const excerpt = $el.text().trim().replace(/\s+/g, " ").slice(0, SECTION_EXCERPT_MAX_CHARS);
     if (excerpt.length === 0) return;
+    // A section whose excerpt is nothing but its own heading repeated is a
+    // page-banner/title element, not real described content — confirmed real
+    // false positive during the Evidence Depth investigation: a page-builder
+    // theme's generic sub-page title banner used a class literally named
+    // "servicetitle" site-wide (a decorative styling hook, unrelated to an
+    // actual services listing), so every sampled sub-page produced a bogus
+    // "services" entry whose heading and excerpt were both just that page's
+    // own title ("OUR TEAM", "TESTIMONIALS"...). A real section always has
+    // body content beyond repeating its own heading.
+    if (excerpt === heading) return;
 
     const dedupeKey = `${heading}:${excerpt.slice(0, 60)}`;
     if (seen.has(dedupeKey)) return;
@@ -519,6 +549,81 @@ function classifyPageByUrlAndTitle(sourceUrl: string, pageTitle: string): PageFa
   return (Object.keys(CATEGORY_URL_TITLE_WORDS) as PageFallbackCategory[]).filter((category) =>
     CATEGORY_URL_TITLE_WORDS[category].some((label) => words.has(label))
   );
+}
+
+// ===========================================================================
+// Sub-page sampling prioritization (Evidence Depth investigation, Friedman
+// Grimes). The crawler can only afford to fetch a bounded number of
+// same-domain pages, and used to take whichever links happened to appear
+// first in homepage DOM order — real for a site whose nav lists its most
+// content-rich pages first, but a real, generalizable gap for any site
+// whose nav lists several evidence-bearing pages (team, testimonials, FAQ,
+// certifications...) alongside many more links than the budget allows: the
+// budget could fill on nav order alone before reaching a distinct category
+// at all. This ranks discovered links by the SAME category vocabulary
+// classifyPageByUrlAndTitle already uses (plus "testimonials", which that
+// function deliberately excludes for post-fetch content classification but
+// which is still a legitimate reason to prioritize FETCHING a page), then
+// fills any remaining budget in original discovery order — so a site with
+// no recognizable categories in its nav sees no behavior change at all.
+// ===========================================================================
+
+type LinkPriorityCategory = PageFallbackCategory | "testimonials";
+
+const LINK_PRIORITY_WORDS: Record<LinkPriorityCategory, string[]> = {
+  ...CATEGORY_URL_TITLE_WORDS,
+  testimonials: ["testimonial", "testimonials", "review", "reviews"],
+};
+
+/** Fixed evaluation order, not a ranking of importance — every matched category still gets one slot each before any leftover budget fills by discovery order. */
+const LINK_PRIORITY_ORDER: LinkPriorityCategory[] = [
+  "team",
+  "testimonials",
+  "faq",
+  "certifications",
+  "licenses",
+  "services",
+  "products",
+];
+
+function classifyLinkByUrlAndText(url: string, linkText: string): LinkPriorityCategory[] {
+  const words = pageWords(url, linkText);
+  return LINK_PRIORITY_ORDER.filter((category) => LINK_PRIORITY_WORDS[category].some((label) => words.has(label)));
+}
+
+/**
+ * Picks up to `max` URLs from `links` (already deduped, in original
+ * discovery order): one representative link per recognizable category
+ * first (a page's own URL path or its anchor text naming that category —
+ * e.g. a "/testimonials/" link or link text "Our Team"), then fills any
+ * remaining budget with the earliest not-yet-selected links in their
+ * original order. Exported for direct unit testing independent of the
+ * network fetch, same precedent as extractStructuredFacts.
+ */
+export function prioritizeSampleUrls(links: { url: string; text: string }[], max: number): string[] {
+  const selected: string[] = [];
+  const selectedUrls = new Set<string>();
+
+  for (const category of LINK_PRIORITY_ORDER) {
+    if (selected.length >= max) break;
+    const match = links.find(
+      (link) => !selectedUrls.has(link.url) && classifyLinkByUrlAndText(link.url, link.text).includes(category)
+    );
+    if (match) {
+      selected.push(match.url);
+      selectedUrls.add(match.url);
+    }
+  }
+
+  for (const link of links) {
+    if (selected.length >= max) break;
+    if (!selectedUrls.has(link.url)) {
+      selected.push(link.url);
+      selectedUrls.add(link.url);
+    }
+  }
+
+  return selected;
 }
 
 /**
@@ -595,6 +700,24 @@ function findTestimonialsByStructure($: cheerio.CheerioAPI, sourceUrl: string): 
   return sections;
 }
 
+// ===========================================================================
+// FAQ content-shape gate (Evidence Depth investigation, Friedman Grimes):
+// "accordion" is a UI-widget keyword, not an FAQ-specific one — real sites
+// reuse the same collapsible-accordion component for non-FAQ purposes.
+// Confirmed on a real site during this investigation: a law firm's
+// collapsible practice-area sidebar menu ("Family Law Overview", "Divorce",
+// "Child Custody"...) uses the identical accordion classing as its actual
+// FAQ widget, so the class-keyword scan alone pulled in navigation text
+// mislabeled as customer-facing FAQ content. A real FAQ item's heading or
+// excerpt names an actual question; a nav menu reusing the same widget does
+// not. This mirrors findTestimonialsByStructure's own discipline: the
+// CSS-class match is a candidate, never proof on its own.
+// ===========================================================================
+
+function looksLikeFaqContent(section: ContentSection): boolean {
+  return section.heading.includes("?") || section.excerpt.includes("?");
+}
+
 /**
  * The full structured-facts extraction pass — pure, given an already-loaded
  * page and the URL it came from. `sourceUrl` is threaded onto every
@@ -612,7 +735,7 @@ export function extractStructuredFacts($: cheerio.CheerioAPI, sourceUrl: string)
     services: findSectionsByKeywords($, ["service", "offering"], sourceUrl),
     products: findSectionsByKeywords($, ["product", "shop-item", "store-item"], sourceUrl),
     team: findSectionsByKeywords($, ["team", "staff"], sourceUrl),
-    faq: findSectionsByKeywords($, ["faq", "accordion"], sourceUrl),
+    faq: findSectionsByKeywords($, ["faq", "accordion"], sourceUrl).filter(looksLikeFaqContent),
   };
 
   // Page-level fallback (signal 2): when this specific page's own URL/title
@@ -806,7 +929,8 @@ export async function runCrawlAdapter(targetUrl: string): Promise<CrawlRawResult
   const metaDescription =
     $('meta[name="description"]').attr("content")?.trim() || null;
 
-  const linkHrefs = new Set<string>();
+  const linkEntries: { url: string; text: string }[] = [];
+  const seenLinkUrls = new Set<string>();
   let internalLinkCount = 0;
   let externalLinkCount = 0;
 
@@ -819,7 +943,11 @@ export async function runCrawlAdapter(targetUrl: string): Promise<CrawlRawResult
       const resolved = new URL(href, finalUrl);
       if (resolved.origin === origin) {
         internalLinkCount += 1;
-        linkHrefs.add(resolved.toString());
+        const resolvedUrl = resolved.toString();
+        if (!seenLinkUrls.has(resolvedUrl)) {
+          seenLinkUrls.add(resolvedUrl);
+          linkEntries.push({ url: resolvedUrl, text: $(el).text().trim().replace(/\s+/g, " ") });
+        }
       } else {
         externalLinkCount += 1;
       }
@@ -828,9 +956,10 @@ export async function runCrawlAdapter(targetUrl: string): Promise<CrawlRawResult
     }
   });
 
-  const sampleUrls = Array.from(linkHrefs)
-    .filter((href) => href !== finalUrl)
-    .slice(0, MAX_SAMPLE_PAGES);
+  const sampleUrls = prioritizeSampleUrls(
+    linkEntries.filter((link) => link.url !== finalUrl),
+    MAX_SAMPLE_PAGES
+  );
 
   // Each sampled sub-page is fetched here regardless — the fix is making
   // that already-downloaded HTML useful instead of keeping only its

@@ -2,7 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import * as cheerio from "cheerio";
 
-import { extractStructuredFacts, mergeStructuredFacts } from "@/lib/adapters/crawl-adapter";
+import { extractStructuredFacts, mergeStructuredFacts, prioritizeSampleUrls } from "@/lib/adapters/crawl-adapter";
 
 const JSON_LD_HTML = `
 <html><head>
@@ -625,5 +625,139 @@ describe("crawl-adapter: mergeStructuredFacts (sub-page evidence, previously dis
     const merged = mergeStructuredFacts([homepageWithForm, subPageWithDifferentForm]);
     assert.equal(merged.forms.length, 1);
     assert.equal(merged.forms[0].action, "/submit");
+  });
+});
+
+describe("crawl-adapter: prioritizeSampleUrls (Evidence Depth investigation — Friedman Grimes)", () => {
+  test("a recognizable category page beyond the old fixed budget still gets sampled, ahead of redundant leftover links in DOM order", () => {
+    // Friedman Grimes' real shape: a nav that lists 5 non-category links
+    // (About, News, Community, Contact, Blog) before any recognizable
+    // category page appears at all — the old first-5-DOM-order sampling
+    // would never reach "Our Team" here.
+    const links = [
+      { url: "https://example.test/about/", text: "Firm Overview" },
+      { url: "https://example.test/news/", text: "In the News" },
+      { url: "https://example.test/community/", text: "In the Community" },
+      { url: "https://example.test/contact/", text: "Contact" },
+      { url: "https://example.test/blog/", text: "Blog" },
+      { url: "https://example.test/our-team/", text: "Our Team" },
+      { url: "https://example.test/testimonials/", text: "Testimonials" },
+    ];
+    const selected = prioritizeSampleUrls(links, 5);
+    assert.ok(selected.includes("https://example.test/our-team/"));
+    assert.ok(selected.includes("https://example.test/testimonials/"));
+    assert.equal(selected.length, 5);
+  });
+
+  test("fills remaining budget in original discovery order once every recognizable category is used up", () => {
+    const links = [
+      { url: "https://example.test/our-team/", text: "Our Team" },
+      { url: "https://example.test/about/", text: "About" },
+      { url: "https://example.test/news/", text: "News" },
+      { url: "https://example.test/contact/", text: "Contact" },
+    ];
+    const selected = prioritizeSampleUrls(links, 3);
+    assert.deepEqual(selected, [
+      "https://example.test/our-team/",
+      "https://example.test/about/",
+      "https://example.test/news/",
+    ]);
+  });
+
+  test("a site with no recognizable category links sees no behavior change — same first-N-in-order sampling as before", () => {
+    const links = [
+      { url: "https://example.test/a/", text: "Alpha" },
+      { url: "https://example.test/b/", text: "Beta" },
+      { url: "https://example.test/c/", text: "Gamma" },
+    ];
+    assert.deepEqual(prioritizeSampleUrls(links, 2), ["https://example.test/a/", "https://example.test/b/"]);
+  });
+
+  test("never selects more than max, and never duplicates a URL matching two categories", () => {
+    const links = [{ url: "https://example.test/team-faq/", text: "Team FAQ" }];
+    const selected = prioritizeSampleUrls(links, 8);
+    assert.deepEqual(selected, ["https://example.test/team-faq/"]);
+  });
+});
+
+describe("crawl-adapter: FAQ content-shape gate (Evidence Depth investigation — Friedman Grimes)", () => {
+  test("rejects an accordion-classed collapsible menu with no question content — Friedman Grimes' real shape: a practice-area sidebar nav reusing the site's FAQ accordion widget classing", () => {
+    const html = `
+      <html><body>
+        <div class="accordion-item">
+          <div class="accordion-title">Family Law</div>
+          <div class="accordion-body">
+            <a href="/family-law/divorce/">Divorce</a>
+            <a href="/family-law/child-custody/">Child Custody</a>
+          </div>
+        </div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/family-law/");
+    assert.deepEqual(facts.faq, []);
+  });
+
+  test("accepts a real accordion-classed FAQ whose heading/excerpt names an actual question", () => {
+    const html = `
+      <html><body>
+        <div class="faq-item">
+          <h3>What are the grounds for divorce in Virginia?</h3>
+          <p>Virginia recognizes both no-fault and fault-based grounds for divorce.</p>
+        </div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/family-law/divorce/");
+    assert.equal(facts.faq.length, 1);
+    assert.match(facts.faq[0].heading, /grounds for divorce/);
+  });
+});
+
+describe("crawl-adapter: keyword-scan banner/duplicate false positives (Evidence Depth investigation — Friedman Grimes)", () => {
+  test("rejects a section whose excerpt is nothing but its own heading repeated — a page-builder theme's generic page-title banner reused a class literally named 'servicetitle' site-wide, unrelated to any real services listing", () => {
+    const html = `
+      <html><body>
+        <div class="serviceheaderimage"></div>
+        <div class="servicetitle"><h1>OUR TEAM</h1></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/our-team/");
+    assert.deepEqual(facts.services, []);
+  });
+
+  test("still accepts a real services section whose excerpt has real content beyond its own heading", () => {
+    const html = `
+      <html><body>
+        <div class="servicetitle"><h2>Practice Areas</h2><p>Family Law, Estate Planning, Bankruptcy Law.</p></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/practice-areas/");
+    assert.equal(facts.services.length, 1);
+    assert.match(facts.services[0].excerpt, /Estate Planning/);
+  });
+
+  test("keeps only the outermost match when a keyword-classed element is nested inside another keyword-classed ancestor — the same real content is not counted twice under different headings", () => {
+    const html = `
+      <html><body>
+        <div class="faq-item">
+          <div class="faq-question">What is a separation agreement?</div>
+          <div class="faq-answer">A legally binding contract dividing property and debts between a separating couple.</div>
+        </div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/faq/");
+    assert.equal(facts.faq.length, 1);
+    assert.match(facts.faq[0].excerpt, /legally binding contract/);
+  });
+
+  test("whitespace normalization: a heading containing a non-breaking space still matches its own excerpt and is rejected as a banner, not treated as distinct text", () => {
+    const html = `<html><body><div class="servicetitle"><h1>IN&nbsp;THE&nbsp;NEWS</h1></div></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/in-the-news/");
+    assert.deepEqual(facts.services, []);
   });
 });

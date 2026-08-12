@@ -253,6 +253,76 @@ describe("design-qa-service: qaTrust", () => {
     const result = qaTrust(tampered);
     assert.equal(result.verdict, "FAIL");
   });
+
+  test("PASSes for a real 'question-N' slot sourced from crawled FAQ evidence (Evidence Depth investigation regression) — design-generation-service.ts's faq case sources question-N slots exclusively from real crawled FAQ, not citedInsights, so Trust QA must recognize that source too", () => {
+    // restaurant (briefFor's default bucket) has no "faq" section in its
+    // template — lawFirm's does (design-generation-service.ts's
+    // WIREFRAME_TEMPLATE_BY_BUCKET), matching this investigation's real
+    // Friedman Grimes case.
+    const brief = briefFor({}, { industryBucket: "lawFirm", industry: "law firm" });
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
+    const faqEvidence = [
+      {
+        heading: "What are the grounds for divorce in Virginia?",
+        excerpt: "Virginia recognizes both no-fault and fault-based grounds for divorce.",
+        sourceUrl: "https://acme.test/family-law/divorce/",
+      },
+    ];
+    const components = assembleComponents(wireframe, {
+      businessName: brief.businessName,
+      citedInsights: brief.citedInsights,
+      contactEvidence: brief.contactEvidence,
+      faqEvidence,
+    });
+    const refinedDesign = refineDesign({ wireframe }, brief, SAMPLE_DESIGN_MEMORY);
+    const input: QaStructuredInput = {
+      ...buildValidInput(),
+      wireframe,
+      components,
+      refinedDesign,
+      crawl: { certifications: [], testimonials: [], faq: faqEvidence },
+    };
+
+    const questionSlot = components.flatMap((c) => c.slots).find((s) => s.name === "question-1");
+    assert.ok(questionSlot, "fixture must actually produce a question-1 slot");
+    assert.match(questionSlot!.value ?? "", /grounds for divorce/);
+
+    const result = qaTrust(input);
+    assert.equal(result.verdict, "PASS");
+    assert.ok(!result.findings.some((f) => /question-1/.test(f)));
+  });
+
+  test("still FAILs when a 'real' question-N slot traces to neither crawled FAQ content nor a cited Insight — the fix recognizes a new legitimate source, it doesn't turn off the check", () => {
+    const brief = briefFor({}, { industryBucket: "lawFirm", industry: "law firm" });
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
+    const faqEvidence = [
+      { heading: "Real question", excerpt: "A real, verbatim crawled answer.", sourceUrl: "https://acme.test/faq/" },
+    ];
+    const components = assembleComponents(wireframe, {
+      businessName: brief.businessName,
+      citedInsights: brief.citedInsights,
+      contactEvidence: brief.contactEvidence,
+      faqEvidence,
+    });
+    const tamperedComponents = components.map((c) => ({
+      ...c,
+      slots: c.slots.map((s): ComponentSlot =>
+        s.name === "question-1" ? { ...s, value: "A completely fabricated question and answer." } : s
+      ),
+    }));
+    const refinedDesign = refineDesign({ wireframe }, brief, SAMPLE_DESIGN_MEMORY);
+    const input: QaStructuredInput = {
+      ...buildValidInput(),
+      wireframe,
+      components: tamperedComponents,
+      refinedDesign,
+      crawl: { certifications: [], testimonials: [], faq: faqEvidence },
+    };
+
+    const result = qaTrust(input);
+    assert.equal(result.verdict, "FAIL");
+    assert.ok(result.findings.some((f) => /question-1/.test(f) && /does not trace/.test(f)));
+  });
 });
 
 describe("design-qa-service: qaConversion", () => {

@@ -229,7 +229,7 @@ export interface QaStructuredInput {
   designBrief: Pick<DesignBrief, "citedInsights" | "direction" | "referencesConsidered" | "positioning" | "heroThesis" | "signatureElement">;
   designMemory: DesignMemory | null;
   /** Real crawled facts to cross-check "real"-tagged trust content against (§4.8) — null when no completed website analysis exists for this mission. */
-  crawl: { certifications: ContentSection[]; testimonials: ContentSection[] } | null;
+  crawl: { certifications: ContentSection[]; testimonials: ContentSection[]; faq: ContentSection[] } | null;
   batch: QaBatchContext;
   /** This mission's own original-site Lighthouse baseline (§4.7's relative-regression bar) — null when unmeasured. */
   baselineLighthouse: LighthouseCategoryScores | null;
@@ -484,9 +484,24 @@ export function qaTrust(input: QaStructuredInput): DeterministicCategoryResult {
           );
         }
       } else if (slot.name.startsWith("question-")) {
+        // design-generation-service.ts's faq case sources "question-N" slots
+        // exclusively from context.faqEvidence (real crawled FAQ content) —
+        // the older citedInsights-reframed-as-a-question fallback was
+        // removed entirely (CTO Design Intelligence Remediation directive,
+        // Issue 3: it surfaced internal audit findings in the visitor-facing
+        // voice). Checking only citedInsights here left this branch
+        // permanently unmatchable and flagged every real FAQ slot from every
+        // business as untraceable — a false CRITICAL, not a real fabrication
+        // (Evidence Depth investigation). citedInsights is kept as a second,
+        // still-valid trace source rather than removed outright, since nothing
+        // rules out a future/alternate caller legitimately using it.
+        const realFaq = input.crawl?.faq.map((f) => f.excerpt) ?? [];
+        const matchesCrawledFaq = realFaq.some((excerpt) => slot.value!.includes(excerpt));
         const matchesCitation = input.designBrief.citedInsights.some((c: DesignBriefCitation) => c.statement === slot.value);
-        if (!matchesCitation) {
-          findings.push(`CRITICAL: ${node.section}.${slot.name} is tagged "real" but its value does not match any cited Insight statement.`);
+        if (!matchesCrawledFaq && !matchesCitation) {
+          findings.push(
+            `CRITICAL: ${node.section}.${slot.name} is tagged "real" but its value does not trace to any crawled FAQ content or cited Insight statement.`
+          );
         }
       } else if (slot.name === "businessName" && slot.value !== input.businessName) {
         findings.push(`CRITICAL: ${node.section}.businessName is "${slot.value}" but the mission's real business name is "${input.businessName}".`);
@@ -499,8 +514,8 @@ export function qaTrust(input: QaStructuredInput): DeterministicCategoryResult {
     evidence(
       "real-slot traceability cross-check",
       input.crawl
-        ? `Cross-checked against ${input.crawl.testimonials.length} crawled testimonial(s) and ${input.designBrief.citedInsights.length} cited Insight statement(s).`
-        : `No completed website analysis available to cross-check "real"-tagged testimonial content against crawled facts — testimonial-slot traceability could not be verified this run (businessName/FAQ citation checks still ran).`
+        ? `Cross-checked against ${input.crawl.testimonials.length} crawled testimonial(s), ${input.crawl.faq.length} crawled FAQ item(s), and ${input.designBrief.citedInsights.length} cited Insight statement(s).`
+        : `No completed website analysis available to cross-check "real"-tagged testimonial/FAQ content against crawled facts — testimonial/FAQ-slot traceability could not be verified this run (businessName citation check still ran).`
     ),
   ];
 
@@ -1120,6 +1135,7 @@ export async function runDesignQa(deps: DesignQaServiceDeps, websiteDesignId: st
       ? {
           certifications: ((analysisRow.crawl_result as unknown as { certifications?: ContentSection[] }).certifications) ?? [],
           testimonials: ((analysisRow.crawl_result as unknown as { testimonials?: ContentSection[] }).testimonials) ?? [],
+          faq: ((analysisRow.crawl_result as unknown as { faq?: ContentSection[] }).faq) ?? [],
         }
       : null;
 
