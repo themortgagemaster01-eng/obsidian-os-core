@@ -607,6 +607,39 @@ describe("design-generation-service: assembleComponents credibility/faq evidence
   });
 });
 
+describe("design-generation-service: services section (Friedman Flagship Final Content Pass — numbered editorial index)", () => {
+  test("real category evidence produces an offering-N (category name) slot paired with an offering-detail-N (sub-items) slot", () => {
+    const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, {
+      businessName: "Acme Law",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      // heading/excerpt shape matches what findServiceMenuStructure
+      // (crawl-adapter.ts) actually produces: heading is the real category
+      // name, excerpt is the real, comma-joined sub-items under it.
+      services: [
+        { heading: "Family Law", excerpt: "Divorce, Child Custody, Child Support", sourceUrl: "https://acme-law.test/" },
+        { heading: "Local Counsel", excerpt: "", sourceUrl: "https://acme-law.test/" },
+      ],
+    });
+    const services = components.find((c) => c.section === "services")!;
+    const category1 = services.slots.find((s) => s.name === "offering-1")!;
+    const detail1 = services.slots.find((s) => s.name === "offering-detail-1")!;
+    assert.equal(category1.value, "Family Law");
+    assert.equal(detail1.value, "Divorce, Child Custody, Child Support");
+
+    const category2 = services.slots.find((s) => s.name === "offering-2")!;
+    assert.equal(category2.value, "Local Counsel");
+    // A category with no real sub-item evidence gets no detail slot at all
+    // — never a placeholder standing in for one, mirroring testimonials'
+    // attribution discipline.
+    assert.equal(
+      services.slots.some((s) => s.name === "offering-detail-2"),
+      false
+    );
+  });
+});
+
 describe("design-generation-service: team section (Evidence Depth pass — no longer folded into credibility)", () => {
   test("wireframe includes a dedicated \"team\" section only when hasRealTeam is true, placed before contact", () => {
     const withoutTeam = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });

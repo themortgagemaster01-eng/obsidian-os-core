@@ -773,6 +773,77 @@ function findTeamMembersByStructure($: cheerio.CheerioAPI, sourceUrl: string): C
 }
 
 // ===========================================================================
+// Service/practice-area menu structural detection (Friedman Flagship Final
+// Content Pass). A nav item's own top-level link text ("Home", "About",
+// "Contact") is pure navigation chrome and stays hard-excluded everywhere
+// else in this file — but when that label itself names what the business
+// offers ("Services", "Practice Areas", "Menu", "Products") AND the item
+// has a real dropdown submenu, that submenu is the business's own real
+// offering index, often published nowhere else on the site at all.
+// Confirmed on the real oldtownlawyers.com: a sitewide "Practice Areas"
+// mega-menu names 5 real top-level areas (Family Law, Wills/Trusts &
+// Estates, Bankruptcy Law, Business Law, Local Counsel), each with real
+// named sub-services — while extractMainPageContent's page-level fallback
+// was separately misfiring on an unrelated sub-page (a "Family Law for
+// Foreign Service Professionals" article, URL-tokenized as containing the
+// word "service" and misclassified as a services LISTING page), producing
+// an unstructured nav-text blob instead. This is strictly better evidence
+// than either the CSS-keyword body scan or the page-level fallback, so it's
+// preferred when found (extractStructuredFacts below).
+//
+// Mirrors footerCandidatePassesQualityBar's precedent: chrome is scored on
+// its own real structural content rather than blanket-excluded once a
+// narrow, deliberate evidence signal is present. Never keys off a
+// CMS/theme-specific class name (no WordPress/Astra/menu-plugin naming
+// anywhere below) — only the semantic <nav>/<ul>/<li> shape and the link's
+// own real text, so it generalizes to any site using a dropdown mega-menu.
+// ===========================================================================
+
+const SERVICE_MENU_LABEL_PATTERN = /^(our\s+)?(services?|offerings?|products?|practice\s+areas?|menu)$/i;
+const MAX_SUBITEMS_PER_CATEGORY = 8;
+
+function findServiceMenuStructure($: cheerio.CheerioAPI, sourceUrl: string): ContentSection[] {
+  const sections: ContentSection[] = [];
+  const seen = new Set<string>();
+
+  $("nav a").each((_, el) => {
+    if (sections.length >= MAX_SECTIONS_PER_CATEGORY) return;
+    const $link = $(el);
+    const label = $link.text().trim().replace(/\s+/g, " ");
+    if (!SERVICE_MENU_LABEL_PATTERN.test(label)) return;
+
+    // The dropdown submenu is either the link's own sibling <ul> or its
+    // parent <li>'s child <ul> — the two common menu-markup shapes.
+    const siblingSubmenu = $link.siblings("ul").first();
+    const submenu = siblingSubmenu.length > 0 ? siblingSubmenu : $link.parent("li").children("ul").first();
+    if (submenu.length === 0) return;
+
+    submenu.children("li").each((_, categoryEl) => {
+      if (sections.length >= MAX_SECTIONS_PER_CATEGORY) return;
+      const $category = $(categoryEl);
+      const categoryLabel = $category.children("a").first().text().trim().replace(/\s+/g, " ");
+      if (categoryLabel.length === 0) return;
+
+      const subItems = $category
+        .children("ul")
+        .children("li")
+        .map((_, itemEl) => $(itemEl).children("a").first().text().trim().replace(/\s+/g, " "))
+        .get()
+        .filter((t) => t.length > 0)
+        .slice(0, MAX_SUBITEMS_PER_CATEGORY);
+
+      const dedupeKey = `${label}:${categoryLabel}`;
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+
+      sections.push({ heading: categoryLabel, excerpt: subItems.join(", "), sourceUrl });
+    });
+  });
+
+  return sections;
+}
+
+// ===========================================================================
 // FAQ content-shape gate (Evidence Depth investigation, Friedman Grimes):
 // "accordion" is a UI-widget keyword, not an FAQ-specific one — real sites
 // reuse the same collapsible-accordion component for non-FAQ purposes.
@@ -790,6 +861,36 @@ function looksLikeFaqContent(section: ContentSection): boolean {
   return section.heading.includes("?") || section.excerpt.includes("?");
 }
 
+// ===========================================================================
+// Service/offering content-shape gate (Friedman Flagship Final Content
+// Pass): the same page-builder theme quirk the FAQ gate above already
+// guards against — a generic decorative/utility CSS class that happens to
+// contain "service" as a naming coincidence, unrelated to real services
+// content. Confirmed real on oldtownlawyers.com: a sub-page's own
+// "serviceheaderimage" title-banner wrapper class (a sibling of the
+// already-handled "servicetitle" class from the Evidence Depth pass) whose
+// nearest heading is "Practice Areas" and whose body is the SAME flattened
+// nav-menu link dump findServiceMenuStructure now extracts cleanly from the
+// real <nav> — reached via the CSS-keyword scan instead of the page-level
+// URL/title fallback this time, so the excerpt===heading guard doesn't
+// catch it (there's real text after the heading, just not real prose). A
+// genuine service/offering description reads as at least one real sentence;
+// a flattened link dump of many short Title Case phrases run together never
+// contains a single sentence-terminal ".", "!", or "?". A short, genuinely
+// curated real service list (e.g. Lakeshore's real <ul class="services-
+// list"> of 4 items in a footer) has this same no-terminal-punctuation
+// shape, though, and must NOT be rejected — the distinguishing signal is
+// length: a real short list stays well under the excerpt cap, while a
+// flattened nav-menu dump (many categories' worth of sub-items concatenated
+// with no separators) reliably runs all the way to SECTION_EXCERPT_MAX_CHARS
+// and gets cut off mid-word there, never a deliberately short real list.
+// ===========================================================================
+
+function looksLikeNavDump(section: ContentSection): boolean {
+  const nearExcerptCap = section.excerpt.length >= SECTION_EXCERPT_MAX_CHARS - 10;
+  return nearExcerptCap && !/[.!?]/.test(section.excerpt);
+}
+
 /**
  * The full structured-facts extraction pass — pure, given an already-loaded
  * page and the URL it came from. `sourceUrl` is threaded onto every
@@ -804,7 +905,15 @@ export function extractStructuredFacts($: cheerio.CheerioAPI, sourceUrl: string)
   const bySections: Record<PageFallbackCategory, ContentSection[]> = {
     certifications: findSectionsByKeywords($, ["certif", "accredit"], sourceUrl),
     licenses: findSectionsByKeywords($, ["licens"], sourceUrl),
-    services: findSectionsByKeywords($, ["service", "offering"], sourceUrl),
+    // Structural detection first: a real nav mega-menu's own offering index
+    // is strictly better evidence than a CSS-class-matched body block or the
+    // page-level URL/title fallback (see the comment above
+    // findServiceMenuStructure) — mergeSections keeps both, deduped, so a
+    // site with neither still correctly produces [].
+    services: mergeSections([
+      findServiceMenuStructure($, sourceUrl),
+      findSectionsByKeywords($, ["service", "offering"], sourceUrl).filter((s) => !looksLikeNavDump(s)),
+    ]),
     products: findSectionsByKeywords($, ["product", "shop-item", "store-item"], sourceUrl),
     // Structural detection first: a real per-person name+title match is
     // strictly better evidence than a CSS-class-matched block (which is

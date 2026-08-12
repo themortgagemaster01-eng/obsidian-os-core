@@ -738,6 +738,71 @@ function SectionBody({
     );
   }
 
+  if (section === "services") {
+    // Editorial numbered index (Friedman Flagship Final Content Pass): each
+    // real practice-area/category name (design-generation-service.ts's
+    // "offering-N" slot) gets its own row with a large muted index numeral,
+    // and — only when real sub-item evidence exists ("offering-detail-N",
+    // paired by index like testimonials' attribution) — a lighter
+    // supporting line beneath it. Not the flat "Practice Areas Family Law
+    // Family Law Overview Divorce Child Custody..." run-on blob a whole-
+    // page fallback excerpt produced before findServiceMenuStructure
+    // (crawl-adapter.ts) existed. Hairline dividers and restrained accent
+    // numerals, not bordered/rounded cards — same "stop building everything
+    // as cards" discipline as the generic divided-row fallback below.
+    const categories = node.slots.filter((s) => isRealSlot(s) && s.name.startsWith("offering-") && !s.name.includes("detail"));
+    const detailByIndex = new Map(
+      node.slots
+        .filter((s) => isRealSlot(s) && s.name.startsWith("offering-detail-"))
+        .map((s) => [s.name.replace("offering-detail-", ""), s] as const)
+    );
+    return (
+      <div>
+        <SectionHeading section={section} refinedDesign={refinedDesign} fontStack={headingFontStack} color={textColor} isSignature={isSignature} accent={accent} />
+        <div>
+          {categories.map((slot, i) => {
+            const detail = detailByIndex.get(slot.name.replace("offering-", ""));
+            return (
+              <div
+                key={slot.name}
+                style={{
+                  display: "flex",
+                  gap: "1.5rem",
+                  alignItems: "baseline",
+                  padding: "1.5rem 0",
+                  borderTop: i === 0 ? "none" : `1px solid ${textColor}1a`,
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: headingFontStack,
+                    fontSize: "0.95rem",
+                    fontWeight: 500,
+                    color: accent,
+                    minWidth: "2.25rem",
+                    flexShrink: 0,
+                  }}
+                >
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <div>
+                  <p style={{ fontFamily: headingFontStack, fontSize: "1.25rem", fontWeight: 600, margin: 0 }}>
+                    <SlotValue slot={slot} />
+                  </p>
+                  {detail && (
+                    <p style={{ fontSize: "0.9rem", opacity: MUTED_TEXT_OPACITY, marginTop: "0.4rem", maxWidth: "40rem" }}>
+                      <SlotValue slot={detail} />
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   if (section === "credibility" || section === "contact") {
     const realSlots = node.slots.filter(isRealSlot);
     if (realSlots.length === 0) return null;
@@ -804,7 +869,7 @@ function SectionBody({
     );
   }
 
-  // Single-slot structural sections (services, menu, gallery, schedule, listings, serviceArea):
+  // Single-slot structural sections (menu, gallery, schedule, listings, serviceArea):
   // exactly as many real blocks as buildSlots() actually produced real values for — never a
   // fabricated multi-item grid, and never a placeholder-only grid (the outer OMIT_SECTION_IF_EMPTY
   // check already keeps a fully-empty one of these from reaching this function at all). Editorial

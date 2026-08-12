@@ -490,6 +490,148 @@ describe("crawl-adapter: team/staff structural detection (no 'team'/'staff' CSS 
   });
 });
 
+describe("crawl-adapter: service/practice-area nav-menu structural detection (Friedman Flagship Final Content Pass)", () => {
+  test("splits a real 'Practice Areas' mega-menu into one category per top-level submenu item, each with its own real sub-items — Friedman Grimes' real oldtownlawyers.com shape", () => {
+    const html = `
+      <html><body>
+        <nav>
+          <ul>
+            <li><a href="/about/">About</a></li>
+            <li>
+              <a href="/practice-areas/">Practice Areas</a>
+              <ul>
+                <li>
+                  <a href="/family-law/">Family Law</a>
+                  <ul>
+                    <li><a href="/family-law/divorce/">Divorce</a></li>
+                    <li><a href="/family-law/child-custody/">Child Custody</a></li>
+                    <li><a href="/family-law/child-support/">Child Support</a></li>
+                  </ul>
+                </li>
+                <li>
+                  <a href="/wills-trusts-estates/">Wills, Trusts &amp; Estates</a>
+                  <ul>
+                    <li><a href="/wte/wills/">Wills</a></li>
+                    <li><a href="/wte/trusts/">Trusts</a></li>
+                  </ul>
+                </li>
+              </ul>
+            </li>
+            <li><a href="/contact/">Contact</a></li>
+          </ul>
+        </nav>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.services.length, 2);
+    assert.equal(facts.services[0].heading, "Family Law");
+    assert.equal(facts.services[0].excerpt, "Divorce, Child Custody, Child Support");
+    assert.equal(facts.services[1].heading, "Wills, Trusts & Estates");
+    assert.equal(facts.services[1].excerpt, "Wills, Trusts");
+  });
+
+  test("does not treat ordinary top-level nav links (About, Contact) as service categories", () => {
+    const html = `<html><body><nav><ul><li><a href="/about/">About</a></li><li><a href="/contact/">Contact</a></li></ul></nav></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.deepEqual(facts.services, []);
+  });
+
+  test("captures a flat single-level 'Services' menu (no sub-submenu) as categories with no sub-item detail — a real, generalizable shape distinct from Friedman's two-level practice-area menu", () => {
+    const html = `
+      <html><body>
+        <nav>
+          <ul>
+            <li>
+              <a href="/services/">Services</a>
+              <ul>
+                <li><a href="/services/plumbing/">Plumbing</a></li>
+                <li><a href="/services/electrical/">Electrical</a></li>
+              </ul>
+            </li>
+          </ul>
+        </nav>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.services.length, 2);
+    assert.equal(facts.services[0].heading, "Plumbing");
+    assert.equal(facts.services[0].excerpt, "");
+    assert.equal(facts.services[1].heading, "Electrical");
+  });
+
+  test("real structural evidence supersedes the page-level URL/title fallback blob — the actual Friedman regression (a 'foreign-service-professionals' sub-page URL-tokenized to contain the word 'service' and misclassified as a services listing page)", () => {
+    const html = `
+      <html><head><title>Family Law for Foreign Service Professionals</title></head><body>
+        <nav>
+          <ul>
+            <li>
+              <a href="/practice-areas/">Practice Areas</a>
+              <ul>
+                <li>
+                  <a href="/family-law/">Family Law</a>
+                  <ul><li><a href="/family-law/divorce/">Divorce</a></li></ul>
+                </li>
+              </ul>
+            </li>
+          </ul>
+        </nav>
+        <main><p>Real article body content about Foreign Service divorce specifics, unrelated to any services listing.</p></main>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/family-law/family-law-for-foreign-service-professionals/");
+    assert.equal(facts.services.length, 1);
+    assert.equal(facts.services[0].heading, "Family Law");
+    assert.ok(
+      !facts.services.some((s) => /Foreign Service divorce specifics/i.test(s.excerpt)),
+      "the real nav-menu evidence must win — the page-level fallback must not also inject the unrelated article body as a second 'services' entry"
+    );
+  });
+
+  test("rejects a CSS-keyword-matched block whose 'service'-named class is a decorative naming coincidence, not real services content — the actual Friedman regression: a 'serviceheaderimage' title-banner wrapper containing the same flattened nav-menu dump", () => {
+    const html = `
+      <html><body>
+        <nav>
+          <ul>
+            <li>
+              <a href="/practice-areas/">Practice Areas</a>
+              <ul>
+                <li>
+                  <a href="/family-law/">Family Law</a>
+                  <ul><li><a href="/family-law/divorce/">Divorce</a></li></ul>
+                </li>
+              </ul>
+            </li>
+          </ul>
+        </nav>
+        <div class="serviceheaderimage wpb_column">
+          <h3>Practice Areas</h3>
+          Family Law Family Law Overview Divorce Child Custody Child Support Property Division Spousal Support Other Family Law Issues Collaborative Law Settlement Agreements Divorce Guides Wills, Trusts &amp; Estates Wills, Trusts &amp; Estates Overview Guardianship &amp; Conservatorship Powers of Attorney
+        </div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/some-article/");
+    assert.equal(facts.services.length, 1, "only the real structural nav-menu category — the decorative-class dump must be filtered out");
+    assert.equal(facts.services[0].heading, "Family Law");
+    assert.ok(
+      !facts.services.some((s) => s.heading === "Practice Areas"),
+      "the decorative 'serviceheaderimage' wrapper's own heading text must never surface as a fake 'Practice Areas' category"
+    );
+  });
+
+  test("a real service description with genuine sentence punctuation is still kept even though its class name is a coincidental 'service' match", () => {
+    const html = `<html><body><div class="my-services-block"><h2>What We Do</h2><p>We handle plumbing repairs, water heater installation, and drain cleaning for homes across the metro area.</p></div></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.services.length, 1);
+    assert.match(facts.services[0].excerpt, /plumbing repairs/);
+  });
+});
+
 describe("crawl-adapter: footer quality scoring (real business content in a footer is no longer blanket-discarded)", () => {
   test("keeps a real, descriptive service list found only in a footer — Lakeshore's real shape: a <ul class=\"services-list\"> of full service names inside <footer>", () => {
     const html = `

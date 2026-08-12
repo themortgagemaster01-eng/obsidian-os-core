@@ -630,13 +630,30 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
           .map((t, i) => realSlot(`team-${i + 1}`, `${t.heading} — ${t.excerpt}`));
       }
       return [placeholderSlot("teamMembers")];
-    case "services":
+    case "services": {
+      // "offering-N" is the real practice-area/category name; the
+      // "offering-detail-N" companion slot (only emitted when real sub-item
+      // evidence exists) is the sub-items belonging to it, e.g.
+      // "Divorce, Child Custody, Child Support..." — findServiceMenuStructure
+      // (crawl-adapter.ts) sources heading=category, excerpt=joined real
+      // sub-items from the business's own nav mega-menu when one exists.
+      // Kept as two slots, not one combined string (unlike team's "Name —
+      // Title"), so the renderer can give the category name and its
+      // supporting detail genuinely different typographic weight — the
+      // numbered editorial index this section now gets (design-preview.tsx)
+      // rather than the flat "Practice Areas Family Law Family Law
+      // Overview Divorce Child Custody..." run-on blob a whole-page
+      // fallback excerpt produced before this extractor existed.
       if (context.services && context.services.length > 0) {
-        return context.services
-          .slice(0, MAX_SERVICE_SLOTS)
-          .map((section, i) => realSlot(`offering-${i + 1}`, section.excerpt));
+        const slots: ComponentSlot[] = [];
+        context.services.slice(0, MAX_SERVICE_SLOTS).forEach((section, i) => {
+          slots.push(realSlot(`offering-${i + 1}`, section.heading));
+          if (section.excerpt) slots.push(realSlot(`offering-detail-${i + 1}`, section.excerpt));
+        });
+        return slots;
       }
       return [placeholderSlot("offerings")];
+    }
     case "menu":
       return [placeholderSlot("menuItems")];
     case "gallery":
