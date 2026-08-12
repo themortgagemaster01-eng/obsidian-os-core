@@ -614,8 +614,20 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
       // design-preview.tsx) title-cases each real slot's own internal name
       // as a label, which is appropriate for reviewCount/certification-N but
       // leaked the internal slot id verbatim for team entries.
+      //
+      // "${heading} — ${excerpt}" mirrors the faq case below: when
+      // findTeamMembersByStructure (crawl-adapter.ts) matched a real
+      // name+title pair, heading is the real name and excerpt is their real
+      // title, so this renders one clean "Carolyn M. Grimes — Partner" line
+      // per person through the generic divided-row renderer — not the
+      // unstructured "OUR TEAM Attorneys Foster S.B. Friedman Partner
+      // Carolyn M. Grimes Partner..." run-on blob a whole-page fallback
+      // excerpt produced before that extractor existed (still the fallback
+      // for a site with no per-person structural match at all).
       if (context.team && context.team.length > 0) {
-        return context.team.slice(0, MAX_TEAM_SLOTS).map((t, i) => realSlot(`team-${i + 1}`, t.excerpt));
+        return context.team
+          .slice(0, MAX_TEAM_SLOTS)
+          .map((t, i) => realSlot(`team-${i + 1}`, `${t.heading} — ${t.excerpt}`));
       }
       return [placeholderSlot("teamMembers")];
     case "services":

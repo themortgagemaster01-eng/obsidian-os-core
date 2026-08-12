@@ -708,6 +708,71 @@ function findTestimonialsByStructure($: cheerio.CheerioAPI, sourceUrl: string): 
 }
 
 // ===========================================================================
+// Team/staff structural detection (Evidence Depth investigation, Friedman
+// Grimes): a real team page can carry no "team"/"staff" CSS class or id at
+// all — confirmed on oldtownlawyers.com/our-team/, a WPBakery page-builder
+// site whose page-level fallback (classifyPageByUrlAndTitle -> whole-page
+// text) was the ONLY thing populating "team" at all, producing one giant
+// run-on excerpt with no separation between people ("OUR TEAM Attorneys
+// Foster S.B. Friedman Partner Carolyn M. Grimes Partner..."). The real
+// per-person markup has a recognizable SHAPE instead: a short bold name
+// (`<strong>`/`<b>`) immediately followed by a line break and a short plain
+// text line naming their role ("Partner", "Attorney", "Office Manager") —
+// an extremely common WYSIWYG convention (bold the name, Shift+Enter, type
+// the title) that has nothing to do with law firms specifically. Like
+// findTestimonialsByStructure, this never requires team/staff terminology
+// in the markup and never invents a name — NAME_LIKE_PATTERN is the same
+// bounded shape check testimonials already use for a real-name line.
+// ===========================================================================
+
+const NAME_TITLE_LINE_MAX_CHARS = 40;
+const BOLD_OPEN_TAG_PATTERN = /<(strong|b)[\s>]/i;
+
+function findTeamMembersByStructure($: cheerio.CheerioAPI, sourceUrl: string): ContentSection[] {
+  const sections: ContentSection[] = [];
+  const seen = new Set<string>();
+
+  $("p, span").each((_, el) => {
+    if (sections.length >= MAX_SECTIONS_PER_CATEGORY) return;
+    const $el = $(el);
+    if ($el.closest("nav, header, script, style").length > 0) return;
+    if ($el.closest("footer").length > 0 && !footerCandidatePassesQualityBar($, $el)) return;
+
+    // Split this element's OWN inner markup at each direct <br> — the
+    // structural line break between a name and its title. An element whose
+    // name+title only appear nested inside a DEEPER child (e.g. a <p> whose
+    // sole child is the real <span> carrying the <br>s) simply produces one
+    // line here and is correctly skipped; the inner span is visited
+    // separately by this same $("p, span") scan and matches on its own.
+    const innerHtml = $el.html();
+    if (!innerHtml) return;
+    const fragments = innerHtml.split(/<br\s*\/?>/i);
+    if (fragments.length < 2) return;
+
+    const lines = fragments
+      .map((fragment) => ({
+        text: cheerio.load(fragment)("body").text().trim().replace(/\s+/g, " "),
+        hasBold: BOLD_OPEN_TAG_PATTERN.test(fragment),
+      }))
+      .filter((l) => l.text.length > 0);
+    if (lines.length < 2) return;
+
+    const [nameLine, titleLine] = lines;
+    if (!nameLine.hasBold || titleLine.hasBold) return;
+    if (!NAME_LIKE_PATTERN.test(nameLine.text)) return;
+    if (titleLine.text.length === 0 || titleLine.text.length > NAME_TITLE_LINE_MAX_CHARS) return;
+
+    const dedupeKey = `${nameLine.text}:${titleLine.text}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+
+    sections.push({ heading: nameLine.text, excerpt: titleLine.text, sourceUrl });
+  });
+
+  return sections;
+}
+
+// ===========================================================================
 // FAQ content-shape gate (Evidence Depth investigation, Friedman Grimes):
 // "accordion" is a UI-widget keyword, not an FAQ-specific one — real sites
 // reuse the same collapsible-accordion component for non-FAQ purposes.
@@ -741,7 +806,12 @@ export function extractStructuredFacts($: cheerio.CheerioAPI, sourceUrl: string)
     licenses: findSectionsByKeywords($, ["licens"], sourceUrl),
     services: findSectionsByKeywords($, ["service", "offering"], sourceUrl),
     products: findSectionsByKeywords($, ["product", "shop-item", "store-item"], sourceUrl),
-    team: findSectionsByKeywords($, ["team", "staff"], sourceUrl),
+    // Structural detection first: a real per-person name+title match is
+    // strictly better evidence than a CSS-class-matched block (which is
+    // often just a section wrapper with no per-person separation at all on
+    // page-builder sites) — mergeSections keeps both, deduped, so a site
+    // that legitimately has neither still correctly produces [].
+    team: mergeSections([findTeamMembersByStructure($, sourceUrl), findSectionsByKeywords($, ["team", "staff"], sourceUrl)]),
     faq: findSectionsByKeywords($, ["faq", "accordion"], sourceUrl).filter(looksLikeFaqContent),
   };
 

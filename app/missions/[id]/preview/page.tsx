@@ -6,11 +6,9 @@ import { createClient } from "@/lib/supabase/server";
 import { missionRepository } from "@/lib/repositories/mission-repository";
 import { websiteDesignRepository } from "@/lib/repositories/website-design-repository";
 import { designBriefRepository } from "@/lib/repositories/design-brief-repository";
-import { websiteAnalysisRepository } from "@/lib/repositories/website-analysis-repository";
 import type { Wireframe, ComponentNode } from "@/lib/services/design-generation-service";
 import type { RefinedDesign } from "@/lib/services/design-refinement-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
-import { resolveScreenshotUrl } from "@/lib/presentation/resolve-screenshot-url";
 import { DesignPreview } from "@/components/design-preview/design-preview";
 import { Badge } from "@/components/ui/badge";
 
@@ -67,22 +65,32 @@ export default async function DesignPreviewPage({ params, searchParams }: PagePa
 
   const brief = await designBriefRepository.findById(supabase, design.design_brief_id);
 
-  // Real, already-captured evidence, resolved to a fresh signed URL at
-  // request time — never persisted into website_designs.components, since
-  // the signed URL itself expires in an hour (resolve-screenshot-url.ts)
-  // and the wireframe/component JSON is meant to remain valid indefinitely.
-  //
-  // Deliberately the above-fold capture, not the full-page one the
-  // Opportunity Report shows: lib/adapters/screenshot-adapter.ts has always
-  // captured both, but only full-page was ever persisted. Using the
-  // full-page image as a hero background produced a real, measured
-  // Lighthouse performance regression (a full-page PNG runs ~5x the byte
-  // size of a single-viewport one) — confirmed via a real Design QA run
-  // during the Design Generation Richness Pass. The above-fold capture is
-  // the correct asset for a hero-sized image; it just needed persisting
-  // (supabase/migrations/0016_above_fold_screenshot.sql).
-  const analysis = await websiteAnalysisRepository.findLatestByMission(supabase, mission.id);
-  const heroImageUrl = await resolveScreenshotUrl(supabase, analysis?.above_fold_screenshot_url ?? null);
+  // heroImageUrl deliberately stays null: `above_fold_screenshot_url` (a
+  // prior Design Generation Richness Pass's source for this) is a real
+  // screenshot of the business's OLD, currently-live site, captured by
+  // lib/adapters/screenshot-adapter.ts for the Opportunity Report — it
+  // necessarily has THAT site's own real nav bar, headline, and CTA baked
+  // into its pixels. Using it as decorative "photography" behind the NEW
+  // design's hero composited the old site's real UI chrome underneath the
+  // new generated Nav/headline (a 60%-opacity scrim isn't reliably opaque
+  // enough to hide light-on-photo text) — a real, evidence-boundary bug
+  // confirmed on Friedman Grimes via direct DOM/computed-style inspection:
+  // exactly one real <nav>, zero real DOM text matching the ghosted "old
+  // site" copy — the second nav and hero text were pixels in that
+  // background-image url(), not a duplicate render. This isn't specific to
+  // Friedman: any business's above-fold capture is a page screenshot, which
+  // always carries that page's own chrome, so it can never safely stand in
+  // for "real business photography" for a DIFFERENT (the new) design,
+  // regardless of which business. No adapter in this codebase captures
+  // genuine business photography (office/team photos) today — per §8 and
+  // this mission's own Design Brief photographyStyle guidance ("if no real
+  // photography exists, favor strong typography over placeholder imagery"),
+  // the correct behavior with no real photography evidence is no hero image
+  // at all, not a repurposed diagnostic screenshot. resolveScreenshotUrl()
+  // is still the right call for app/missions/[id]/page.tsx's Opportunity
+  // Report, which is showing the old site's screenshot AS the old site's
+  // screenshot — that usage is untouched.
+  const heroImageUrl: string | null = null;
 
   return (
     <main className="min-h-screen bg-background">

@@ -78,12 +78,16 @@ export interface DesignPreviewProps {
   refinedDesign: RefinedDesign;
   designMemory: DesignMemory | null;
   /**
-   * A freshly-resolved signed URL for this mission's real, already-captured
-   * website screenshot (app/missions/[id]/preview/page.tsx resolves it at
-   * request time — see that file's comment on why it's never persisted).
-   * Real business photography when a screenshot exists; `null` and
-   * gracefully omitted otherwise (§8 — never a stock/placeholder image
-   * standing in for one that was never captured).
+   * A signed URL for genuine real business photography (office/team photos,
+   * etc.) for this mission, when such an asset actually exists — currently
+   * always null, since no adapter in this codebase captures that evidence
+   * type yet (app/missions/[id]/preview/page.tsx explains why it's no
+   * longer wired to the crawl's above-fold *screenshot*: that's a diagnostic
+   * capture of the OLD site's own UI, not photography, and using it here
+   * bled the old site's real nav/hero copy through the scrim behind the new
+   * design). `null` is gracefully omitted, never backfilled with a stock/
+   * placeholder image (§8) — a future real-photography adapter can wire
+   * into this same prop.
    */
   heroImageUrl: string | null;
 }

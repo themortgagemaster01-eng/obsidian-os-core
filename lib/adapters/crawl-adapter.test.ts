@@ -417,6 +417,79 @@ describe("crawl-adapter: testimonial structural detection (no 'testimonial' CSS 
   });
 });
 
+describe("crawl-adapter: team/staff structural detection (no 'team'/'staff' CSS class or keyword)", () => {
+  test("splits each real bold-name + line-break + title pair into its own team member — Friedman Grimes' real oldtownlawyers.com/our-team/ shape (a WPBakery page-builder site with no team/staff CSS class anywhere)", () => {
+    const html = `
+      <html><body>
+        <h1>OUR TEAM</h1>
+        <h3>Attorneys</h3>
+        <p><span><span><a href="/attorneys/foster"><strong>Foster S.B. Friedman</strong></a></span><br>
+        Partner<br>
+        </span></p>
+        <p><span><span><a href="/attorneys/carolyn"><strong>Carolyn M. Grimes</strong></a></span><br>
+        Partner<br>
+        </span></p>
+        <p><span><span><a href="/attorneys/xue"><strong>Xue Connelly</strong></a></span><br>
+        Attorney<br>
+        </span></p>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/our-team/");
+    assert.equal(facts.team.length, 3);
+    assert.deepEqual(
+      facts.team.map((t) => ({ heading: t.heading, excerpt: t.excerpt })),
+      [
+        { heading: "Foster S.B. Friedman", excerpt: "Partner" },
+        { heading: "Carolyn M. Grimes", excerpt: "Partner" },
+        { heading: "Xue Connelly", excerpt: "Attorney" },
+      ]
+    );
+    // The real regression this guards: before this extractor existed, the
+    // page-level URL/title fallback was the ONLY thing populating "team",
+    // producing one giant run-on blob instead of per-person entries.
+    assert.ok(
+      !facts.team.some((t) => /OUR TEAM Attorneys/i.test(t.excerpt)),
+      "must not also carry the whole-page fallback blob once real structural matches exist"
+    );
+  });
+
+  test("handles a <br> nested inside the bold name itself (Martin J.A. Yeager's real markup: <strong>Name<br></strong>Title<br>)", () => {
+    const html = `<html><body><p><span><strong>Martin J.A. Yeager<br></strong>Attorney<br></span></p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/our-team/");
+    assert.equal(facts.team.length, 1);
+    assert.equal(facts.team[0].heading, "Martin J.A. Yeager");
+    assert.equal(facts.team[0].excerpt, "Attorney");
+  });
+
+  test("does not match a bold name followed by a long line — a real bio paragraph, not a one-line title", () => {
+    // Deliberately a URL/title with no "team"/"staff" word (unlike the other
+    // tests in this block) — isolates the structural extractor itself from
+    // classifyPageByUrlAndTitle's separate whole-page fallback, which would
+    // otherwise still legitimately produce a (real, non-fabricated) whole-
+    // page-blob team entry for a page whose URL says it's a team page.
+    const html = `<html><body><p><strong>Jane Smith</strong><br>A dedicated attorney with over twenty years of experience representing clients in complex family law matters throughout Northern Virginia.<br></p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/attorneys/jane-smith/");
+    assert.deepEqual(facts.team, []);
+  });
+
+  test("does not match two bold lines in a row — a title line must be plain text, not another name", () => {
+    const html = `<html><body><p><strong>Jane Smith</strong><br><strong>Founding Partner</strong><br></p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/attorneys/jane-smith/");
+    assert.deepEqual(facts.team, []);
+  });
+
+  test("false positive guard: plain prose with no bold name at all produces no team match", () => {
+    const html = `<html><body><p>Welcome to our firm.<br>We have served this community for over forty years.<br></p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/about/");
+    assert.deepEqual(facts.team, []);
+  });
+});
+
 describe("crawl-adapter: footer quality scoring (real business content in a footer is no longer blanket-discarded)", () => {
   test("keeps a real, descriptive service list found only in a footer — Lakeshore's real shape: a <ul class=\"services-list\"> of full service names inside <footer>", () => {
     const html = `

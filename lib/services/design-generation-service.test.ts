@@ -618,21 +618,26 @@ describe("design-generation-service: team section (Evidence Depth pass — no lo
     assert.ok(order.indexOf("team") < order.indexOf("contact"));
   });
 
-  test("real team evidence produces real, capped team-N slots on the \"team\" section, never on \"credibility\"", () => {
+  test("real team evidence produces one real, capped team-N slot per person as \"Name — Title\", never on \"credibility\"", () => {
     const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false, hasRealTeam: true });
     const components = assembleComponents(wireframe, {
       businessName: "Acme Law",
       citedInsights: [],
       contactEvidence: NO_CONTACT_EVIDENCE,
+      // heading/excerpt shape matches what findTeamMembersByStructure
+      // (crawl-adapter.ts) actually produces for a real name+title pair —
+      // heading is the real captured name, excerpt is their real title.
       team: [
-        { heading: "OUR TEAM", excerpt: "Carolyn M. Grimes, Partner. Jessica L. Leischner, Partner.", sourceUrl: "https://acme-law.test/team" },
+        { heading: "Carolyn M. Grimes", excerpt: "Partner", sourceUrl: "https://acme-law.test/team" },
+        { heading: "Jessica L. Leischner", excerpt: "Partner", sourceUrl: "https://acme-law.test/team" },
       ],
     });
     const team = components.find((c) => c.section === "team")!;
-    assert.equal(team.slots.length, 1);
+    assert.equal(team.slots.length, 2);
     assert.equal(team.slots[0].name, "team-1");
     assert.equal(team.slots[0].source, "real");
-    assert.equal(team.slots[0].value, "Carolyn M. Grimes, Partner. Jessica L. Leischner, Partner.");
+    assert.equal(team.slots[0].value, "Carolyn M. Grimes — Partner");
+    assert.equal(team.slots[1].value, "Jessica L. Leischner — Partner");
 
     const credibility = components.find((c) => c.section === "credibility")!;
     assert.ok(!credibility.slots.some((s) => s.name.startsWith("team-")), "team slots must not leak into credibility — this produced the customer-facing \"TEAM-1\" label leak regression");
