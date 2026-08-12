@@ -12,7 +12,7 @@ import { QaReportView } from "@/components/mission-detail/qa-report-view";
 import type { DesignBriefRow } from "@/lib/repositories/design-brief-repository";
 import type { WebsiteDesignRow } from "@/lib/repositories/website-design-repository";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
-import type { DesignMemory } from "@/lib/services/design-intelligence-service";
+import type { DesignMemory, SelfCritique } from "@/lib/services/design-intelligence-service";
 import type { DesignQaReport } from "@/lib/services/design-qa-service";
 import type { MissionState } from "@/lib/workflow/mission-state";
 
@@ -217,7 +217,12 @@ export function DesignBriefPanel({
 
   return (
     <div className="space-y-6">
-      <DesignBriefView brief={brief} designMemory={designMemory} reasoning={designBrief.reasoning} />
+      <DesignBriefView
+        brief={brief}
+        designMemory={designMemory}
+        reasoning={designBrief.reasoning}
+        selfCritique={designBrief.self_critique as unknown as SelfCritique | null}
+      />
 
       {missionState === "rejected" && (
         <Card>

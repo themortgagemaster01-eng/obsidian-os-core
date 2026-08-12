@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
-import type { DesignMemory } from "@/lib/services/design-intelligence-service";
+import type { DesignMemory, SelfCritique } from "@/lib/services/design-intelligence-service";
 import type { AnalysisCategory } from "@/lib/services/analysis-types";
 
 const CATEGORY_LABEL: Record<AnalysisCategory, string> = {
@@ -37,16 +37,26 @@ export function DesignBriefView({
   brief,
   designMemory,
   reasoning,
+  selfCritique,
 }: {
   brief: DesignBrief;
   designMemory: DesignMemory | null;
   reasoning: string | null;
+  selfCritique?: SelfCritique | null;
 }) {
   return (
     <div className="space-y-6">
       <div className="glass-panel space-y-4 p-8">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Executive Direction</p>
         <p className="text-xl font-medium leading-relaxed tracking-tight text-foreground">{brief.positioning}</p>
+        {brief.heroThesis && (
+          <div className="border-t border-border pt-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Hero thesis — why this site belongs to this business
+            </p>
+            <p className="mt-1.5 text-sm leading-relaxed text-foreground">{brief.heroThesis}</p>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-2">
@@ -86,6 +96,27 @@ export function DesignBriefView({
               <p className="mt-1 text-sm leading-relaxed text-foreground">{brief.direction.colorDirection}</p>
             </div>
           </div>
+          {brief.signatureElement && (
+            <div className="border-t border-border pt-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Signature element</p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <Badge variant="navy">{humanize(brief.signatureElement.element)}</Badge>
+              </div>
+              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{brief.signatureElement.justification}</p>
+            </div>
+          )}
+          {brief.contentEmphasis && brief.contentEmphasis.length > 0 && (
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Content emphasis (ranked)</p>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {brief.contentEmphasis.map((item, i) => (
+                  <Badge key={item} variant="outline">
+                    {i + 1}. {humanize(item)}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -161,6 +192,20 @@ export function DesignBriefView({
                 Why this direction
               </p>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{reasoning}</p>
+            </div>
+          )}
+
+          {selfCritique && (
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Self-critique (AI-derived assessment)
+              </p>
+              <div className="mt-2 flex items-start gap-2.5">
+                <Badge variant={selfCritique.wasRevised ? "warning" : "success"} className="mt-0.5 shrink-0">
+                  {selfCritique.wasRevised ? "Revised after critique" : "Passed on first pass"}
+                </Badge>
+                <span className="text-sm leading-relaxed text-muted-foreground">{selfCritique.reasoning}</span>
+              </div>
             </div>
           )}
         </CardContent>

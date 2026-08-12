@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Json } from "@/lib/supabase/database.types";
 import type { AnalysisCategory, NormalizedAnalysis } from "@/lib/services/analysis-types";
-import type { ContactInfo, ContentSection } from "@/lib/adapters/types";
+import type { ContactInfo, ContentSection, ReviewsSummary } from "@/lib/adapters/types";
 import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
 import { generateInsights, type Insight } from "@/lib/services/insight-service";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
@@ -86,6 +86,14 @@ export interface DesignBrief {
   services?: ContentSection[];
   /** Passed through from NormalizedAnalysis.testimonials unchanged — real, already-published client testimonials, verbatim, each with real provenance. */
   testimonials?: ContentSection[];
+  /** Passed through from NormalizedAnalysis.certifications unchanged — real credentials/certifications/licenses the crawler found. */
+  certifications?: ContentSection[];
+  /** Passed through from NormalizedAnalysis.team unchanged — real team/staff content the crawler found. */
+  team?: ContentSection[];
+  /** Passed through from NormalizedAnalysis.faqEvidence unchanged — real, already-published FAQ content the crawler found. */
+  faqEvidence?: ContentSection[];
+  /** Passed through from NormalizedAnalysis.reviews unchanged — real review count/rating, when the crawl found structured review data. */
+  reviews?: ReviewsSummary;
   targetAudience: string;
   positioning: string;
   direction: {
@@ -95,6 +103,38 @@ export interface DesignBrief {
     /** "energetic" only when Design Intelligence made a deliberate, disclosed decision to deviate from the general restraint default — never a silent default. */
     motionIntensity: "restrained" | "energetic";
   };
+  /**
+   * The one-sentence answer to "why does this website belong to THIS
+   * business" (CTO Design Intelligence directive's Hero-as-Thesis
+   * standard) — grounded in the cited evidence above, never a generic
+   * template headline. Design Intelligence's own creative call, same as
+   * every other `direction`/`positioning` field on this brief.
+   */
+  heroThesis: string;
+  /**
+   * The one memorable, business-justified visual treatment Design
+   * Intelligence chose for this mission (CTO directive's Signature Element
+   * standard) — constrained to treatments design-generation-service.ts and
+   * the existing typed renderer can actually express (see SIGNATURE_ELEMENT_
+   * VOCABULARY in design-intelligence-service.ts), never a description of
+   * something no component in this codebase renders.
+   */
+  signatureElement: {
+    element: string;
+    /** Why this specific business justifies this treatment — cites real evidence, never decoration for its own sake. */
+    justification: string;
+  };
+  /**
+   * Ranked list of SectionType values (design-generation-service.ts) whose
+   * real content should get visual priority for this specific business —
+   * design-generation-service.ts::generateWireframe uses this to reorder
+   * within its per-industry-bucket section set, which is what keeps two
+   * businesses in the same industryBucket (e.g. Alltech HVAC and Wilcox
+   * Lawn & Landscaping, both "homeService") from producing an identical
+   * wireframe. Never introduces a section the bucket template doesn't
+   * already include, and never overrides matchesGenericSaasTemplate's check.
+   */
+  contentEmphasis: string[];
   /** Every reference direction considered for this bucket, cited as reasoning input to Design Intelligence — never a structure to copy (§8's hard line). */
   referencesConsidered: { referenceId: string; reasoning: string }[];
 }
@@ -293,7 +333,7 @@ export async function runDesignBrief(
     // --- The one creative decision, delegated entirely to Design
     // Intelligence's LLM call (§2: "Design Intelligence is the ONLY
     // creative layer") ---
-    const { designBrief: creative, designMemory, reasoning } = await generateDesignIntelligence(
+    const { designBrief: creative, designMemory, reasoning, selfCritique } = await generateDesignIntelligence(
       deps.llmProvider,
       {
         businessName: mission.business_name,
@@ -303,6 +343,13 @@ export async function runDesignBrief(
         weakestCategory,
         candidateReferences,
         contactEvidence: normalized.contactEvidence,
+        metaDescription: normalized.metaDescription,
+        services: normalized.services,
+        testimonials: normalized.testimonials,
+        certifications: normalized.certifications,
+        team: normalized.team,
+        faqEvidence: normalized.faqEvidence,
+        reviews: normalized.reviews,
       },
       // Real spend once a live key is configured — logged per run so cost
       // is visible in server logs rather than invisible until a bill
@@ -327,9 +374,16 @@ export async function runDesignBrief(
       metaDescription: normalized.metaDescription,
       services: normalized.services,
       testimonials: normalized.testimonials,
+      certifications: normalized.certifications,
+      team: normalized.team,
+      faqEvidence: normalized.faqEvidence,
+      reviews: normalized.reviews,
       targetAudience: creative.targetAudience,
       positioning: creative.positioning,
       direction: creative.direction,
+      heroThesis: creative.heroThesis,
+      signatureElement: creative.signatureElement,
+      contentEmphasis: creative.contentEmphasis,
       referencesConsidered: candidateReferences.map((reference) => ({
         referenceId: reference.id,
         reasoning: `Informed by ${reference.description} — direction only, not structurally copied (§8).`,
@@ -343,6 +397,7 @@ export async function runDesignBrief(
       brief: brief as unknown as Json,
       design_memory: designMemory as unknown as Json,
       reasoning,
+      self_critique: selfCritique as unknown as Json,
     });
 
     await deps.eventBus.publish({

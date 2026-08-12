@@ -22,6 +22,11 @@ import {
   matchesGenericSaasTemplate,
   type MissionSectionStructure,
 } from "@/lib/design-intelligence/layout-rules";
+import {
+  findGenericPhrases,
+  findDuplicateDesignSignatures,
+  type MissionDesignSignature,
+} from "@/lib/design-intelligence/genericity-rules";
 import { validateMotionChoice } from "@/lib/design-intelligence/motion-rules";
 import { validateMobileTypeChoice, validateTouchTarget } from "@/lib/design-intelligence/mobile-rules";
 
@@ -209,6 +214,8 @@ export interface QaBatchContext {
   sectionStructures: MissionSectionStructure[];
   /** Every OTHER completed mission's type-family pairing in this organization (excludes this one) — §4.1's "quietly becoming the default" signal. */
   otherTypographyFamilies: string[][];
+  /** Every completed mission's heroThesis/signatureElement in this organization, including this one — lib/design-intelligence/genericity-rules.ts's findDuplicateDesignSignatures' real input (CTO Design Intelligence directive's "if the business names were removed, could a human still tell these were different businesses" test). */
+  designSignatures: MissionDesignSignature[];
 }
 
 export interface QaStructuredInput {
@@ -219,7 +226,7 @@ export interface QaStructuredInput {
   wireframe: Wireframe;
   components: ComponentNode[];
   refinedDesign: RefinedDesign;
-  designBrief: Pick<DesignBrief, "citedInsights" | "direction" | "referencesConsidered">;
+  designBrief: Pick<DesignBrief, "citedInsights" | "direction" | "referencesConsidered" | "positioning" | "heroThesis" | "signatureElement">;
   designMemory: DesignMemory | null;
   /** Real crawled facts to cross-check "real"-tagged trust content against (§4.8) — null when no completed website analysis exists for this mission. */
   crawl: { certifications: ContentSection[]; testimonials: ContentSection[] } | null;
@@ -594,9 +601,23 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
   const duplicateGroups = findDuplicateSectionStructures(input.batch.sectionStructures);
   const isDuplicated = duplicateGroups.some((g) => g.includes(input.missionId));
 
+  const signatureDuplicates = findDuplicateDesignSignatures(input.batch.designSignatures);
+  const isHeroThesisDuplicated = signatureDuplicates.duplicateHeroThesis.some((g) => g.includes(input.missionId));
+  const isSignatureElementDuplicated = signatureDuplicates.duplicateSignatureElement.some((g) => g.includes(input.missionId));
+
+  const genericPhraseHits = [
+    ...findGenericPhrases(input.designBrief.positioning ?? ""),
+    ...findGenericPhrases(input.designBrief.heroThesis ?? ""),
+    ...findGenericPhrases(input.designBrief.signatureElement?.justification ?? ""),
+  ];
+  const uniqueGenericPhraseHits = [...new Set(genericPhraseHits)];
+
   const findings: string[] = [];
   if (genericMatch) findings.push("Matches NEVER_GENERATE_RULES 'generic-saas-hero' — the exact banned pattern.");
   if (isDuplicated) findings.push("Matches NEVER_GENERATE_RULES 'template-looking-pages' proxy — structural duplicate found in this batch.");
+  if (isHeroThesisDuplicated) findings.push("This mission's heroThesis is identical (after normalization) to another mission's in this batch — a real distinctiveness failure independent of section order (CTO Design Intelligence directive's 'if the business names were removed' test).");
+  if (isSignatureElementDuplicated) findings.push("This mission's signatureElement is identical to another mission's in this batch.");
+  if (uniqueGenericPhraseHits.length > 0) findings.push(`Hollow marketing filler found in positioning/heroThesis/signatureElement: ${uniqueGenericPhraseHits.join(", ")}.`);
 
   const emojiSlots: string[] = [];
   for (const node of input.components) {
@@ -610,6 +631,8 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
 
   const ev = [
     evidence("matchesGenericSaasTemplate + findDuplicateSectionStructures", `Generic-pattern match: ${genericMatch}. Structural duplicate: ${isDuplicated}.`),
+    evidence("findDuplicateDesignSignatures", `heroThesis duplicate: ${isHeroThesisDuplicated}. signatureElement duplicate: ${isSignatureElementDuplicated}.`),
+    evidence("findGenericPhrases", uniqueGenericPhraseHits.length > 0 ? `Banned phrases found: ${uniqueGenericPhraseHits.join(", ")}.` : "No banned generic-marketing phrases found."),
     evidence("emoji-as-icon scan", `${emojiSlots.length} real-slot value(s) containing an emoji character.`),
     evidence(
       "decorative-gradient / generic-ai-illustration / stock-imagery",
@@ -619,7 +642,7 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
 
   return deterministicResult(findings, ev, {
     evidenceSource: "structured",
-    failIf: genericMatch,
+    failIf: genericMatch || isHeroThesisDuplicated || isSignatureElementDuplicated || uniqueGenericPhraseHits.length > 0,
     warnIf: isDuplicated || emojiSlots.length > 0,
   });
 }
@@ -1020,7 +1043,18 @@ async function buildBatchContext(
     .map((r) => (r.refined_design as unknown as RefinedDesign).typography?.families ?? [])
     .filter((families) => families.length > 0);
 
-  return { sectionStructures, otherTypographyFamilies };
+  const briefRows = await deps.designBriefRepository.listCompletedByOrganization(deps.client, organizationId);
+  const designSignatures: MissionDesignSignature[] = briefRows
+    .filter((r) => !!r.brief)
+    .map((r) => {
+      const brief = r.brief as unknown as DesignBrief;
+      return { missionId: r.mission_id, heroThesis: brief.heroThesis ?? "", signatureElement: brief.signatureElement?.element ?? "" };
+    });
+  if (!designSignatures.some((s) => s.missionId === currentMissionId)) {
+    designSignatures.push({ missionId: currentMissionId, heroThesis: "", signatureElement: "" });
+  }
+
+  return { sectionStructures, otherTypographyFamilies, designSignatures };
 }
 
 export interface CreateDesignQaRunInput {
@@ -1090,11 +1124,26 @@ export async function runDesignQa(deps: DesignQaServiceDeps, websiteDesignId: st
       : null;
 
     const batch = await buildBatchContext(deps, mission.organization_id, mission.id);
-    // The current mission's own real section order always wins over whatever the batch query saw.
-    const ownIndex = batch.sectionStructures.findIndex((s) => s.missionId === mission.id);
-    const ownStructure = { missionId: mission.id, sectionOrder: wireframe.sections.map((s) => s.type) };
-    if (ownIndex >= 0) batch.sectionStructures[ownIndex] = ownStructure;
-    else batch.sectionStructures.push(ownStructure);
+    // The current mission's own real section order always wins over whatever
+    // the batch query saw. Filters out EVERY prior entry for this mission
+    // (not just the first match) before re-adding the fresh one — a mission
+    // re-run more than once has multiple completed rows in the batch query
+    // (listCompletedByOrganization has no dedup-by-mission), and a
+    // find-and-replace-first-only strategy left the older row(s) in place,
+    // which then trivially "duplicated" the fresh one once overwritten to
+    // match it — a real, self-inflicted false positive confirmed via a live
+    // five-mission validation run, not a hypothetical.
+    batch.sectionStructures = batch.sectionStructures.filter((s) => s.missionId !== mission.id);
+    batch.sectionStructures.push({ missionId: mission.id, sectionOrder: wireframe.sections.map((s) => s.type) });
+
+    // Same "own real value always wins, every stale entry for this mission
+    // removed first" discipline for this mission's own design signature.
+    batch.designSignatures = batch.designSignatures.filter((s) => s.missionId !== mission.id);
+    batch.designSignatures.push({
+      missionId: mission.id,
+      heroThesis: brief.heroThesis ?? "",
+      signatureElement: brief.signatureElement?.element ?? "",
+    });
 
     const structuredInput: QaStructuredInput = {
       missionId: mission.id,

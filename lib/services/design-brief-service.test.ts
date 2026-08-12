@@ -104,6 +104,9 @@ function fixtureBrief(overrides: Partial<DesignBrief> = {}): DesignBrief {
       colorDirection: "deep calm neutrals",
       motionIntensity: "restrained",
     },
+    heroThesis: "Decades of local practice, evidenced by real case outcomes, not a generic law-firm claim.",
+    signatureElement: { element: "credibility-certification-display", justification: "Real bar admissions and case outcomes are the strongest evidence this firm has." },
+    contentEmphasis: ["credibility"],
     referencesConsidered: [{ referenceId: "lawfirm-credibility-led", reasoning: "Informed by ... — not structurally copied (§8)." }],
     ...overrides,
   };

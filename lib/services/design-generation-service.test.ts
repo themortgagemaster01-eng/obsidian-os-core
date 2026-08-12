@@ -5,6 +5,8 @@ import {
   generateWireframe,
   assembleComponents,
   generateWebsiteStructure,
+  applyContentEmphasis,
+  type SectionType,
 } from "@/lib/services/design-generation-service";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
@@ -25,7 +27,12 @@ const ALL_BUCKETS: IndustryBucket[] = [
   "general",
 ];
 
-function briefFor(industryBucket: IndustryBucket, layoutFamily: LayoutFamily, contactEvidence: ContactInfo = NO_CONTACT_EVIDENCE): DesignBrief {
+function briefFor(
+  industryBucket: IndustryBucket,
+  layoutFamily: LayoutFamily,
+  contactEvidence: ContactInfo = NO_CONTACT_EVIDENCE,
+  overrides: Partial<DesignBrief> = {}
+): DesignBrief {
   return {
     missionId: "mission-1",
     businessName: "Acme Co",
@@ -45,7 +52,11 @@ function briefFor(industryBucket: IndustryBucket, layoutFamily: LayoutFamily, co
       colorDirection: "test color direction",
       motionIntensity: "restrained",
     },
+    heroThesis: "Test hero thesis grounded in real evidence.",
+    signatureElement: { element: "service-list-editorial-treatment", justification: "Test justification." },
+    contentEmphasis: [],
     referencesConsidered: [{ referenceId: "test-ref", reasoning: "test reasoning — not structurally copied" }],
+    ...overrides,
   };
 }
 
@@ -256,6 +267,147 @@ describe("design-generation-service: assembleComponents", () => {
     const testimonials = components.find((c) => c.section === "testimonials")!;
     assert.equal(testimonials.slots.length, 2);
     assert.ok(testimonials.slots.every((s) => s.source === "real"));
+  });
+});
+
+describe("design-generation-service: applyContentEmphasis", () => {
+  test("promotes an emphasized section to immediately after hero, ahead of the template's default order", () => {
+    const order: SectionType[] = ["hero", "services", "serviceArea", "credibility", "faq", "contact", "footer"];
+    const result = applyContentEmphasis(order, ["credibility"]);
+    assert.deepEqual(result, ["hero", "credibility", "services", "serviceArea", "faq", "contact", "footer"]);
+  });
+
+  test("applies multiple emphasis entries in ranked order", () => {
+    const order: SectionType[] = ["hero", "services", "serviceArea", "credibility", "faq", "contact", "footer"];
+    const result = applyContentEmphasis(order, ["faq", "credibility"]);
+    assert.deepEqual(result.slice(0, 3), ["hero", "faq", "credibility"]);
+  });
+
+  test("never moves hero, contact, or footer regardless of emphasis", () => {
+    const order: SectionType[] = ["hero", "services", "credibility", "contact", "footer"];
+    const result = applyContentEmphasis(order, ["services", "credibility"]);
+    assert.equal(result[0], "hero");
+    assert.deepEqual(result.slice(-2), ["contact", "footer"]);
+  });
+
+  test("ignores emphasis entries that are not in the bucket template's section set — never adds a section", () => {
+    const order: SectionType[] = ["hero", "services", "credibility", "contact", "footer"];
+    const result = applyContentEmphasis(order, ["menu"]);
+    assert.deepEqual(result, order);
+  });
+
+  test("returns the original order unchanged when contentEmphasis is empty or undefined", () => {
+    const order: SectionType[] = ["hero", "services", "credibility", "contact", "footer"];
+    assert.deepEqual(applyContentEmphasis(order, []), order);
+    assert.deepEqual(applyContentEmphasis(order, undefined), order);
+  });
+
+  test("produces different section orders for two businesses sharing the homeService bucket — the Alltech HVAC / Wilcox Lawn & Landscaping distinctness fix", () => {
+    const hvacBrief = briefFor("homeService", "credibility-led", NO_CONTACT_EVIDENCE, {
+      businessName: "Alltech HVAC",
+      contentEmphasis: ["credibility"],
+    });
+    const landscapingBrief = briefFor("homeService", "credibility-led", NO_CONTACT_EVIDENCE, {
+      businessName: "Wilcox Lawn & Landscaping",
+      contentEmphasis: ["serviceArea"],
+    });
+
+    const hvacOrder = generateWireframe(hvacBrief, { hasRealTestimonials: false }).sections.map((s) => s.type);
+    const landscapingOrder = generateWireframe(landscapingBrief, { hasRealTestimonials: false }).sections.map((s) => s.type);
+
+    assert.notDeepEqual(hvacOrder, landscapingOrder, "two same-bucket businesses with different real evidence should not produce an identical wireframe");
+  });
+});
+
+describe("design-generation-service: business-specific rationale", () => {
+  test("hero rationale uses the brief's real heroThesis instead of the generic constant", () => {
+    const brief = briefFor("restaurant", "imagery-led", NO_CONTACT_EVIDENCE, {
+      heroThesis: "The original, unchanged-since-1888 New York Jewish deli.",
+    });
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
+    const hero = wireframe.sections.find((s) => s.type === "hero")!;
+    assert.equal(hero.rationale, "The original, unchanged-since-1888 New York Jewish deli.");
+  });
+
+  test("the section signatureElement maps to carries the signature justification in its rationale", () => {
+    const brief = briefFor("restaurant", "imagery-led", NO_CONTACT_EVIDENCE, {
+      signatureElement: { element: "menu-editorial-presentation", justification: "The menu is the entire pitch for this business." },
+    });
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
+    const menu = wireframe.sections.find((s) => s.type === "menu")!;
+    assert.match(menu.rationale, /The menu is the entire pitch for this business\./);
+  });
+});
+
+describe("design-generation-service: assembleComponents credibility/faq evidence", () => {
+  test("credibility reviewCount is real when review evidence exists, placeholder otherwise", () => {
+    const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
+    const withReviews = assembleComponents(wireframe, {
+      businessName: "Acme Law",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      reviews: { averageRating: 4.8, count: 120, source: "schema.org AggregateRating" },
+    });
+    const reviewCount = withReviews.find((c) => c.section === "credibility")!.slots.find((s) => s.name === "reviewCount")!;
+    assert.equal(reviewCount.source, "real");
+    assert.match(reviewCount.value!, /120 reviews \(4\.8 average\)/);
+
+    const withoutReviews = assembleComponents(wireframe, { businessName: "Acme Law", citedInsights: [], contactEvidence: NO_CONTACT_EVIDENCE });
+    const placeholderReviewCount = withoutReviews.find((c) => c.section === "credibility")!.slots.find((s) => s.name === "reviewCount")!;
+    assert.equal(placeholderReviewCount.source, "placeholder");
+  });
+
+  test("credibility certifications are real, capped, when the crawler found them", () => {
+    const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, {
+      businessName: "Acme Law",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      certifications: [
+        { heading: "Bar admission", excerpt: "Admitted to the State Bar since 1998.", sourceUrl: "https://acme-law.test/about" },
+      ],
+    });
+    const certSlot = components.find((c) => c.section === "credibility")!.slots.find((s) => s.name === "certification-1")!;
+    assert.equal(certSlot.source, "real");
+    assert.equal(certSlot.value, "Admitted to the State Bar since 1998.");
+  });
+
+  test("yearsInBusiness always stays placeholder — no crawler signal extracts it", () => {
+    const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, {
+      businessName: "Acme Law",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      certifications: [{ heading: "x", excerpt: "y", sourceUrl: "z" }],
+      reviews: { averageRating: 5, count: 10, source: "test" },
+    });
+    const yearsSlot = components.find((c) => c.section === "credibility")!.slots.find((s) => s.name === "yearsInBusiness")!;
+    assert.equal(yearsSlot.source, "placeholder");
+  });
+
+  test("faq prefers real crawled FAQ evidence over citedInsights when both exist", () => {
+    const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, {
+      businessName: "Acme Law",
+      citedInsights: [{ category: "performance", insightId: "x", statement: "Should not be used." }],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      faqEvidence: [{ heading: "Do you offer free consultations?", excerpt: "Yes, initial consultations are free.", sourceUrl: "https://acme-law.test/faq" }],
+    });
+    const faq = components.find((c) => c.section === "faq")!;
+    assert.equal(faq.slots.length, 1);
+    assert.match(faq.slots[0].value!, /Do you offer free consultations\?/);
+    assert.match(faq.slots[0].value!, /Yes, initial consultations are free\./);
+  });
+
+  test("faq falls back to citedInsights when the crawler found no real FAQ", () => {
+    const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, {
+      businessName: "Acme Law",
+      citedInsights: [{ category: "performance", insightId: "x", statement: "Pages load slowly." }],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+    });
+    const faq = components.find((c) => c.section === "faq")!;
+    assert.equal(faq.slots[0].value, "Pages load slowly.");
   });
 });
 

@@ -523,6 +523,7 @@ export interface Database {
           brief: Json | null;
           design_memory: Json | null;
           reasoning: string | null;
+          self_critique: Json | null;
           reviewed_at: string | null;
           reviewed_by: string | null;
           error_message: string | null;
@@ -540,6 +541,7 @@ export interface Database {
           brief?: Json | null;
           design_memory?: Json | null;
           reasoning?: string | null;
+          self_critique?: Json | null;
           reviewed_at?: string | null;
           reviewed_by?: string | null;
           error_message?: string | null;
@@ -557,6 +559,7 @@ export interface Database {
           brief?: Json | null;
           design_memory?: Json | null;
           reasoning?: string | null;
+          self_critique?: Json | null;
           reviewed_at?: string | null;
           reviewed_by?: string | null;
           error_message?: string | null;

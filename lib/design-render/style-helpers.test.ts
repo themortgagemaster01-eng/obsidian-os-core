@@ -30,6 +30,9 @@ function briefFor(): DesignBrief {
       colorDirection: "test color direction",
       motionIntensity: "restrained",
     },
+    heroThesis: "Test hero thesis.",
+    signatureElement: { element: "authentic-photography-hero", justification: "Test justification." },
+    contentEmphasis: [],
     referencesConsidered: [],
   };
 }

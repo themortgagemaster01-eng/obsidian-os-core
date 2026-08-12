@@ -35,6 +35,9 @@ function briefFor(overrides: Partial<DesignBrief["direction"]> = {}): DesignBrie
       motionIntensity: "restrained",
       ...overrides,
     },
+    heroThesis: "Test hero thesis.",
+    signatureElement: { element: "service-list-editorial-treatment", justification: "Test justification." },
+    contentEmphasis: [],
     referencesConsidered: [],
   };
 }

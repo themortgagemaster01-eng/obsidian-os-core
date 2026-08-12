@@ -63,6 +63,18 @@ export const designBriefRepository = {
     if (error) throw error;
     return data;
   },
+
+  /** Mirrors websiteDesignRepository.listCompletedByOrganization — design-qa-service.ts's cross-mission genericity checks (heroThesis/signatureElement duplication) need every other completed mission's brief in this organization, the same way findDuplicateSectionStructures already needs every other mission's wireframe. */
+  async listCompletedByOrganization(client: TypedClient, organizationId: string): Promise<DesignBriefRow[]> {
+    const { data, error } = await client
+      .from("design_briefs")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .eq("status", "complete");
+
+    if (error) throw error;
+    return data ?? [];
+  },
 };
 
 export type { GenerationStatus };

@@ -16,6 +16,7 @@ import type {
   TechDetectionRawResult,
   ContactInfo,
   ContentSection,
+  ReviewsSummary,
 } from "@/lib/adapters/types";
 
 /** Honest empty default — no crawl, or a crawl that never produced structured facts (predates docs/ARCHITECTURE_SPECIFICATION_V1.md's expanded crawler, or the fetch failed). Never a guessed value standing in for a missing one. */
@@ -113,6 +114,35 @@ export interface NormalizedAnalysis {
    * fabricated.
    */
   testimonials?: ContentSection[];
+  /**
+   * Real certifications/licenses/credentials the crawler found (schema.org
+   * JSON-LD first, DOM/regex heuristics otherwise — crawl-adapter.ts).
+   * lib/adapters/types.ts's CrawlRawResult already extracted this data;
+   * this field is what finally surfaces it past the crawl adapter to
+   * Design Brief/Generation instead of it being silently discarded, same
+   * merged-across-pages sourcing as `services`/`testimonials`. Empty when
+   * no crawl ran or nothing matched — never invented to fill a credibility
+   * section.
+   */
+  certifications?: ContentSection[];
+  /**
+   * Real team/staff bios the crawler found, same sourcing discipline as
+   * `certifications`. Never invented team members or headcounts.
+   */
+  team?: ContentSection[];
+  /**
+   * Real, already-published FAQ content the crawler found — genuinely
+   * better source material for a wireframe's faq section than a citation
+   * built from an Insight statement, when it exists (see design-generation-
+   * service.ts::buildSlots's faq case).
+   */
+  faqEvidence?: ContentSection[];
+  /**
+   * Real review count/rating, when the crawl found structured review data
+   * (e.g. schema.org AggregateRating) — `source` records exactly what was
+   * matched. `null` fields mean "not detected," never "confirmed absent."
+   */
+  reviews?: ReviewsSummary;
 }
 
 function clampScore(value: number): number {
@@ -225,6 +255,10 @@ export function normalizedAnalysisFromRow(
     metaDescription: crawl?.metaDescription ?? null,
     services: crawl?.services ?? [],
     testimonials: crawl?.testimonials ?? [],
+    certifications: crawl?.certifications ?? [],
+    team: crawl?.team ?? [],
+    faqEvidence: crawl?.faq ?? [],
+    reviews: crawl?.reviews,
   };
 }
 
@@ -277,5 +311,9 @@ export function normalizedAnalysisFromRawResults(
     metaDescription: raw.crawl.metaDescription ?? null,
     services: raw.crawl.services ?? [],
     testimonials: raw.crawl.testimonials ?? [],
+    certifications: raw.crawl.certifications ?? [],
+    team: raw.crawl.team ?? [],
+    faqEvidence: raw.crawl.faq ?? [],
+    reviews: raw.crawl.reviews,
   };
 }

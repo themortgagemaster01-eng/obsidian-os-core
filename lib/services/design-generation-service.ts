@@ -2,12 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Json } from "@/lib/supabase/database.types";
 import type { DesignBrief, DesignBriefCitation } from "@/lib/services/design-brief-service";
-import type { DesignMemory } from "@/lib/services/design-intelligence-service";
+import type { DesignMemory, SignatureElementId } from "@/lib/services/design-intelligence-service";
 import { refineDesign, type RefinedDesign } from "@/lib/services/design-refinement-service";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
-import type { ContactInfo, ContentSection } from "@/lib/adapters/types";
+import type { ContactInfo, ContentSection, ReviewsSummary } from "@/lib/adapters/types";
 
 import {
   websiteDesignRepository,
@@ -104,6 +104,94 @@ function insertBeforeContact(order: SectionType[], section: SectionType): Sectio
   return [...order.slice(0, insertAt), section, ...order.slice(insertAt)];
 }
 
+/**
+ * Sections Design Intelligence's contentEmphasis may reorder — deliberately
+ * excludes hero/contact/footer, which keep their structural positions
+ * regardless of emphasis (CTO directive's contentEmphasis vocabulary is
+ * scoped to exactly this set in design-intelligence-service.ts's prompt;
+ * this is the defensive re-check on the Generation side, never trusting an
+ * LLM response's shape alone).
+ */
+const EMPHASIZABLE_SECTIONS: SectionType[] = [
+  "services",
+  "testimonials",
+  "credibility",
+  "menu",
+  "gallery",
+  "schedule",
+  "listings",
+  "serviceArea",
+  "faq",
+];
+
+/**
+ * applyContentEmphasis — pure reordering pass. This is the concrete fix for
+ * two businesses sharing an industryBucket (e.g. Alltech HVAC and Wilcox
+ * Lawn & Landscaping, both "homeService") otherwise producing an identical
+ * wireframe section order: each business's real evidence (via Design
+ * Intelligence's contentEmphasis) now promotes the sections its own
+ * evidence actually supports, ahead of the bucket template's default order.
+ * Never introduces a section the bucket template didn't already include —
+ * emphasis can only reorder, never add.
+ */
+export function applyContentEmphasis(order: SectionType[], contentEmphasis: string[] | undefined): SectionType[] {
+  if (!contentEmphasis || contentEmphasis.length === 0) return order;
+
+  const rank = contentEmphasis.filter(
+    (s): s is SectionType => EMPHASIZABLE_SECTIONS.includes(s as SectionType) && order.includes(s as SectionType)
+  );
+  if (rank.length === 0) return order;
+
+  const heroIndex = order.indexOf("hero");
+  const contactIndex = order.indexOf("contact");
+  const footerIndex = order.indexOf("footer");
+  const middleStart = heroIndex === -1 ? 0 : heroIndex + 1;
+  const middleEnd = contactIndex !== -1 ? contactIndex : footerIndex !== -1 ? footerIndex : order.length;
+
+  const before = order.slice(0, middleStart);
+  const middle = order.slice(middleStart, middleEnd);
+  const after = order.slice(middleEnd);
+
+  const emphasized = rank.filter((s) => middle.includes(s));
+  const rest = middle.filter((s) => !emphasized.includes(s));
+
+  return [...before, ...emphasized, ...rest, ...after];
+}
+
+/** Maps each Signature Element (design-intelligence-service.ts's fixed, renderable vocabulary) to the one SectionType it concretely enriches — how a business-specific signature actually reaches the page without any new renderer/component. */
+const SIGNATURE_ELEMENT_SECTION: Record<SignatureElementId, SectionType> = {
+  "authentic-photography-hero": "hero",
+  "menu-editorial-presentation": "menu",
+  "testimonial-editorial-treatment": "testimonials",
+  "credibility-certification-display": "credibility",
+  "service-area-location-motif": "serviceArea",
+  "gallery-atmosphere-treatment": "gallery",
+  "listing-imagery-treatment": "listings",
+  "schedule-energy-treatment": "schedule",
+  "faq-evidence-treatment": "faq",
+  "service-list-editorial-treatment": "services",
+};
+
+/**
+ * buildSectionRationale — per-section rationale text, now business-specific
+ * rather than a fixed per-SectionType constant. The hero always uses
+ * brief.heroThesis when present (a real, evidence-traceable sentence,
+ * strictly better than the generic constant it replaces); whichever
+ * section signatureElement maps to gets its justification appended. This
+ * text already flows to the customer-facing preview's section `title`
+ * attribute (components/design-preview/design-preview.tsx's SectionShell)
+ * — real evidence reaching the rendered page through existing plumbing,
+ * not a new rendering capability.
+ */
+function buildSectionRationale(type: SectionType, brief: DesignBrief): string {
+  const base = type === "hero" && brief.heroThesis ? brief.heroThesis : RATIONALE_BY_SECTION[type];
+  const signatureSection = SIGNATURE_ELEMENT_SECTION[brief.signatureElement?.element as SignatureElementId];
+  if (signatureSection === type && brief.signatureElement?.justification) {
+    return `${base} Signature element: ${brief.signatureElement.justification}`;
+  }
+  return base;
+}
+
 export interface GenerateWireframeOptions {
   /** True only when real, already-captured testimonial data exists for this mission — never assumed (§8). */
   hasRealTestimonials: boolean;
@@ -128,7 +216,8 @@ export interface GenerateWireframeOptions {
  */
 export function generateWireframe(brief: DesignBrief, options: GenerateWireframeOptions): Wireframe {
   const baseOrder = WIREFRAME_TEMPLATE_BY_BUCKET[brief.industryBucket];
-  const sectionOrder = options.hasRealTestimonials ? insertBeforeContact(baseOrder, "testimonials") : baseOrder;
+  const withTestimonials = options.hasRealTestimonials ? insertBeforeContact(baseOrder, "testimonials") : baseOrder;
+  const sectionOrder = applyContentEmphasis(withTestimonials, brief.contentEmphasis);
 
   if (matchesGenericSaasTemplate(sectionOrder)) {
     throw new Error(
@@ -138,7 +227,7 @@ export function generateWireframe(brief: DesignBrief, options: GenerateWireframe
 
   return {
     layoutFamily: brief.direction.layoutFamily,
-    sections: sectionOrder.map((type) => ({ type, rationale: RATIONALE_BY_SECTION[type] })),
+    sections: sectionOrder.map((type) => ({ type, rationale: buildSectionRationale(type, brief) })),
   };
 }
 
@@ -184,6 +273,8 @@ const COMPONENT_KIND_BY_SECTION: Record<Exclude<SectionType, "hero">, string> = 
 
 const MAX_FAQ_SLOTS = 4;
 const MAX_SERVICE_SLOTS = 6;
+const MAX_CERTIFICATION_SLOTS = 3;
+const MAX_TEAM_SLOTS = 3;
 
 export interface AssembleComponentsContext {
   businessName: string;
@@ -196,6 +287,14 @@ export interface AssembleComponentsContext {
   metaDescription?: string | null;
   /** DesignBrief.services passed through unchanged — real service/offering descriptions the crawler found (homepage or an already-fetched sub-page), each traceable to its real source page. Fills the "services" section's slots when present; stays placeholder otherwise (§8). */
   services?: ContentSection[];
+  /** DesignBrief.certifications passed through unchanged — real credentials the crawler found. Fills the credibility section's certifications slots when present; stays placeholder otherwise (§8). */
+  certifications?: ContentSection[];
+  /** DesignBrief.team passed through unchanged — real team/staff content the crawler found. Adds real team slots to the credibility section only when present — never a fabricated headcount. */
+  team?: ContentSection[];
+  /** DesignBrief.faqEvidence passed through unchanged — real, already-published FAQ content. Preferred over citedInsights-derived questions when present, since it's the business's own real Q&A rather than a citation reframed as a question. */
+  faqEvidence?: ContentSection[];
+  /** DesignBrief.reviews passed through unchanged — real review count/rating, when the crawl found structured review data. Fills the credibility section's reviewCount slot when present; stays placeholder otherwise (§8). */
+  reviews?: ReviewsSummary;
 }
 
 function realSlot(name: string, value: string): ComponentSlot {
@@ -237,8 +336,36 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
           : placeholderSlot("headline"),
         realSlot("businessName", context.businessName),
       ];
-    case "credibility":
-      return [placeholderSlot("yearsInBusiness"), placeholderSlot("reviewCount"), placeholderSlot("certifications")];
+    case "credibility": {
+      // yearsInBusiness stays placeholder-only — no crawler signal extracts
+      // it today; a genuinely absent evidence source, not a design choice.
+      const slots: ComponentSlot[] = [placeholderSlot("yearsInBusiness")];
+
+      slots.push(
+        context.reviews && context.reviews.count !== null
+          ? realSlot(
+              "reviewCount",
+              context.reviews.averageRating !== null
+                ? `${context.reviews.count} reviews (${context.reviews.averageRating} average)`
+                : `${context.reviews.count} reviews`
+            )
+          : placeholderSlot("reviewCount")
+      );
+
+      if (context.certifications && context.certifications.length > 0) {
+        context.certifications
+          .slice(0, MAX_CERTIFICATION_SLOTS)
+          .forEach((c, i) => slots.push(realSlot(`certification-${i + 1}`, c.excerpt)));
+      } else {
+        slots.push(placeholderSlot("certifications"));
+      }
+
+      if (context.team && context.team.length > 0) {
+        context.team.slice(0, MAX_TEAM_SLOTS).forEach((t, i) => slots.push(realSlot(`team-${i + 1}`, t.excerpt)));
+      }
+
+      return slots;
+    }
     case "services":
       if (context.services && context.services.length > 0) {
         return context.services
@@ -265,6 +392,17 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
     case "serviceArea":
       return [placeholderSlot("areasServed")];
     case "faq": {
+      // Prefer the business's own real, already-published FAQ content —
+      // genuinely better source material than reframing an Insight
+      // statement as a question — and fall back to the citation-derived
+      // approach only when the crawler found no real FAQ (§8: use real
+      // evidence when it exists, never let its absence collapse the
+      // section to nothing when a citation-backed alternative exists).
+      if (context.faqEvidence && context.faqEvidence.length > 0) {
+        return context.faqEvidence
+          .slice(0, MAX_FAQ_SLOTS)
+          .map((f, i) => realSlot(`question-${i + 1}`, `${f.heading} — ${f.excerpt}`));
+      }
       const uniqueCategories = [...new Set(context.citedInsights.map((c) => c.category))].slice(0, MAX_FAQ_SLOTS);
       return uniqueCategories.map((category) => {
         const citation = context.citedInsights.find((c) => c.category === category)!;
@@ -332,6 +470,10 @@ export function generateWebsiteStructure(
     contactEvidence: brief.contactEvidence,
     metaDescription: brief.metaDescription,
     services: brief.services,
+    certifications: brief.certifications,
+    team: brief.team,
+    faqEvidence: brief.faqEvidence,
+    reviews: brief.reviews,
   });
   const refinedDesign = refineDesign({ wireframe }, brief, options.designMemory);
   return { wireframe, components, refinedDesign };

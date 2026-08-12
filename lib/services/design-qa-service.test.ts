@@ -23,7 +23,7 @@ import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
 import { GENERIC_SAAS_TEMPLATE_SECTION_ORDER } from "@/lib/design-intelligence/layout-rules";
 
-function briefFor(overrides: Partial<DesignBrief["direction"]> = {}): DesignBrief {
+function briefFor(overrides: Partial<DesignBrief["direction"]> = {}, briefOverrides: Partial<DesignBrief> = {}): DesignBrief {
   return {
     missionId: "mission-1",
     businessName: "Acme Restaurant",
@@ -44,7 +44,11 @@ function briefFor(overrides: Partial<DesignBrief["direction"]> = {}): DesignBrie
       motionIntensity: "restrained",
       ...overrides,
     },
+    heroThesis: "A warm, family-run Italian restaurant with a real, decades-old recipe book.",
+    signatureElement: { element: "authentic-photography-hero", justification: "Real dining-room photography is this business's strongest evidence." },
+    contentEmphasis: [],
     referencesConsidered: [],
+    ...briefOverrides,
   };
 }
 
@@ -92,6 +96,7 @@ function buildValidInput(overrides: Partial<QaStructuredInput> = {}): QaStructur
     batch: {
       sectionStructures: [{ missionId: "mission-1", sectionOrder: wireframe.sections.map((s) => s.type) }],
       otherTypographyFamilies: [],
+      designSignatures: [{ missionId: "mission-1", heroThesis: brief.heroThesis, signatureElement: brief.signatureElement.element }],
     },
     baselineLighthouse: null,
   };
@@ -300,6 +305,56 @@ describe("design-qa-service: qaGenericTemplate", () => {
     const result = qaGenericTemplate(withEmoji);
     assert.equal(result.verdict, "WARN");
     assert.ok(result.findings.some((f) => /emoji-as-icon/.test(f)));
+  });
+
+  test("FAILs when positioning/heroThesis/signatureElement contains a banned generic marketing phrase", () => {
+    const input = buildValidInput();
+    const withGenericCopy: QaStructuredInput = {
+      ...input,
+      designBrief: { ...input.designBrief, positioning: "We are committed to quality and customer satisfaction." },
+    };
+    const result = qaGenericTemplate(withGenericCopy);
+    assert.equal(result.verdict, "FAIL");
+    assert.ok(result.findings.some((f) => /Hollow marketing filler/.test(f)));
+  });
+
+  test("FAILs when this mission's heroThesis is identical to another mission's in the batch", () => {
+    const input = buildValidInput();
+    const withDuplicateThesis: QaStructuredInput = {
+      ...input,
+      batch: {
+        ...input.batch,
+        designSignatures: [
+          ...input.batch.designSignatures,
+          { missionId: "mission-2", heroThesis: input.designBrief.heroThesis, signatureElement: "gallery-atmosphere-treatment" },
+        ],
+      },
+    };
+    const result = qaGenericTemplate(withDuplicateThesis);
+    assert.equal(result.verdict, "FAIL");
+    assert.ok(result.findings.some((f) => /heroThesis is identical/.test(f)));
+  });
+
+  test("FAILs when this mission's signatureElement is identical to another mission's in the batch", () => {
+    const input = buildValidInput();
+    const withDuplicateSignature: QaStructuredInput = {
+      ...input,
+      batch: {
+        ...input.batch,
+        designSignatures: [
+          ...input.batch.designSignatures,
+          { missionId: "mission-2", heroThesis: "A completely different thesis.", signatureElement: input.designBrief.signatureElement.element },
+        ],
+      },
+    };
+    const result = qaGenericTemplate(withDuplicateSignature);
+    assert.equal(result.verdict, "FAIL");
+    assert.ok(result.findings.some((f) => /signatureElement is identical/.test(f)));
+  });
+
+  test("PASS when positioning/heroThesis are evidence-grounded and unique in the batch", () => {
+    const result = qaGenericTemplate(buildValidInput());
+    assert.equal(result.verdict, "PASS");
   });
 });
 
