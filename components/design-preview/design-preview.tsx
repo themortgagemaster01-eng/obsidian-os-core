@@ -11,7 +11,13 @@ import {
   remToPx,
   SECTION_HEADING_LABEL,
 } from "@/lib/design-render/style-helpers";
-import { toSafeCssColor, toSafeFontFamilyStack, toCssFontWeight, MUTED_TEXT_OPACITY } from "@/lib/design-render/safe-css";
+import {
+  toSafeCssColor,
+  toSafeFontFamilyStack,
+  toCssFontWeight,
+  MUTED_TEXT_OPACITY,
+  getReadableTextColor,
+} from "@/lib/design-render/safe-css";
 import { SlotValue, isRealSlot } from "@/components/design-preview/slot-value";
 
 /**
@@ -161,14 +167,25 @@ export function DesignPreview({
         const node = componentsBySection.get(type);
         if (!node) return null;
         if (OMIT_SECTION_IF_EMPTY.includes(type) && !hasRealContent(node)) return null;
+        const background = type === "footer" ? secondary : type === "hero" ? primary : neutral;
+        // Hero's flat background always gets FALLBACK.onDark: when a real photo is present
+        // it renders under a fixed dark scrim (see SectionShell's backgroundImage comment
+        // below) that guarantees a dark surface regardless of `primary`'s own color, so
+        // measuring `primary` directly here would be measuring the wrong pixels. Footer has
+        // no such guarantee -- `secondary` renders as-is, so its text color must actually be
+        // measured against it rather than assumed dark (the Friedman Grimes Meinken &
+        // Leischner regression: `secondary` resolved to a light neutral, #F6F4EF, and
+        // FALLBACK.onDark white text against it was functionally invisible).
+        const foreground =
+          type === "footer" ? getReadableTextColor(background, FALLBACK.text, FALLBACK.onDark) : type === "hero" ? FALLBACK.onDark : FALLBACK.text;
         return (
           <SectionShell
             key={type}
             section={type}
             refinedDesign={refinedDesign}
             rationale={rationale}
-            background={type === "footer" ? secondary : type === "hero" ? primary : neutral}
-            foreground={type === "footer" || type === "hero" ? FALLBACK.onDark : FALLBACK.text}
+            background={background}
+            foreground={foreground}
             backgroundImageUrl={type === "hero" ? heroImageUrl : null}
           >
             <SectionBody
@@ -176,7 +193,7 @@ export function DesignPreview({
               refinedDesign={refinedDesign}
               headingFontStack={headingFontStack}
               accent={accent}
-              textColor={type === "footer" || type === "hero" ? FALLBACK.onDark : FALLBACK.text}
+              textColor={foreground}
             />
           </SectionShell>
         );

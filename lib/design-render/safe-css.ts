@@ -148,6 +148,76 @@ export function toSafeFontFamilyStack(raw: string | undefined | null, fallbackSt
   return `"${escaped}", ${genreStack}`;
 }
 
+/**
+ * Parses a CSS hex color (#RGB[A] or #RRGGBB[AA]) into 0-255 RGB components,
+ * ignoring any alpha channel. Returns null for anything else (rgb()/hsl()
+ * functions, bare keywords) -- not a full CSS color parser, just enough to
+ * measure the hex tokens toSafeCssColor actually produces from real Design
+ * Memory palette values.
+ */
+function hexToRgb(hex: string): [number, number, number] | null {
+  const v = hex.trim();
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])[0-9a-f]?$/i.exec(v);
+  if (short) {
+    return [parseInt(short[1] + short[1], 16), parseInt(short[2] + short[2], 16), parseInt(short[3] + short[3], 16)];
+  }
+  const long = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})(?:[0-9a-f]{2})?$/i.exec(v);
+  if (long) {
+    return [parseInt(long[1], 16), parseInt(long[2], 16), parseInt(long[3], 16)];
+  }
+  return null;
+}
+
+function srgbChannelToLinear(c: number): number {
+  const cs = c / 255;
+  return cs <= 0.03928 ? cs / 12.92 : Math.pow((cs + 0.055) / 1.055, 2.4);
+}
+
+/** WCAG 2.x relative luminance of an RGB triple — same formula axe-core uses (see MUTED_TEXT_OPACITY above). */
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+  return 0.2126 * srgbChannelToLinear(r) + 0.7152 * srgbChannelToLinear(g) + 0.0722 * srgbChannelToLinear(b);
+}
+
+function contrastRatio(l1: number, l2: number): number {
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/**
+ * Picks whichever of `darkText`/`lightText` gives better WCAG contrast
+ * against a given background, instead of assuming a section's background is
+ * always dark (or always light).
+ *
+ * Real bug this fixes: components/design-preview/design-preview.tsx hardcoded
+ * the footer's text color to FALLBACK.onDark (#FAFAFA, near-white) on the
+ * assumption the footer background (Design Memory's `secondary` palette
+ * color) is always dark. For Friedman, Grimes, Meinken & Leischner PLLC,
+ * `secondary` resolved to a light neutral (#F6F4EF) -- white text on a
+ * near-white background, functionally invisible (axe-core / manual review:
+ * ~1.03:1 contrast, WCAG AA requires 4.5:1). This measures the actual
+ * background instead of assuming its darkness, the same "verify, don't just
+ * assume the pairing holds" discipline toSafeCssColor and MUTED_TEXT_OPACITY
+ * already follow in this file.
+ *
+ * Falls back to `lightText` when `background` isn't a hex color this can
+ * measure (rgb()/hsl() functions, bare keywords) -- preserves this
+ * renderer's prior default for the cases toSafeCssColor doesn't normally
+ * produce in practice (it resolves LLM prose to a hex token when one exists).
+ */
+export function getReadableTextColor(background: string, darkText = "#1A1A1A", lightText = "#FAFAFA"): string {
+  const bgRgb = hexToRgb(background);
+  if (!bgRgb) return lightText;
+  const bgLuminance = relativeLuminance(bgRgb);
+
+  const darkRgb = hexToRgb(darkText);
+  const lightRgb = hexToRgb(lightText);
+  const darkContrast = darkRgb ? contrastRatio(bgLuminance, relativeLuminance(darkRgb)) : 0;
+  const lightContrast = lightRgb ? contrastRatio(bgLuminance, relativeLuminance(lightRgb)) : 0;
+
+  return lightContrast >= darkContrast ? lightText : darkText;
+}
+
 const WEIGHT_TO_CSS: Record<"regular" | "medium" | "semibold" | "bold", number> = {
   regular: 400,
   medium: 500,

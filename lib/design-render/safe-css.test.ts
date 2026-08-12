@@ -7,6 +7,7 @@ import {
   toSafeFontFamilyStack,
   toCssFontWeight,
   MUTED_TEXT_OPACITY,
+  getReadableTextColor,
 } from "@/lib/design-render/safe-css";
 
 describe("safe-css", () => {
@@ -164,5 +165,53 @@ describe("safe-css: MUTED_TEXT_OPACITY WCAG AA regression guard", () => {
       ratio >= WCAG_AA_NORMAL_TEXT,
       `expected contrast >= ${WCAG_AA_NORMAL_TEXT}:1 at opacity ${MUTED_TEXT_OPACITY}, got ${ratio.toFixed(2)}:1`
     );
+  });
+});
+
+// ===========================================================================
+// getReadableTextColor — regression guard for the real Friedman, Grimes,
+// Meinken & Leischner PLLC footer bug: design-preview.tsx hardcoded the
+// footer's text color to FALLBACK.onDark (#FAFAFA, near-white) on the
+// assumption the footer background (Design Memory's `secondary` palette
+// color) is always dark. That business's real generated `secondary` was a
+// light neutral (#F6F4EF) -- white-on-near-white, ~1.03:1 contrast, nowhere
+// near WCAG AA's 4.5:1. getReadableTextColor measures the actual background
+// instead of assuming its darkness.
+// ===========================================================================
+describe("safe-css: getReadableTextColor", () => {
+  test("picks dark text against a light background, and confirms it actually clears WCAG AA — the real Friedman Grimes footer regression", () => {
+    const background = "#F6F4EF";
+    const chosen = getReadableTextColor(background, "#1A1A1A", "#FAFAFA");
+    assert.equal(chosen, "#1A1A1A");
+
+    const bgRgb: Rgb = [0xf6, 0xf4, 0xef];
+    const chosenRgb: Rgb = [0x1a, 0x1a, 0x1a];
+    const ratio = contrastRatio(bgRgb, chosenRgb);
+    assert.ok(ratio >= WCAG_AA_NORMAL_TEXT, `expected contrast >= ${WCAG_AA_NORMAL_TEXT}:1, got ${ratio.toFixed(2)}:1`);
+  });
+
+  test("the previous hardcoded onDark choice genuinely failed this pairing — confirms this is a real regression guard, not a tautology", () => {
+    const bgRgb: Rgb = [0xf6, 0xf4, 0xef];
+    const previousChoiceRgb: Rgb = [0xfa, 0xfa, 0xfa]; // FALLBACK.onDark
+    const ratio = contrastRatio(bgRgb, previousChoiceRgb);
+    assert.ok(
+      ratio < WCAG_AA_NORMAL_TEXT,
+      `expected the previous hardcoded #FAFAFA-on-#F6F4EF pairing to fail WCAG AA (reproducing the real bug), but it measured ${ratio.toFixed(2)}:1`
+    );
+  });
+
+  test("picks light text against a dark background — the hero/footer fallback pair remains unchanged", () => {
+    assert.equal(getReadableTextColor("#0B1220", "#1A1A1A", "#FAFAFA"), "#FAFAFA");
+    assert.equal(getReadableTextColor("#1E3A5F", "#1A1A1A", "#FAFAFA"), "#FAFAFA");
+  });
+
+  test("falls back to lightText for a background this can't measure (rgb()/hsl() functions, keywords)", () => {
+    assert.equal(getReadableTextColor("rgb(10, 20, 30)", "#1A1A1A", "#FAFAFA"), "#FAFAFA");
+    assert.equal(getReadableTextColor("terracotta", "#1A1A1A", "#FAFAFA"), "#FAFAFA");
+  });
+
+  test("supports 3-digit hex shorthand", () => {
+    assert.equal(getReadableTextColor("#fff", "#1A1A1A", "#FAFAFA"), "#1A1A1A");
+    assert.equal(getReadableTextColor("#000", "#1A1A1A", "#FAFAFA"), "#FAFAFA");
   });
 });
