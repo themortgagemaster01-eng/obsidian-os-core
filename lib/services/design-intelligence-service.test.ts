@@ -75,6 +75,7 @@ function validResponseJson(overrides: Record<string, unknown> = {}): string {
 function validCritiqueJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     isGeneric: false,
+    violatesContentBoundary: false,
     reasoning: "The direction is traceable to the business's real 1888 heritage and real testimonials.",
     recommendation: null,
     ...overrides,
@@ -289,6 +290,35 @@ describe("design-intelligence-service: critiqueDesignDirection", () => {
       /"isGeneric" must be a boolean/
     );
   });
+
+  test("rejects a response missing violatesContentBoundary", async () => {
+    const fakeProvider: LlmProvider = {
+      name: "fake",
+      async complete() {
+        return JSON.stringify({ isGeneric: false, reasoning: "x", recommendation: null });
+      },
+    };
+    await assert.rejects(
+      () => critiqueDesignDirection(fakeProvider, SAMPLE_INPUT, pass1),
+      /"violatesContentBoundary" must be a boolean/
+    );
+  });
+
+  test("parses a content-boundary violation independently of isGeneric — the Veslo/Alltech HVAC/Lakeshore regression case", async () => {
+    const fakeProvider: LlmProvider = {
+      name: "fake:test-model",
+      async complete() {
+        return validCritiqueJson({
+          isGeneric: false,
+          violatesContentBoundary: true,
+          recommendation: "Rewrite heroThesis as customer-facing copy, not audit commentary about the old site.",
+        });
+      },
+    };
+    const result = await critiqueDesignDirection(fakeProvider, SAMPLE_INPUT, pass1);
+    assert.equal(result.isGeneric, false);
+    assert.equal(result.violatesContentBoundary, true);
+  });
 });
 
 describe("design-intelligence-service: generateDesignIntelligence (two-pass)", () => {
@@ -330,6 +360,33 @@ describe("design-intelligence-service: generateDesignIntelligence (two-pass)", (
     assert.equal(result.selfCritique.initiallyFlaggedGeneric, true);
     assert.equal(result.selfCritique.wasRevised, true);
     assert.equal(result.designBrief.heroThesis, "Revised: grounded in the real 1888 founding date and real testimonials.");
+  });
+
+  test("when Pass 2 flags a content-boundary violation (not genericity), still makes one bounded revision call — the Veslo/Alltech HVAC/Lakeshore audit-commentary-as-headline regression case", async () => {
+    let callCount = 0;
+    const fakeProvider: LlmProvider = {
+      name: "fake:test-model",
+      async complete(request) {
+        callCount += 1;
+        if (callCount === 1) return validResponseJson({ designBrief: { heroThesis: "This design's entire hero is built to be the fix for the old site's accessibility failures." } });
+        if (callCount === 2) {
+          return validCritiqueJson({
+            isGeneric: false,
+            violatesContentBoundary: true,
+            recommendation: "heroThesis describes the redesign itself, not the business — rewrite it as customer-facing copy.",
+          });
+        }
+        return validResponseJson({ designBrief: { heroThesis: "Katz's Delicatessen has served the same pastrami recipe since 1888." } }); // revision
+      },
+    };
+
+    const result = await generateDesignIntelligence(fakeProvider, SAMPLE_INPUT);
+
+    assert.equal(callCount, 3, "a content-boundary violation alone must trigger the same one-bounded-revision path as genericity");
+    assert.equal(result.selfCritique.initiallyFlaggedGeneric, false);
+    assert.equal(result.selfCritique.initiallyViolatedContentBoundary, true);
+    assert.equal(result.selfCritique.wasRevised, true);
+    assert.equal(result.designBrief.heroThesis, "Katz's Delicatessen has served the same pastrami recipe since 1888.");
   });
 
   test("propagates a parse error when Pass 1 returns garbage", async () => {

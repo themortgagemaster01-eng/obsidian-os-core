@@ -562,10 +562,10 @@ describe("design-generation-service: hero composition (headline/supportingText s
     assert.equal(supportingText.value, null);
   });
 
-  test("a long, em-dash-structured heroThesis splits into a short headline and a real supportingText sentence — the Veslo mobile-collision regression case", () => {
+  test("a long, em-dash-structured, business-voiced heroThesis splits into a short headline and a real supportingText sentence", () => {
     const wireframe = generateWireframe(briefFor("restaurant", "imagery-led"), { hasRealTestimonials: false });
     const heroThesis =
-      "Veslo's own site analysis found severe accessibility failures capable of stopping a visitor from completing a task like finding a phone number, plus text too small to read on mobile — so this design's entire hero is built to be the fix, making the verified phone line the largest, first-read, easiest-to-tap element on the page rather than decoration nobody asked for.";
+      "Veslo Family Restaurant has served the same home-style recipes from the same kitchen since 1962, with a dining room regulars still call their second home — every dish comes from a family recipe book, not a corporate menu, and the phone rings straight through to the kitchen, not a call center.";
     const components = assembleComponents(wireframe, {
       businessName: "Veslo Family Restaurant",
       citedInsights: [],
@@ -582,9 +582,64 @@ describe("design-generation-service: hero composition (headline/supportingText s
     assert.equal(supportingText.source, "real");
     // Every word of the original real sentence must survive somewhere across the two fields — this is a reformatting of real content, never a truncation that drops evidence.
     const recombined = `${headline.value} ${supportingText.value}`.toLowerCase();
-    for (const word of ["accessibility", "phone", "mobile", "largest", "decoration"]) {
+    for (const word of ["1962", "kitchen", "recipe", "phone", "corporate"]) {
       assert.ok(recombined.includes(word), `expected "${word}" to survive the split somewhere in headline+supportingText`);
     }
+  });
+
+  // ===========================================================================
+  // Real content-boundary regression: three of the five benchmark businesses'
+  // actual heroThesis output described the design/redesign process or an
+  // audit of the OLD site — internal design rationale, not customer-facing
+  // copy — and was rendered verbatim as the new site's hero headline. Fixed
+  // at two layers: Pass 2's critique (violatesContentBoundary,
+  // design-intelligence-service.ts) is the primary defense at generation
+  // time; containsInternalRationaleLanguage here is the deterministic
+  // render-side backstop that holds even if a contaminated heroThesis
+  // reaches this function directly, exactly as it did for these three real
+  // businesses' already-persisted Design Briefs.
+  // ===========================================================================
+  test("a heroThesis reading as internal design rationale/audit commentary is rejected, not rendered — the real Veslo/Alltech HVAC/Lakeshore contamination", () => {
+    const realContaminatedHeroTheses = [
+      // Veslo Family Restaurant's actual generated heroThesis
+      "Veslo's own site analysis found severe accessibility failures capable of stopping a visitor from completing a task like finding a phone number, plus text too small to read on mobile — so this design's entire hero is built to be the fix, making the verified phone line the largest, first-read, easiest-to-tap element on the page rather than decoration nobody asked for.",
+      // Alltech HVAC Inc's actual generated heroThesis
+      "Where this business's current site loads slowly, breaks on phones, and is largely unusable for screen-reader and keyboard visitors, the rebuilt site is the one HVAC option in its market that a visitor on any device can actually read, navigate, and act on in seconds.",
+      // Lakeshore Family Dentistry's actual generated heroThesis
+      "With no published services, reviews, or credentials to build a differentiated story from, and a verified accessibility failure severe enough to stop someone from finding a phone number, this site's defining job is to make Lakeshore Family Dentistry's real phone number and address unmistakably legible and locatable on any device.",
+    ];
+
+    for (const heroThesis of realContaminatedHeroTheses) {
+      const wireframe = generateWireframe(briefFor("general", "editorial"), { hasRealTestimonials: false });
+      const components = assembleComponents(wireframe, {
+        businessName: "Test Business",
+        citedInsights: [],
+        contactEvidence: NO_CONTACT_EVIDENCE,
+        heroThesis,
+      });
+      const hero = components.find((c) => c.section === "hero")!;
+      const headline = hero.slots.find((s) => s.name === "headline")!;
+      assert.notEqual(headline.value, heroThesis, `contaminated heroThesis must never reach the rendered headline verbatim: "${heroThesis.slice(0, 60)}..."`);
+      if (headline.source === "real") {
+        assert.doesNotMatch(
+          headline.value!,
+          /accessibility failures?|screen-reader|this design|current site|rebuilt site|site analysis found/i,
+          "no fragment of the internal-rationale language should leak into a real headline either"
+        );
+      }
+    }
+  });
+
+  test("collectContentWarnings records a warning when heroThesis reads as internal rationale, so the rejection is visible for review, not silently dropped", () => {
+    const heroThesis =
+      "Where this business's current site loads slowly, breaks on phones, and is largely unusable for screen-reader and keyboard visitors, the rebuilt site is the one HVAC option in its market that a visitor on any device can actually read, navigate, and act on in seconds.";
+    const warnings = collectContentWarnings({
+      businessName: "Alltech HVAC Inc",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      heroThesis,
+    });
+    assert.ok(warnings.some((w) => w.field === "headline" && w.rejectedValue === heroThesis && /internal design rationale/.test(w.reason)));
   });
 
   test("headline and supportingText never contain the hardcoded CTA label — content-role separation holds structurally, not just by convention", () => {

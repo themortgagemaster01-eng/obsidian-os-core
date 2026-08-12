@@ -455,17 +455,41 @@ function hasUnreconciledMetaDescription(context: AssembleComponentsContext): str
   return null;
 }
 
+/**
+ * Telltale phrases indicating a headline candidate describes the design/
+ * redesign process or an audit of the business's OLD site, rather than
+ * being real, business-voiced marketing copy a visitor to the NEW site
+ * would read — the real Veslo/Alltech HVAC/Lakeshore regression (CTO
+ * Design Intelligence Remediation + Design Brain directive's Content
+ * Boundary rule: internal evidence must never become hero copy). Design
+ * Intelligence's Pass 2 critique (violatesContentBoundary,
+ * design-intelligence-service.ts) is the primary defense at generation
+ * time, but this codebase never trusts an LLM/prompt instruction alone to
+ * hold — matchesGenericSaasTemplate and toSafeCssColor follow the same
+ * "verify, don't just ask nicely" discipline — so this deterministic
+ * render-side backstop keeps contaminated content off the page even if it
+ * slips past both LLM passes (as it already did once, in the real data
+ * this pattern is drawn from).
+ */
+const INTERNAL_RATIONALE_PATTERN =
+  /\b(site analysis found|accessibility failures?|screen-?reader|keyboard-only|keyboard visitors?|this design(?:'s)?|this site's defining job|current site|old site|existing site|rebuilt site|decoration nobody asked for|built to be the fix)\b/i;
+
+function containsInternalRationaleLanguage(text: string): boolean {
+  return INTERNAL_RATIONALE_PATTERN.test(text);
+}
+
 function buildHeroHeadline(context: AssembleComponentsContext): ComponentSlot[] {
   const rawMeta = context.metaDescription?.trim();
-  if (rawMeta && !hasUnreconciledMetaDescription(context)) {
+  if (rawMeta && !hasUnreconciledMetaDescription(context) && !containsInternalRationaleLanguage(rawMeta)) {
     const cleaned = stripTrailingCtaAndLocation(rawMeta);
     if (cleaned) {
       const { headline, supportingText } = splitHeroHeadline(cleaned);
       return [realSlot("headline", headline), supportingText ? realSlot("supportingText", supportingText) : placeholderSlot("supportingText")];
     }
   }
-  if (context.heroThesis?.trim()) {
-    const { headline, supportingText } = splitHeroHeadline(context.heroThesis.trim());
+  const heroThesis = context.heroThesis?.trim();
+  if (heroThesis && !containsInternalRationaleLanguage(heroThesis)) {
+    const { headline, supportingText } = splitHeroHeadline(heroThesis);
     return [realSlot("headline", headline), supportingText ? realSlot("supportingText", supportingText) : placeholderSlot("supportingText")];
   }
   return [placeholderSlot("headline"), placeholderSlot("supportingText")];
@@ -649,6 +673,27 @@ export function collectContentWarnings(context: AssembleComponentsContext): Cont
       reason: `metaDescription's location claim conflicts with contactEvidence.address (${context.contactEvidence.address ?? "no verified address captured"}) — dropped rather than rendered; heroThesis used instead where available.`,
     });
   }
+
+  const rawMeta = context.metaDescription?.trim();
+  if (rawMeta && containsInternalRationaleLanguage(rawMeta)) {
+    warnings.push({
+      section: "hero",
+      field: "headline",
+      rejectedValue: rawMeta,
+      reason: "metaDescription reads as internal design rationale/audit commentary rather than customer-facing copy — dropped rather than rendered.",
+    });
+  }
+
+  const heroThesis = context.heroThesis?.trim();
+  if (heroThesis && containsInternalRationaleLanguage(heroThesis)) {
+    warnings.push({
+      section: "hero",
+      field: "headline",
+      rejectedValue: heroThesis,
+      reason: "heroThesis reads as internal design rationale/audit commentary about the old site or the redesign process, not customer-facing copy — dropped rather than rendered (hero headline may fall to placeholder as a result). This Design Brief should be regenerated to get a clean, business-voiced heroThesis.",
+    });
+  }
+
   return warnings;
 }
 

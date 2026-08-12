@@ -134,6 +134,20 @@ export interface DesignIntelligenceCreativeBrief {
  */
 export interface DesignCritiqueResult {
   isGeneric: boolean;
+  /**
+   * True when heroThesis (or positioning) reads as internal design
+   * rationale/audit commentary about the OLD site or the redesign process
+   * itself — "this design's entire hero is built to be the fix," "the
+   * current site... is largely unusable for screen-reader and keyboard
+   * visitors" — rather than real, business-voiced marketing copy a visitor
+   * to the NEW site would read. A distinct failure mode from isGeneric (this
+   * content is often highly specific and well-evidenced — it's just in the
+   * wrong voice for a customer-facing page), per the CTO Design Intelligence
+   * Remediation + Design Brain directive's Content Boundary rule: internal
+   * evidence must never become hero copy. Triggers the same one-bounded-
+   * revision path isGeneric does.
+   */
+  violatesContentBoundary: boolean;
   reasoning: string;
   recommendation: string | null;
 }
@@ -148,6 +162,8 @@ export interface DesignIntelligencePass1Result {
 /** Pass 2's outcome, always recorded — whether or not Pass 1's first output was ultimately used. Named/exported so design-brief-service.ts can persist it and Founder UI components can render it without duplicating the shape. */
 export interface SelfCritique {
   initiallyFlaggedGeneric: boolean;
+  /** True when Pass 2 flagged heroThesis/positioning as internal design rationale/audit commentary rather than customer-facing copy — see DesignCritiqueResult.violatesContentBoundary. Additive alongside initiallyFlaggedGeneric rather than folded into it: a distinct failure mode with its own real regression (Veslo/Lakeshore/Alltech HVAC's heroThesis reading as audit commentary). */
+  initiallyViolatedContentBoundary: boolean;
   reasoning: string;
   wasRevised: boolean;
 }
@@ -247,7 +263,13 @@ Hard constraints on your output:
 
 You will be given real, structured facts about one specific business — cited Insights from its website analysis, its industry classification, real content the business itself already publishes (services, testimonials, certifications, team, FAQ, reviews, its own homepage description) when the crawler found any, and a small set of candidate reference directions. The reference directions are inspiration for your reasoning only — you must NEVER copy their structure. Ground heroThesis, signatureElement, and contentEmphasis in the REAL content you were given, not in the industry bucket alone — two businesses in the same industry bucket must still read as genuinely different from each other when their real evidence differs, because their evidence differs, not because you varied colors arbitrarily.
 
-heroThesis: ONE SHORT, PUNCHY sentence (aim for under 20 words — a real headline a visitor reads in one glance, not an analytical paragraph) answering "why does this website belong to THIS business and not a competitor's" — must be traceable to a specific real fact given below (a cited finding, a real testimonial, a real service, real evidence of longevity/specialty/location), never a generic claim like "quality service" or "your trusted partner." Save any fuller explanation of your reasoning for the separate "reasoning" field below — heroThesis itself is what gets rendered as large hero display text, so a long, multi-clause justification crammed into it renders as an oversized wall of text, especially on mobile.
+heroThesis: ONE SHORT, PUNCHY sentence (aim for under 20 words — a real headline a visitor reads in one glance, not an analytical paragraph) answering "why does this website belong to THIS business and not a competitor's" — must be traceable to a specific real fact given below (a cited finding, a real testimonial, a real service, real evidence of longevity/specialty/location), never a generic claim like "quality service" or "your trusted partner." Save any fuller explanation of your reasoning for the separate "reasoning" field below — heroThesis itself is what gets rendered VERBATIM as the large hero headline text a real visitor to this business's NEW website reads first.
+
+CONTENT BOUNDARY, non-negotiable: heroThesis is customer-facing marketing copy written IN THE VOICE OF THE BUSINESS, addressed to a prospective customer — it is NEVER internal design rationale, never commentary about the OLD site's problems, and never a description of what you (the design system) decided to do or why. A real visitor to the finished website must never be able to tell that an accessibility/performance/SEO audit of the business's old site happened at all. You may use a cited finding to DECIDE what heroThesis should emphasize (e.g. "the old site buried the phone number, so make the phone number prominent" is valid internal reasoning), but heroThesis itself must never say so — it must instead just BE the confident, business-voiced statement that results from that decision (e.g. what the phone number itself, or the business's real specialty, actually is), never a sentence that describes the redesign, the audit, or the fix.
+  - BANNED in heroThesis, always, regardless of how well-evidenced: any reference to "this site," "this design," "this website" as the subject of a sentence about itself; "analysis found," "audit," "accessibility failure(s)," "screen-reader," "keyboard-only," "keyboard visitors," "current site," "old site," "existing site," "rebuilt site," "the fix," "defining job," "decoration," or any other language that describes the design/redesign process itself rather than the business.
+  - WRONG (real failure mode, do not do this): "Where this business's current site loads slowly, breaks on phones, and is largely unusable for screen-reader and keyboard visitors, the rebuilt site is the one HVAC option in its market that a visitor on any device can actually read, navigate, and act on in seconds." — this is meta-commentary about the design process, not a headline.
+  - RIGHT (same evidence, correct voice): a headline that states the business's real, specific value directly — e.g. grounded in a real phone number, a real specialty, a real neighborhood, decades in business, or another concrete fact actually given below, phrased the way the business itself would say it to a customer.
+  - If the real evidence given below is too thin to state a specific, non-generic, business-voiced claim, prefer a shorter, simpler, honestly modest heroThesis over a longer one that leans on describing the audit/redesign to sound substantive — thin evidence is never license to talk about the audit instead.
 
 contentEmphasis: an ordered list (highest priority first, 1-3 entries) of which of these categories this business's real evidence most supports emphasizing: services, testimonials, credibility, menu, gallery, schedule, listings, serviceArea, faq. Only include a category if real evidence for it was actually given to you below — never guess one into emphasis with no backing content.
 
@@ -500,6 +522,7 @@ const SELF_CRITIQUE_QUESTIONS = [
   "Is there any claim in positioning/heroThesis/signatureElement.justification that isn't traceable to the evidence given?",
   "Is the complexity of the direction appropriate to how much real evidence actually exists for this business?",
   "The Human Designer Test: if a human designer presented this direction to the business owner, could they explain WHY every major visual decision was made, in one sentence each? The goal is maximum intentionality, not maximum decoration.",
+  "The Content Boundary Test (check heroThesis and positioning specifically): does either one describe the OLD site's problems, an accessibility/performance/SEO audit, or the design/redesign process itself (e.g. \"this site's defining job is...\", \"the current site is largely unusable for screen-reader visitors...\", \"this design is built to be the fix\") rather than stating a real, confident, business-voiced fact a customer would actually read? A real visitor to the finished site must never be able to tell an audit of the old site happened at all. This is a distinct failure from genericity — the content can be highly specific and well-evidenced and still fail this test purely on voice/register.",
 ] as const;
 
 function buildCritiqueSystemPrompt(): string {
@@ -509,13 +532,16 @@ ${SELF_CRITIQUE_QUESTIONS.map((q, i) => `${i + 1}. ${q}`).join("\n")}
 
 Judge strictly. A direction that merely varies color/typography without being traceable to this specific business's real evidence should be flagged generic, even if it looks superficially polished. A direction that is genuinely grounded in the real evidence given — even a simple one, when little evidence exists — should NOT be flagged generic; do not demand decoration the evidence doesn't support.
 
+Judge the Content Boundary Test independently of genericity — set violatesContentBoundary:true whenever heroThesis or positioning reads as commentary about the old site, an audit, or the redesign process itself, EVEN IF the same text is well-evidenced and would otherwise pass every genericity question. isGeneric and violatesContentBoundary are separate judgments; either one alone is grounds for revision.
+
 Keep "reasoning" concise — 2-4 sentences covering the strongest points from the questions above, not an exhaustive answer to every one. A shorter, complete response is far more useful than a longer one that gets cut off before its closing quote and brace.
 
 Respond with ONLY a single JSON object, no prose before or after, no markdown fences, matching exactly this shape:
 {
   "isGeneric": true or false,
-  "reasoning": "string — your honest assessment against the questions above, including the Genericity Challenge and Name-Swap Test, 2-4 sentences",
-  "recommendation": "string — what specifically should change if isGeneric is true, or null if false"
+  "violatesContentBoundary": true or false,
+  "reasoning": "string — your honest assessment against the questions above, including the Genericity Challenge, Name-Swap Test, and Content Boundary Test, 2-4 sentences",
+  "recommendation": "string — what specifically should change if isGeneric or violatesContentBoundary is true, or null if both are false"
 }`;
 }
 
@@ -552,6 +578,9 @@ function parseCritiqueResponse(raw: string): DesignCritiqueResult {
   if (typeof obj.isGeneric !== "boolean") {
     throw new Error("Design Intelligence self-critique response's \"isGeneric\" must be a boolean.");
   }
+  if (typeof obj.violatesContentBoundary !== "boolean") {
+    throw new Error("Design Intelligence self-critique response's \"violatesContentBoundary\" must be a boolean.");
+  }
   if (!isNonEmptyString(obj.reasoning)) {
     throw new Error("Design Intelligence self-critique response's \"reasoning\" must be a non-empty string.");
   }
@@ -561,6 +590,7 @@ function parseCritiqueResponse(raw: string): DesignCritiqueResult {
   }
   return {
     isGeneric: obj.isGeneric,
+    violatesContentBoundary: obj.violatesContentBoundary,
     reasoning: obj.reasoning,
     recommendation: (recommendation as string | null) ?? null,
   };
@@ -598,11 +628,17 @@ export async function critiqueDesignDirection(
 
 /** Appended to Pass 1's own user prompt for the one bounded revision attempt — gives the model the critique's concrete recommendation rather than asking it to guess what was wrong. */
 function buildRevisionPrompt(input: DesignIntelligenceInput, critique: DesignCritiqueResult): string {
+  const flagLabel = critique.isGeneric && critique.violatesContentBoundary
+    ? "too generic AND in violation of the content boundary (heroThesis/positioning read as internal design rationale or audit commentary rather than customer-facing copy)"
+    : critique.violatesContentBoundary
+    ? "in violation of the content boundary — heroThesis/positioning read as internal design rationale or audit commentary about the OLD site/redesign process, not real customer-facing marketing copy a visitor to the NEW site would read"
+    : "too generic";
+
   return `${buildUserPrompt(input)}
 
-A prior attempt at this Design Direction was reviewed and flagged as too generic: "${critique.reasoning}" Specific recommendation: ${critique.recommendation ?? "make the direction more specifically traceable to this business's real evidence."}
+A prior attempt at this Design Direction was reviewed and flagged as ${flagLabel}: "${critique.reasoning}" Specific recommendation: ${critique.recommendation ?? "make the direction more specifically traceable to this business's real evidence."}
 
-Produce a REVISED Design Brief and Design Memory that addresses this feedback directly — ground heroThesis, signatureElement, and contentEmphasis more specifically in the real evidence given above.`;
+Produce a REVISED Design Brief and Design Memory that addresses this feedback directly — ground heroThesis, signatureElement, and contentEmphasis more specifically in the real evidence given above. If the issue was a content-boundary violation: heroThesis must be rewritten as a real, confident, business-voiced statement a customer would read — it must never mention the old site, an audit/analysis, accessibility/performance findings, or the redesign itself.`;
 }
 
 // ===========================================================================
@@ -652,15 +688,22 @@ export async function generateDesignIntelligence(
 
   const critique = await critiqueDesignDirection(provider, input, pass1, onUsage);
 
-  if (!critique.isGeneric) {
-    return { ...pass1, selfCritique: { initiallyFlaggedGeneric: false, reasoning: critique.reasoning, wasRevised: false } };
+  if (!critique.isGeneric && !critique.violatesContentBoundary) {
+    return {
+      ...pass1,
+      selfCritique: { initiallyFlaggedGeneric: false, initiallyViolatedContentBoundary: false, reasoning: critique.reasoning, wasRevised: false },
+    };
   }
 
   // One bounded revision attempt — per the directive's "revise, do not simply
-  // proceed" instruction. If the revised call itself fails to parse, that's
-  // a real error surfaced to the caller like any other LLM failure; this
-  // function does not silently fall back to the flagged-generic Pass 1
-  // output on a revision failure.
+  // proceed" instruction, now triggered by EITHER genericity or a content-
+  // boundary violation (internal design rationale/audit commentary leaking
+  // into heroThesis/positioning — a distinct, real failure mode from
+  // genericity, per the CTO Design Intelligence Remediation + Design Brain
+  // directive's Content Boundary rule). If the revised call itself fails to
+  // parse, that's a real error surfaced to the caller like any other LLM
+  // failure; this function does not silently fall back to the flagged Pass
+  // 1 output on a revision failure.
   const revisedRaw = await provider.complete({
     systemPrompt,
     userPrompt: buildRevisionPrompt(input, critique),
@@ -672,6 +715,11 @@ export async function generateDesignIntelligence(
 
   return {
     ...revised,
-    selfCritique: { initiallyFlaggedGeneric: true, reasoning: critique.reasoning, wasRevised: true },
+    selfCritique: {
+      initiallyFlaggedGeneric: critique.isGeneric,
+      initiallyViolatedContentBoundary: critique.violatesContentBoundary,
+      reasoning: critique.reasoning,
+      wasRevised: true,
+    },
   };
 }
