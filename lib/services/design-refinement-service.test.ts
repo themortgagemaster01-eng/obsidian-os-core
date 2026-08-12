@@ -171,6 +171,7 @@ describe("design-refinement-service: refineLayout", () => {
         type: type as Wireframe["sections"][number]["type"],
         rationale: "test",
       })),
+      signatureElement: { element: "service-list-editorial-treatment", justification: "Test justification." },
     };
     const result = refineLayout(genericWireframe);
     assert.equal(result.matchesGenericTemplate, true);

@@ -63,6 +63,21 @@ export interface WireframeSection {
 export interface Wireframe {
   layoutFamily: LayoutFamily;
   sections: WireframeSection[];
+  /**
+   * Passed through unchanged from DesignBrief.signatureElement — the ONE
+   * memorable, business-justified visual treatment Design Intelligence chose
+   * for this mission. Previously computed (SIGNATURE_ELEMENT_SECTION below)
+   * only to append a sentence to a section's `rationale`, which reaches the
+   * rendered page solely as an invisible `title` tooltip attribute
+   * (components/design-preview/design-preview.tsx's SectionShell) — never an
+   * actual visual treatment. Carrying the raw element id on the Wireframe
+   * lets the renderer apply a real, distinctive styling difference to the
+   * section it targets (Premium Presentation Pass, §11), falling back to the
+   * always-present hero when the targeted section isn't in this business's
+   * wireframe (e.g. "service-area-location-motif" chosen for a lawFirm-
+   * bucket business, whose template has no "serviceArea" section at all).
+   */
+  signatureElement: DesignBrief["signatureElement"];
 }
 
 /**
@@ -158,8 +173,8 @@ export function applyContentEmphasis(order: SectionType[], contentEmphasis: stri
   return [...before, ...emphasized, ...rest, ...after];
 }
 
-/** Maps each Signature Element (design-intelligence-service.ts's fixed, renderable vocabulary) to the one SectionType it concretely enriches — how a business-specific signature actually reaches the page without any new renderer/component. */
-const SIGNATURE_ELEMENT_SECTION: Record<SignatureElementId, SectionType> = {
+/** Maps each Signature Element (design-intelligence-service.ts's fixed, renderable vocabulary) to the one SectionType it concretely enriches — how a business-specific signature actually reaches the page without any new renderer/component. Exported so the renderer (components/design-preview/design-preview.tsx) can apply real visual treatment to the same section this rationale text already names, instead of only annotating an invisible tooltip. */
+export const SIGNATURE_ELEMENT_SECTION: Record<SignatureElementId, SectionType> = {
   "authentic-photography-hero": "hero",
   "menu-editorial-presentation": "menu",
   "testimonial-editorial-treatment": "testimonials",
@@ -228,7 +243,37 @@ export function generateWireframe(brief: DesignBrief, options: GenerateWireframe
   return {
     layoutFamily: brief.direction.layoutFamily,
     sections: sectionOrder.map((type) => ({ type, rationale: buildSectionRationale(type, brief) })),
+    signatureElement: brief.signatureElement,
   };
+}
+
+/**
+ * resolveSignatureSection — the section a wireframe's signatureElement should
+ * actually apply visual treatment to: SIGNATURE_ELEMENT_SECTION's target when
+ * that section is present in this wireframe, otherwise "hero" (always
+ * present, per refineLayout's leadsWithHero invariant) as the one universal
+ * fallback — a chosen signature should still reach the page as a real,
+ * visible treatment even when Design Intelligence picked an element whose
+ * ideal section this business's industry-bucket template doesn't include
+ * (e.g. "service-area-location-motif" for a lawFirm-bucket business, which
+ * has no "serviceArea" section). Exported for the renderer; pure lookup, no
+ * new design judgment.
+ *
+ * `wireframe.signatureElement` is typed as required (every Wireframe
+ * generateWireframe produces from this point forward carries one), but a
+ * `website_designs.wireframe` row already persisted by an OLDER build (from
+ * before this field existed) is real JSON this function must still survive
+ * at runtime without crashing — confirmed against a real stored row (Veslo
+ * Family Restaurant's) during this pass, not a hypothetical. Same "the
+ * compile-time type is a promise about new output, not a guarantee about
+ * already-persisted data" caution this codebase already applies wherever a
+ * `briefRow.brief as unknown as DesignBrief` cast reads a Supabase column.
+ */
+export function resolveSignatureSection(wireframe: Pick<Wireframe, "sections" | "signatureElement">): SectionType {
+  const target = wireframe.signatureElement
+    ? SIGNATURE_ELEMENT_SECTION[wireframe.signatureElement.element as SignatureElementId]
+    : undefined;
+  return target && wireframe.sections.some((s) => s.type === target) ? target : "hero";
 }
 
 // ===========================================================================
@@ -617,7 +662,17 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
           : placeholderSlot("hours"),
       ];
     case "footer":
-      return [realSlot("businessName", context.businessName), realSlot("copyrightYear", String(new Date().getFullYear()))];
+      // phone reuses context.contactEvidence — already real, already flowing
+      // to the contact section's own phone slot above; the footer's own
+      // "closing statement" treatment (Premium Presentation Pass, §10) reads
+      // better able to restate a real action than end on business-name-only.
+      return [
+        realSlot("businessName", context.businessName),
+        realSlot("copyrightYear", String(new Date().getFullYear())),
+        context.contactEvidence.phones.length > 0
+          ? realSlot("phone", context.contactEvidence.phones[0])
+          : placeholderSlot("phone"),
+      ];
   }
 }
 

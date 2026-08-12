@@ -7,6 +7,7 @@ import {
   generateWebsiteStructure,
   applyContentEmphasis,
   collectContentWarnings,
+  resolveSignatureSection,
   type SectionType,
 } from "@/lib/services/design-generation-service";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
@@ -308,6 +309,24 @@ describe("design-generation-service: assembleComponents", () => {
     }
   });
 
+  test("footer carries a real phone slot when the crawl captured one, and a placeholder otherwise — never fabricated", () => {
+    const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
+
+    const withPhone = assembleComponents(wireframe, {
+      businessName: "Acme Law",
+      citedInsights: [],
+      contactEvidence: { phones: ["703-836-9030"], emails: [], address: null, hours: null },
+    });
+    const footerPhone = withPhone.find((c) => c.section === "footer")!.slots.find((s) => s.name === "phone")!;
+    assert.equal(footerPhone.source, "real");
+    assert.equal(footerPhone.value, "703-836-9030");
+
+    const withoutPhone = assembleComponents(wireframe, { businessName: "Acme Law", citedInsights: [], contactEvidence: NO_CONTACT_EVIDENCE });
+    const placeholderFooterPhone = withoutPhone.find((c) => c.section === "footer")!.slots.find((s) => s.name === "phone")!;
+    assert.equal(placeholderFooterPhone.source, "placeholder");
+    assert.equal(placeholderFooterPhone.value, null);
+  });
+
   test("contact section marks all three fields real when the crawl captured all three", () => {
     const evidence: ContactInfo = {
       phones: ["555-000-1111"],
@@ -443,6 +462,49 @@ describe("design-generation-service: business-specific rationale", () => {
     const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
     const menu = wireframe.sections.find((s) => s.type === "menu")!;
     assert.match(menu.rationale, /The menu is the entire pitch for this business\./);
+  });
+
+  test("generateWireframe passes the brief's signatureElement through onto the Wireframe unchanged", () => {
+    const brief = briefFor("restaurant", "imagery-led", NO_CONTACT_EVIDENCE, {
+      signatureElement: { element: "menu-editorial-presentation", justification: "The menu is the entire pitch for this business." },
+    });
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
+    assert.deepEqual(wireframe.signatureElement, brief.signatureElement);
+  });
+});
+
+describe("design-generation-service: resolveSignatureSection", () => {
+  test("returns the section the signature element maps to when that section is present in the wireframe", () => {
+    const brief = briefFor("restaurant", "imagery-led", NO_CONTACT_EVIDENCE, {
+      signatureElement: { element: "menu-editorial-presentation", justification: "Test." },
+    });
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
+    assert.equal(resolveSignatureSection(wireframe), "menu");
+  });
+
+  test("falls back to hero when the signature element's ideal section isn't in this business's wireframe — the real Friedman Grimes case (service-area-location-motif chosen for a lawFirm-bucket wireframe, which has no serviceArea section)", () => {
+    const brief = briefFor("lawFirm", "credibility-led", NO_CONTACT_EVIDENCE, {
+      signatureElement: { element: "service-area-location-motif", justification: "Test." },
+    });
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
+    assert.ok(!wireframe.sections.some((s) => s.type === "serviceArea"));
+    assert.equal(resolveSignatureSection(wireframe), "hero");
+  });
+
+  test("resolves to the signature element's ideal section (not hero) when that section IS present", () => {
+    const brief = briefFor("homeService", "credibility-led", NO_CONTACT_EVIDENCE, {
+      signatureElement: { element: "service-area-location-motif", justification: "Test." },
+    });
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
+    assert.ok(wireframe.sections.some((s) => s.type === "serviceArea"));
+    assert.equal(resolveSignatureSection(wireframe), "serviceArea");
+  });
+
+  test("falls back to hero without throwing for a wireframe persisted before signatureElement existed — a real stored-data case (Veslo Family Restaurant's website_designs row predates this field and crashed the renderer before this guard was added)", () => {
+    const brief = briefFor("restaurant", "imagery-led", NO_CONTACT_EVIDENCE);
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
+    const legacyWireframe = { ...wireframe, signatureElement: undefined as unknown as typeof wireframe.signatureElement };
+    assert.equal(resolveSignatureSection(legacyWireframe), "hero");
   });
 });
 

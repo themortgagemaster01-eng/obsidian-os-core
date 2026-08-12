@@ -185,6 +185,24 @@ function contrastRatio(l1: number, l2: number): number {
 }
 
 /**
+ * Relative luminance (0=black, 1=white) of a color string this module can
+ * actually measure (a hex token — what toSafeCssColor resolves prose to in
+ * practice), or null for anything else (rgb()/hsl() functions, a bare
+ * keyword) — not a general CSS color parser, just enough to rank the hex
+ * tokens toSafeCssColor produces from real DesignMemory palette values.
+ * Exported for the renderer's background-role resolution (design-preview.tsx)
+ * — see its own comment for the real bug this enables fixing: DesignMemory's
+ * primary/secondary/neutral field names carry no defined role
+ * (design-intelligence-service.ts's prompt schema never says what each one
+ * means), so a real Design Brief is free to use them in a different sense
+ * than the renderer's previous fixed positional assumption expected.
+ */
+export function relativeLuminanceOfCssColor(color: string): number | null {
+  const rgb = hexToRgb(color);
+  return rgb ? relativeLuminance(rgb) : null;
+}
+
+/**
  * Picks whichever of `darkText`/`lightText` gives better WCAG contrast
  * against a given background, instead of assuming a section's background is
  * always dark (or always light).
