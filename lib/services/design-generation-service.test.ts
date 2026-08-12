@@ -6,6 +6,7 @@ import {
   assembleComponents,
   generateWebsiteStructure,
   applyContentEmphasis,
+  collectContentWarnings,
   type SectionType,
 } from "@/lib/services/design-generation-service";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
@@ -533,5 +534,113 @@ describe("design-generation-service: generateWebsiteStructure", () => {
     assert.ok(refinedDesign.layout);
     assert.ok(refinedDesign.motion);
     assert.ok(refinedDesign.mobile);
+  });
+});
+
+// ===========================================================================
+// CTO Design Intelligence Remediation + Design Brain directive — hero
+// composition (Structured Design Contract's hero.headline/supportingText
+// independence) and evidence-conflict preservation. The real regression this
+// guards: Veslo's full, analytically-written heroThesis rendered as 30+
+// lines of oversized display text at 375px, visually colliding with the
+// hero photo — "Hero Failure" in the directive's own language.
+// ===========================================================================
+describe("design-generation-service: hero composition (headline/supportingText split)", () => {
+  test("a short headline candidate is never split — no supportingText is fabricated where none is needed", () => {
+    const wireframe = generateWireframe(briefFor("general", "editorial"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, {
+      businessName: "Acme Co",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      heroThesis: "Acme Co has served this neighborhood since 1988.",
+    });
+    const hero = components.find((c) => c.section === "hero")!;
+    const headline = hero.slots.find((s) => s.name === "headline")!;
+    const supportingText = hero.slots.find((s) => s.name === "supportingText")!;
+    assert.equal(headline.value, "Acme Co has served this neighborhood since 1988.");
+    assert.equal(supportingText.source, "placeholder");
+    assert.equal(supportingText.value, null);
+  });
+
+  test("a long, em-dash-structured heroThesis splits into a short headline and a real supportingText sentence — the Veslo mobile-collision regression case", () => {
+    const wireframe = generateWireframe(briefFor("restaurant", "imagery-led"), { hasRealTestimonials: false });
+    const heroThesis =
+      "Veslo's own site analysis found severe accessibility failures capable of stopping a visitor from completing a task like finding a phone number, plus text too small to read on mobile — so this design's entire hero is built to be the fix, making the verified phone line the largest, first-read, easiest-to-tap element on the page rather than decoration nobody asked for.";
+    const components = assembleComponents(wireframe, {
+      businessName: "Veslo Family Restaurant",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      heroThesis,
+    });
+    const hero = components.find((c) => c.section === "hero")!;
+    const headline = hero.slots.find((s) => s.name === "headline")!;
+    const supportingText = hero.slots.find((s) => s.name === "supportingText")!;
+
+    assert.equal(headline.source, "real");
+    assert.ok(headline.value!.length < heroThesis.length, "the split headline must be meaningfully shorter than the full source sentence");
+    assert.ok(headline.value!.length < 200, `headline should read as a real headline, not a paragraph — got ${headline.value!.length} chars`);
+    assert.equal(supportingText.source, "real");
+    // Every word of the original real sentence must survive somewhere across the two fields — this is a reformatting of real content, never a truncation that drops evidence.
+    const recombined = `${headline.value} ${supportingText.value}`.toLowerCase();
+    for (const word of ["accessibility", "phone", "mobile", "largest", "decoration"]) {
+      assert.ok(recombined.includes(word), `expected "${word}" to survive the split somewhere in headline+supportingText`);
+    }
+  });
+
+  test("headline and supportingText never contain the hardcoded CTA label — content-role separation holds structurally, not just by convention", () => {
+    const wireframe = generateWireframe(briefFor("homeService", "credibility-led"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, {
+      businessName: "Wilcox Lawn & Landscaping",
+      citedInsights: [],
+      contactEvidence: { phones: [], emails: [], address: "3027 Blue Ridge Road, Clarklake, MI, 49234, US", hours: null },
+      metaDescription: "Enhance your outdoor space with expert lawn care & landscaping. Learn more! Clarklake, MI.",
+    });
+    const hero = components.find((c) => c.section === "hero")!;
+    for (const slot of hero.slots) {
+      if (slot.source === "real") {
+        assert.doesNotMatch(slot.value!, /Get in Touch/i, `${slot.name} must never contain the renderer's own CTA label`);
+      }
+    }
+  });
+});
+
+describe("design-generation-service: collectContentWarnings (evidence conflict preservation)", () => {
+  test("records a content warning when metaDescription's location claim conflicts with contactEvidence — the Lakeshore regression case", () => {
+    const context = {
+      businessName: "Lakeshore Family Dentistry",
+      citedInsights: [],
+      contactEvidence: { phones: [], emails: [], address: "123 Bay St, Sarasota, FL 34236", hours: null } as ContactInfo,
+      metaDescription: "Convenient family dental care at 3 Milwaukee locations, serving the whole family.",
+      heroThesis: "A real, evidence-grounded fallback headline.",
+    };
+    const warnings = collectContentWarnings(context);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].section, "hero");
+    assert.equal(warnings[0].field, "headline");
+    assert.match(warnings[0].rejectedValue, /Milwaukee/);
+    assert.match(warnings[0].reason, /conflicts with contactEvidence/);
+  });
+
+  test("records no content warning when metaDescription and contactEvidence agree, or when there is nothing to reconcile", () => {
+    const clean = collectContentWarnings({
+      businessName: "Acme Co",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      metaDescription: "Acme Co — trusted local service since 1988.",
+    });
+    assert.equal(clean.length, 0);
+
+    const nothingToCheck = collectContentWarnings({
+      businessName: "Acme Co",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+    });
+    assert.equal(nothingToCheck.length, 0);
+  });
+
+  test("generateWebsiteStructure exposes contentWarnings on its result, empty for clean data", () => {
+    const brief = briefFor("dentistMedical", "credibility-led");
+    const { contentWarnings } = generateWebsiteStructure(brief, { hasRealTestimonials: false });
+    assert.deepEqual(contentWarnings, []);
   });
 });

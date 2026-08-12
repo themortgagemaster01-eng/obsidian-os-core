@@ -392,18 +392,83 @@ function conflictsWithContactEvidence(candidate: string, address: string | null)
  * (after stripping boilerplate CTA/location fragments) or omits the claim
  * entirely.
  */
-function buildHeroHeadline(context: AssembleComponentsContext): ComponentSlot {
+/**
+ * A candidate headline longer than this renders as an oversized wall of
+ * display-sized text, especially at mobile widths — the real Veslo
+ * regression (CTO Design Intelligence Remediation + Design Brain
+ * directive's "Hero Failure" section): a full, analytically-written
+ * heroThesis rendered as 30+ lines spanning the entire hero photo and
+ * beyond it at 375px. Candidates at or under this length need no splitting.
+ */
+const LONG_HEADLINE_THRESHOLD = 100;
+
+/** The minimum length a headline segment must retain after a split — guards against splitting on an em dash/period that appears too early to leave a meaningful headline clause. */
+const MIN_HEADLINE_SEGMENT = 20;
+
+/**
+ * Splits a long headline candidate into a short display headline plus an
+ * optional supportingText sentence — structural reformatting of the SAME
+ * real content into the two independent hero fields the Structured Design
+ * Contract calls for (hero.headline / hero.supportingText), never new
+ * content. Prefers an em-dash/hyphen-dash split (common in a "premise —
+ * consequence" sentence, e.g. Veslo's real heroThesis), then a sentence
+ * boundary, and leaves the text as one unsplit headline when neither
+ * exists — the renderer's own length-based responsive sizing is the
+ * remaining safety net for that case.
+ */
+function splitHeroHeadline(text: string): { headline: string; supportingText: string | null } {
+  if (text.length <= LONG_HEADLINE_THRESHOLD) return { headline: text, supportingText: null };
+
+  const dashMatch = text.match(/\s[—–-]\s/);
+  if (dashMatch && dashMatch.index !== undefined && dashMatch.index >= MIN_HEADLINE_SEGMENT) {
+    const splitAt = dashMatch.index;
+    let headline = text.slice(0, splitAt).trim();
+    if (!/[.!?]$/.test(headline)) headline += ".";
+    let rest = text.slice(splitAt + dashMatch[0].length).trim();
+    if (rest) rest = rest[0].toUpperCase() + rest.slice(1);
+    return { headline, supportingText: rest || null };
+  }
+
+  const sentenceMatch = text.match(/[.!?]\s+/);
+  if (sentenceMatch && sentenceMatch.index !== undefined && sentenceMatch.index >= MIN_HEADLINE_SEGMENT) {
+    const splitAt = sentenceMatch.index + 1;
+    const headline = text.slice(0, splitAt).trim();
+    const rest = text.slice(splitAt).trim();
+    if (rest.length > 0) return { headline, supportingText: rest };
+  }
+
+  return { headline: text, supportingText: null };
+}
+
+/**
+ * True when a metaDescription-derived headline candidate makes a location
+ * claim contactEvidence.address can't corroborate — extracted here (rather
+ * than inline in buildHeroHeadline) so both the slot-building path and the
+ * content-warning path (collectContentWarnings, below) can detect the same
+ * condition without duplicating the check.
+ */
+function hasUnreconciledMetaDescription(context: AssembleComponentsContext): string | null {
   const rawMeta = context.metaDescription?.trim();
-  if (rawMeta) {
+  if (!rawMeta) return null;
+  const cleaned = stripTrailingCtaAndLocation(rawMeta);
+  if (cleaned && conflictsWithContactEvidence(cleaned, context.contactEvidence.address)) return rawMeta;
+  return null;
+}
+
+function buildHeroHeadline(context: AssembleComponentsContext): ComponentSlot[] {
+  const rawMeta = context.metaDescription?.trim();
+  if (rawMeta && !hasUnreconciledMetaDescription(context)) {
     const cleaned = stripTrailingCtaAndLocation(rawMeta);
-    if (cleaned && !conflictsWithContactEvidence(cleaned, context.contactEvidence.address)) {
-      return realSlot("headline", cleaned);
+    if (cleaned) {
+      const { headline, supportingText } = splitHeroHeadline(cleaned);
+      return [realSlot("headline", headline), supportingText ? realSlot("supportingText", supportingText) : placeholderSlot("supportingText")];
     }
   }
   if (context.heroThesis?.trim()) {
-    return realSlot("headline", context.heroThesis.trim());
+    const { headline, supportingText } = splitHeroHeadline(context.heroThesis.trim());
+    return [realSlot("headline", headline), supportingText ? realSlot("supportingText", supportingText) : placeholderSlot("supportingText")];
   }
-  return placeholderSlot("headline");
+  return [placeholderSlot("headline"), placeholderSlot("supportingText")];
 }
 
 /**
@@ -431,7 +496,7 @@ function buildHeroHeadline(context: AssembleComponentsContext): ComponentSlot {
 function buildSlots(section: SectionType, context: AssembleComponentsContext): ComponentSlot[] {
   switch (section) {
     case "hero":
-      return [buildHeroHeadline(context), realSlot("businessName", context.businessName)];
+      return [...buildHeroHeadline(context), realSlot("businessName", context.businessName)];
     case "credibility": {
       // yearsInBusiness stays placeholder-only — no crawler signal extracts
       // it today; a genuinely absent evidence source, not a design choice.
@@ -556,10 +621,43 @@ export interface GenerateWebsiteStructureOptions extends GenerateWireframeOption
   designMemory?: DesignMemory | null;
 }
 
+/**
+ * A real evidence conflict that was kept off the rendered page (CTO Design
+ * Intelligence Remediation + Design Brain directive's "Evidence Conflict
+ * Handling": conflicting claims must never reach customers, but must also
+ * never be silently discarded — preserved here for Founder/QA review
+ * instead). Never rendered by components/design-preview/design-preview.tsx;
+ * consumed only by runDesignGeneration's logging/event-publishing and
+ * whatever future founder-facing QA surface wants to display it.
+ */
+export interface ContentWarning {
+  section: SectionType;
+  field: string;
+  rejectedValue: string;
+  reason: string;
+}
+
+/** Pure detection pass, run alongside (never inside) assembleComponents — keeps assembleComponents's return type unchanged for its many existing callers/tests while still surfacing conflicts for review. */
+export function collectContentWarnings(context: AssembleComponentsContext): ContentWarning[] {
+  const warnings: ContentWarning[] = [];
+  const rejectedMeta = hasUnreconciledMetaDescription(context);
+  if (rejectedMeta) {
+    warnings.push({
+      section: "hero",
+      field: "headline",
+      rejectedValue: rejectedMeta,
+      reason: `metaDescription's location claim conflicts with contactEvidence.address (${context.contactEvidence.address ?? "no verified address captured"}) — dropped rather than rendered; heroThesis used instead where available.`,
+    });
+  }
+  return warnings;
+}
+
 export interface WebsiteStructure {
   wireframe: Wireframe;
   components: ComponentNode[];
   refinedDesign: RefinedDesign;
+  /** Real evidence conflicts detected and kept off the page — see ContentWarning. Empty when nothing conflicted. */
+  contentWarnings: ContentWarning[];
 }
 
 /** Convenience entry point composing the two passes above, mirroring how insight-service/opportunity-scoring-service compose at call sites. */
@@ -568,7 +666,7 @@ export function generateWebsiteStructure(
   options: GenerateWebsiteStructureOptions
 ): WebsiteStructure {
   const wireframe = generateWireframe(brief, options);
-  const components = assembleComponents(wireframe, {
+  const assembleContext: AssembleComponentsContext = {
     businessName: brief.businessName,
     citedInsights: brief.citedInsights,
     realTestimonials: options.realTestimonials,
@@ -580,9 +678,11 @@ export function generateWebsiteStructure(
     team: brief.team,
     faqEvidence: brief.faqEvidence,
     reviews: brief.reviews,
-  });
+  };
+  const components = assembleComponents(wireframe, assembleContext);
+  const contentWarnings = collectContentWarnings(assembleContext);
   const refinedDesign = refineDesign({ wireframe }, brief, options.designMemory);
-  return { wireframe, components, refinedDesign };
+  return { wireframe, components, refinedDesign, contentWarnings };
 }
 
 // ===========================================================================
@@ -682,11 +782,24 @@ export async function runDesignGeneration(
     const brief = briefRow.brief as unknown as DesignBrief;
     const designMemory = briefRow.design_memory as unknown as DesignMemory | null;
     const realTestimonials = (brief.testimonials ?? []).map((section) => section.excerpt);
-    const { wireframe, components, refinedDesign } = generateWebsiteStructure(brief, {
+    const { wireframe, components, refinedDesign, contentWarnings } = generateWebsiteStructure(brief, {
       hasRealTestimonials: realTestimonials.length > 0,
       realTestimonials,
       designMemory,
     });
+
+    // Real evidence conflicts are never rendered, but must never be silently
+    // discarded either (CTO Design Intelligence Remediation + Design Brain
+    // directive's "Evidence Conflict Handling") — logged in full here, the
+    // same visibility precedent this file's own Anthropic-usage logging
+    // already established for design-brief-service.ts, and surfaced as a
+    // count on the published event below for anyone reviewing mission_events.
+    for (const warning of contentWarnings) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[website-design ${websiteDesignId}] content warning: ${warning.section}.${warning.field} rejected ("${warning.rejectedValue}") — ${warning.reason}`
+      );
+    }
 
     const updated = await deps.websiteDesignRepository.update(deps.client, websiteDesignId, {
       status: "complete",
@@ -700,7 +813,11 @@ export async function runDesignGeneration(
       type: "WebsiteDesignReady",
       missionId: mission.id,
       organizationId: mission.organization_id,
-      payload: { sectionCount: wireframe.sections.length, layoutFamily: wireframe.layoutFamily },
+      payload: {
+        sectionCount: wireframe.sections.length,
+        layoutFamily: wireframe.layoutFamily,
+        contentWarningCount: contentWarnings.length,
+      },
     });
 
     return updated;

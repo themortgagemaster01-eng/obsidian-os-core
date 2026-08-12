@@ -77,6 +77,9 @@ const FALLBACK_BODY_STACK = "system-ui, -apple-system, 'Segoe UI', sans-serif";
 
 const MOBILE_BREAKPOINT_PX = 480;
 
+/** Below this headline length, no responsive display-size damping is applied at all — see SectionBody's hero case. */
+const LONG_HEADLINE_SCALE_THRESHOLD = 90;
+
 /**
  * Sections whose entire content can legitimately be nothing but placeholder
  * slots (menu items, service descriptions, credibility stats, gallery
@@ -338,8 +341,21 @@ function SectionBody({
 
   if (section === "hero") {
     const headline = node.slots.find((s) => s.name === "headline");
+    const supportingText = node.slots.find((s) => s.name === "supportingText");
     const name = node.slots.find((s) => s.name === "businessName");
     const displayRole = findTypeRole(refinedDesign, "display");
+    const baseDisplayPx = displayRole?.sizePx ?? 40;
+    // A headline that survived design-generation-service.ts's
+    // splitHeroHeadline still unsplit (no natural em-dash/sentence break)
+    // can legitimately run long — this is the renderer's own remaining
+    // safety net so that case never re-balloons into 30+ lines of
+    // full-size display text at mobile widths (CTO Design Intelligence
+    // Remediation + Design Brain directive's "Hero Failure"/Veslo
+    // regression): scale display size down as headline length grows,
+    // rather than rendering every headline at a fixed size regardless of
+    // how much real text it actually carries.
+    const headlineLength = headline && isRealSlot(headline) ? headline.value!.length : 0;
+    const lengthScale = headlineLength > 220 ? 0.6 : headlineLength > 140 ? 0.75 : headlineLength > LONG_HEADLINE_SCALE_THRESHOLD ? 0.88 : 1;
     return (
       <div>
         {name && isRealSlot(name) && (
@@ -351,12 +367,26 @@ function SectionBody({
           <div
             style={{
               fontFamily: headingFontStack,
-              fontSize: displayRole ? `${displayRole.sizePx}px` : "2.5rem",
+              fontSize: `${Math.round(baseDisplayPx * lengthScale)}px`,
               fontWeight: displayRole ? toCssFontWeight(displayRole.weight) : 600,
             }}
           >
             <SlotValue slot={headline} />
           </div>
+        )}
+        {supportingText && isRealSlot(supportingText) && (
+          <p
+            style={{
+              fontFamily: headingFontStack,
+              fontSize: "1.1em",
+              fontWeight: 400,
+              marginTop: "1rem",
+              opacity: MUTED_TEXT_OPACITY,
+              maxWidth: "48rem",
+            }}
+          >
+            <SlotValue slot={supportingText} />
+          </p>
         )}
         <TouchAffordance refinedDesign={refinedDesign} section="hero" label="Get in Touch" accent={accent} textColor={textColor} />
       </div>

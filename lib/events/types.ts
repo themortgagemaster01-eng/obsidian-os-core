@@ -125,6 +125,8 @@ export interface DesignBriefApprovedPayload {
 export interface WebsiteDesignReadyPayload {
   sectionCount: number;
   layoutFamily: string;
+  /** Real evidence conflicts (design-generation-service.ts's ContentWarning) kept off the rendered page this run — 0 when nothing conflicted. Surfaced here, not silently discarded, per the CTO Design Intelligence Remediation + Design Brain directive's "Evidence Conflict Handling": full detail is server-logged alongside this run, this count is what makes a conflict's existence visible to whoever reviews mission_events without needing log access. */
+  contentWarningCount: number;
 }
 
 export interface WebsiteDesignFailedPayload {
