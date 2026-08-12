@@ -69,6 +69,10 @@ export interface MissionDesignSignature {
   missionId: string;
   heroThesis: string;
   signatureElement: string;
+  /** The business's classified IndustryBucket (lib/design-references/reference-library.ts), when known — "" for a mission this batch has no bucket for (a legacy row, or one still mid-pipeline). Optional and defaulted rather than required so every existing caller/fixture predating this field keeps compiling unchanged. */
+  industryBucket?: string;
+  /** design-generation-service.ts's hero ComponentNode.pattern (lib/design-intelligence/section-patterns.ts's HeroPatternId), when this mission has run Pattern Selection — "" for a legacy row predating that field. */
+  heroPattern?: string;
 }
 
 /** Normalizes for comparison — case/whitespace shouldn't hide a real duplicate, and shouldn't manufacture a false one either. */
@@ -116,4 +120,40 @@ export function findDuplicateDesignSignatures(entries: MissionDesignSignature[])
     duplicateHeroThesis: [...byHeroThesis.values()].filter((g) => g.length > 1),
     duplicateSignatureElement: [...bySignatureElement.values()].filter((g) => g.length > 1),
   };
+}
+
+/**
+ * Anti-template convergence check (Friedman Flagship Final Content Pass,
+ * Step 2's Pattern Selection generalization) — deliberately a WARN-level
+ * signal, not FAIL-level like findDuplicateDesignSignatures above. Two
+ * businesses in the SAME industryBucket legitimately landing on the same
+ * Pattern Selection choice (e.g. two law firms both getting the editorial-
+ * typographic hero because neither has real photography) is not a failure
+ * — "some legitimate convergence is fine when evidence is genuinely
+ * similar" (the same evidence-driven reasoning already governs every other
+ * choice in this pipeline). What IS worth a human's attention is the same
+ * pattern repeating across businesses in DIFFERENT industryBuckets — a real
+ * early-warning signal that Pattern Selection may be defaulting rather than
+ * genuinely responding to each business's own evidence, the "AI sameness"
+ * failure mode docs/DESIGN_INTELLIGENCE.md §5 names as a live concern.
+ * Entries with no industryBucket/heroPattern (empty string — a legacy row,
+ * or a mission whose wireframe has no hero, which cannot happen today but
+ * is not asserted against here) are excluded, same "no data is not a real
+ * match" discipline findDuplicateDesignSignatures already applies.
+ */
+export function findCrossIndustryPatternConvergence(entries: MissionDesignSignature[]): string[][] {
+  const byHeroPattern = new Map<string, { missionId: string; industryBucket: string }[]>();
+
+  for (const entry of entries) {
+    const pattern = (entry.heroPattern ?? "").trim();
+    const bucket = (entry.industryBucket ?? "").trim();
+    if (pattern.length === 0 || bucket.length === 0) continue;
+    const group = byHeroPattern.get(pattern);
+    if (group) group.push({ missionId: entry.missionId, industryBucket: bucket });
+    else byHeroPattern.set(pattern, [{ missionId: entry.missionId, industryBucket: bucket }]);
+  }
+
+  return [...byHeroPattern.values()]
+    .filter((group) => new Set(group.map((g) => g.industryBucket)).size > 1)
+    .map((group) => group.map((g) => g.missionId));
 }

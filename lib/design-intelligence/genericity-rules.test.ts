@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { findGenericPhrases, findDuplicateDesignSignatures } from "@/lib/design-intelligence/genericity-rules";
+import { findGenericPhrases, findDuplicateDesignSignatures, findCrossIndustryPatternConvergence } from "@/lib/design-intelligence/genericity-rules";
 
 describe("genericity-rules", () => {
   test("findGenericPhrases flags known hollow marketing filler", () => {
@@ -73,5 +73,30 @@ describe("genericity-rules", () => {
     ]);
     assert.deepEqual(result.duplicateHeroThesis, []);
     assert.deepEqual(result.duplicateSignatureElement, []);
+  });
+
+  test("findCrossIndustryPatternConvergence flags the same hero pattern shared across genuinely different industries", () => {
+    const result = findCrossIndustryPatternConvergence([
+      { missionId: "a", heroThesis: "x", signatureElement: "x", industryBucket: "lawFirm", heroPattern: "editorial-typographic" },
+      { missionId: "b", heroThesis: "y", signatureElement: "y", industryBucket: "homeService", heroPattern: "editorial-typographic" },
+      { missionId: "c", heroThesis: "z", signatureElement: "z", industryBucket: "restaurant", heroPattern: "image-full-bleed" },
+    ]);
+    assert.deepEqual(result, [["a", "b"]]);
+  });
+
+  test("findCrossIndustryPatternConvergence does NOT flag the same hero pattern shared within the SAME industry — legitimate convergence when evidence is genuinely similar", () => {
+    const result = findCrossIndustryPatternConvergence([
+      { missionId: "a", heroThesis: "x", signatureElement: "x", industryBucket: "lawFirm", heroPattern: "editorial-typographic" },
+      { missionId: "b", heroThesis: "y", signatureElement: "y", industryBucket: "lawFirm", heroPattern: "editorial-typographic" },
+    ]);
+    assert.deepEqual(result, []);
+  });
+
+  test("findCrossIndustryPatternConvergence excludes entries with no industryBucket/heroPattern — legacy rows are 'no data,' not a real match", () => {
+    const result = findCrossIndustryPatternConvergence([
+      { missionId: "a", heroThesis: "x", signatureElement: "x" },
+      { missionId: "b", heroThesis: "y", signatureElement: "y" },
+    ]);
+    assert.deepEqual(result, []);
   });
 });

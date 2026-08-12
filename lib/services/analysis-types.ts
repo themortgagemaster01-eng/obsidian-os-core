@@ -17,6 +17,7 @@ import type {
   ContactInfo,
   ContentSection,
   ReviewsSummary,
+  GalleryImage,
 } from "@/lib/adapters/types";
 
 /** Honest empty default — no crawl, or a crawl that never produced structured facts (predates docs/ARCHITECTURE_SPECIFICATION_V1.md's expanded crawler, or the fetch failed). Never a guessed value standing in for a missing one. */
@@ -143,6 +144,20 @@ export interface NormalizedAnalysis {
    * matched. `null` fields mean "not detected," never "confirmed absent."
    */
   reviews?: ReviewsSummary;
+  /**
+   * Real photos the crawler found on the business's own site (crawl-
+   * adapter.ts's extractGallery — `<img>` elements under a gallery-classed
+   * container), each with its own real `src`/`alt` and sourceUrl. Distinct
+   * in kind from a Lighthouse/Screenshot-adapter page capture (see
+   * app/missions/[id]/preview/page.tsx's heroImageUrl comment): this is the
+   * business's own real photography, published by the business itself, not
+   * a diagnostic screenshot of a page's UI — the one legitimate source for
+   * an image-led hero/gallery pattern (Friedman Flagship Final Content
+   * Pass's generalized pattern library). Empty when the crawler found none
+   * — never a stock/placeholder image standing in for one that doesn't
+   * exist (§8).
+   */
+  gallery?: GalleryImage[];
 }
 
 function clampScore(value: number): number {
@@ -259,6 +274,7 @@ export function normalizedAnalysisFromRow(
     team: crawl?.team ?? [],
     faqEvidence: crawl?.faq ?? [],
     reviews: crawl?.reviews,
+    gallery: crawl?.gallery ?? [],
   };
 }
 
@@ -315,5 +331,6 @@ export function normalizedAnalysisFromRawResults(
     team: raw.crawl.team ?? [],
     faqEvidence: raw.crawl.faq ?? [],
     reviews: raw.crawl.reviews,
+    gallery: raw.crawl.gallery ?? [],
   };
 }

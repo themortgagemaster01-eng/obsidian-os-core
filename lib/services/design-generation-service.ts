@@ -7,8 +7,9 @@ import { refineDesign, type RefinedDesign } from "@/lib/services/design-refineme
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
-import type { ContactInfo, ContentSection, ReviewsSummary } from "@/lib/adapters/types";
+import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage } from "@/lib/adapters/types";
 import { GENERIC_TESTIMONIAL_HEADING } from "@/lib/adapters/types";
+import { resolveHeroPattern } from "@/lib/design-intelligence/section-patterns";
 
 import {
   websiteDesignRepository,
@@ -297,6 +298,19 @@ export interface ComponentNode {
   section: SectionType;
   componentKind: string;
   slots: ComponentSlot[];
+  /**
+   * The Pattern Selection stage's output (lib/design-intelligence/section-
+   * patterns.ts) for this section, when that stage has a real, distinct
+   * choice to make — e.g. hero's "editorial-typographic" vs "image-full-
+   * bleed", resolved deterministically from layoutFamily + real evidence.
+   * `undefined` for a section whose category has one canonical pattern
+   * today (SECTION_PATTERN_REGISTRY) or for a wireframe persisted before
+   * this field existed — the renderer's own fallback path (components/
+   * design-preview/design-preview.tsx) is the one this codebase already
+   * treats as correct, not a broken/missing state (same "older stored row"
+   * compatibility discipline resolveSignatureSection already applies).
+   */
+  pattern?: string;
 }
 
 const HERO_KIND_BY_LAYOUT_FAMILY: Record<LayoutFamily, string> = {
@@ -327,6 +341,7 @@ const MAX_FAQ_SLOTS = 4;
 const MAX_SERVICE_SLOTS = 6;
 const MAX_CERTIFICATION_SLOTS = 3;
 const MAX_TEAM_SLOTS = 3;
+const MAX_GALLERY_SLOTS = 6;
 
 /** A real testimonial quote plus its real attribution, when the crawler found one structurally present next to the quote — attribution is null (never guessed) when none was found, matching crawl-adapter.ts's own GENERIC_TESTIMONIAL_HEADING fallback discipline. */
 export interface RealTestimonial {
@@ -374,6 +389,8 @@ export interface AssembleComponentsContext {
   faqEvidence?: ContentSection[];
   /** DesignBrief.reviews passed through unchanged — real review count/rating, when the crawl found structured review data. Fills the credibility section's reviewCount slot when present; stays placeholder otherwise (§8). */
   reviews?: ReviewsSummary;
+  /** DesignBrief.gallery passed through unchanged — real photos the business itself publishes (crawl-adapter.ts's extractGallery), never a diagnostic page screenshot. Fills the gallery section's real image slots and is the one evidence source resolveHeroPattern (lib/design-intelligence/section-patterns.ts) may pick an image-led hero on; empty/absent means honestly no real photography exists (§8). */
+  gallery?: GalleryImage[];
 }
 
 function realSlot(name: string, value: string): ComponentSlot {
@@ -656,8 +673,27 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
     }
     case "menu":
       return [placeholderSlot("menuItems")];
-    case "gallery":
+    case "gallery": {
+      // Real photos only (SECTION_PATTERN_REGISTRY.gallery's real-photo-grid
+      // pattern) — an "image-N" slot per real photo plus its own "image-
+      // alt-N" companion slot when the crawler captured real alt text
+      // (mirrors testimonials' attribution and services' detail pairing:
+      // two slots, not one combined value, so the renderer can use the alt
+      // text as real accessible markup rather than display copy). Stays
+      // placeholder-only, and gets omitted entirely by the renderer's
+      // OMIT_SECTION_IF_EMPTY handling, when the crawler found no real
+      // photography — never a stock/placeholder image standing in for one
+      // that was never captured (§8).
+      if (context.gallery && context.gallery.length > 0) {
+        const slots: ComponentSlot[] = [];
+        context.gallery.slice(0, MAX_GALLERY_SLOTS).forEach((image, i) => {
+          slots.push(realSlot(`image-${i + 1}`, image.src));
+          if (image.alt) slots.push(realSlot(`image-alt-${i + 1}`, image.alt));
+        });
+        return slots;
+      }
       return [placeholderSlot("images")];
+    }
     case "schedule":
       return [placeholderSlot("classTimes")];
     case "listings":
@@ -742,8 +778,10 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
  * assembleComponents — the Component Assembly pass. Pure function:
  * Wireframe + context in, ComponentNode[] out. Assigns a component kind per
  * section (the hero's kind varies by layout family; every other section's
- * kind is a fixed 1:1 mapping) and populates each slot as real or
- * placeholder per buildSlots above.
+ * kind is a fixed 1:1 mapping), a Pattern Selection choice where a section's
+ * category has more than one real pattern today (lib/design-intelligence/
+ * section-patterns.ts — currently just hero), and populates each slot as
+ * real or placeholder per buildSlots above.
  */
 export function assembleComponents(
   wireframe: Wireframe,
@@ -752,7 +790,9 @@ export function assembleComponents(
   return wireframe.sections.map(({ type }) => {
     const componentKind =
       type === "hero" ? HERO_KIND_BY_LAYOUT_FAMILY[wireframe.layoutFamily] : COMPONENT_KIND_BY_SECTION[type];
-    return { section: type, componentKind, slots: buildSlots(type, context) };
+    const pattern =
+      type === "hero" ? resolveHeroPattern(wireframe.layoutFamily, !!context.gallery && context.gallery.length > 0) : undefined;
+    return { section: type, componentKind, pattern, slots: buildSlots(type, context) };
   });
 }
 
@@ -840,6 +880,7 @@ export function generateWebsiteStructure(
     team: brief.team,
     faqEvidence: brief.faqEvidence,
     reviews: brief.reviews,
+    gallery: brief.gallery,
   };
   const components = assembleComponents(wireframe, assembleContext);
   const contentWarnings = collectContentWarnings(assembleContext);

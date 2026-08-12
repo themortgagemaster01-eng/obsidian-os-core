@@ -9,6 +9,7 @@ import { designBriefRepository } from "@/lib/repositories/design-brief-repositor
 import type { Wireframe, ComponentNode } from "@/lib/services/design-generation-service";
 import type { RefinedDesign } from "@/lib/services/design-refinement-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
+import type { DesignBrief } from "@/lib/services/design-brief-service";
 import { DesignPreview } from "@/components/design-preview/design-preview";
 import { Badge } from "@/components/ui/badge";
 
@@ -65,33 +66,6 @@ export default async function DesignPreviewPage({ params, searchParams }: PagePa
 
   const brief = await designBriefRepository.findById(supabase, design.design_brief_id);
 
-  // heroImageUrl deliberately stays null: `above_fold_screenshot_url` (a
-  // prior Design Generation Richness Pass's source for this) is a real
-  // screenshot of the business's OLD, currently-live site, captured by
-  // lib/adapters/screenshot-adapter.ts for the Opportunity Report — it
-  // necessarily has THAT site's own real nav bar, headline, and CTA baked
-  // into its pixels. Using it as decorative "photography" behind the NEW
-  // design's hero composited the old site's real UI chrome underneath the
-  // new generated Nav/headline (a 60%-opacity scrim isn't reliably opaque
-  // enough to hide light-on-photo text) — a real, evidence-boundary bug
-  // confirmed on Friedman Grimes via direct DOM/computed-style inspection:
-  // exactly one real <nav>, zero real DOM text matching the ghosted "old
-  // site" copy — the second nav and hero text were pixels in that
-  // background-image url(), not a duplicate render. This isn't specific to
-  // Friedman: any business's above-fold capture is a page screenshot, which
-  // always carries that page's own chrome, so it can never safely stand in
-  // for "real business photography" for a DIFFERENT (the new) design,
-  // regardless of which business. No adapter in this codebase captures
-  // genuine business photography (office/team photos) today — per §8 and
-  // this mission's own Design Brief photographyStyle guidance ("if no real
-  // photography exists, favor strong typography over placeholder imagery"),
-  // the correct behavior with no real photography evidence is no hero image
-  // at all, not a repurposed diagnostic screenshot. resolveScreenshotUrl()
-  // is still the right call for app/missions/[id]/page.tsx's Opportunity
-  // Report, which is showing the old site's screenshot AS the old site's
-  // screenshot — that usage is untouched.
-  const heroImageUrl: string | null = null;
-
   return (
     <main className="min-h-screen bg-background">
       <header className="border-b border-border">
@@ -110,7 +84,7 @@ export default async function DesignPreviewPage({ params, searchParams }: PagePa
         </div>
       </header>
 
-      <PreviewBody design={design} brief={brief} businessName={mission.business_name} heroImageUrl={heroImageUrl} />
+      <PreviewBody design={design} brief={brief} businessName={mission.business_name} />
     </main>
   );
 }
@@ -119,12 +93,10 @@ function PreviewBody({
   design,
   brief,
   businessName,
-  heroImageUrl,
 }: {
   design: NonNullable<Awaited<ReturnType<typeof websiteDesignRepository.findById>>>;
   brief: Awaited<ReturnType<typeof designBriefRepository.findById>>;
   businessName: string;
-  heroImageUrl: string | null;
 }) {
   if (design.status !== "complete" || !design.wireframe || !design.components || !design.refined_design) {
     return (
@@ -141,6 +113,24 @@ function PreviewBody({
   const components = design.components as unknown as ComponentNode[];
   const refinedDesign = design.refined_design as unknown as RefinedDesign;
   const designMemory = (brief?.design_memory as unknown as DesignMemory | null) ?? null;
+
+  // heroImageUrl is real only when the Pattern Selection stage (lib/design-
+  // intelligence/section-patterns.ts's resolveHeroPattern, run inside
+  // assembleComponents at Generation time) actually chose "image-full-
+  // bleed" for THIS design run — never independently re-decided here. That
+  // decision already required real photography evidence to exist
+  // (DesignBrief.gallery), so reading its own real src here is safe; for
+  // every other pattern (including every design generated before this
+  // field existed — node.pattern is undefined there) this stays null, the
+  // same honest "no hero image" default the Friedman Flagship Final Content
+  // Pass's Step 1 fix established. `above_fold_screenshot_url` (a
+  // Lighthouse/Screenshot-adapter capture of the business's OLD site, used
+  // correctly by app/missions/[id]/page.tsx's Opportunity Report) is never
+  // used here — see git history on this file for the real regression that
+  // caused when it was.
+  const heroPattern = components.find((c) => c.section === "hero")?.pattern;
+  const briefGallery = (brief?.brief as unknown as DesignBrief | null)?.gallery;
+  const heroImageUrl = heroPattern === "image-full-bleed" ? (briefGallery?.[0]?.src ?? null) : null;
 
   return (
     <div className="border-t border-border">

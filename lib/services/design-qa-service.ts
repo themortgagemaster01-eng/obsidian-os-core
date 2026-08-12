@@ -25,6 +25,7 @@ import {
 import {
   findGenericPhrases,
   findDuplicateDesignSignatures,
+  findCrossIndustryPatternConvergence,
   type MissionDesignSignature,
 } from "@/lib/design-intelligence/genericity-rules";
 import { validateMotionChoice } from "@/lib/design-intelligence/motion-rules";
@@ -634,6 +635,9 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
   const isHeroThesisDuplicated = signatureDuplicates.duplicateHeroThesis.some((g) => g.includes(input.missionId));
   const isSignatureElementDuplicated = signatureDuplicates.duplicateSignatureElement.some((g) => g.includes(input.missionId));
 
+  const crossIndustryConvergenceGroups = findCrossIndustryPatternConvergence(input.batch.designSignatures);
+  const crossIndustryGroup = crossIndustryConvergenceGroups.find((g) => g.includes(input.missionId));
+
   const genericPhraseHits = [
     ...findGenericPhrases(input.designBrief.positioning ?? ""),
     ...findGenericPhrases(input.designBrief.heroThesis ?? ""),
@@ -647,6 +651,11 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
   if (isHeroThesisDuplicated) findings.push("This mission's heroThesis is identical (after normalization) to another mission's in this batch — a real distinctiveness failure independent of section order (CTO Design Intelligence directive's 'if the business names were removed' test).");
   if (isSignatureElementDuplicated) findings.push("This mission's signatureElement is identical to another mission's in this batch.");
   if (uniqueGenericPhraseHits.length > 0) findings.push(`Hollow marketing filler found in positioning/heroThesis/signatureElement: ${uniqueGenericPhraseHits.join(", ")}.`);
+  if (crossIndustryGroup) {
+    findings.push(
+      `WARN: this mission's hero pattern is shared with ${crossIndustryGroup.length - 1} other mission(s) in this batch across genuinely different industries — worth a human's attention as a possible "AI sameness" default rather than an evidence-driven choice, though not automatically wrong (docs/DESIGN_INTELLIGENCE.md §5). Not flagged when the shared pattern occurs only within the same industry bucket, where evidence is often genuinely similar.`
+    );
+  }
 
   const emojiSlots: string[] = [];
   for (const node of input.components) {
@@ -661,6 +670,12 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
   const ev = [
     evidence("matchesGenericSaasTemplate + findDuplicateSectionStructures", `Generic-pattern match: ${genericMatch}. Structural duplicate: ${isDuplicated}.`),
     evidence("findDuplicateDesignSignatures", `heroThesis duplicate: ${isHeroThesisDuplicated}. signatureElement duplicate: ${isSignatureElementDuplicated}.`),
+    evidence(
+      "findCrossIndustryPatternConvergence",
+      crossIndustryGroup
+        ? `Hero pattern shared across ${crossIndustryGroup.length} missions spanning different industries: ${crossIndustryGroup.join(", ")}.`
+        : "No hero-pattern convergence found across genuinely different industries in this batch."
+    ),
     evidence("findGenericPhrases", uniqueGenericPhraseHits.length > 0 ? `Banned phrases found: ${uniqueGenericPhraseHits.join(", ")}.` : "No banned generic-marketing phrases found."),
     evidence("emoji-as-icon scan", `${emojiSlots.length} real-slot value(s) containing an emoji character.`),
     evidence(
@@ -672,7 +687,7 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
   return deterministicResult(findings, ev, {
     evidenceSource: "structured",
     failIf: genericMatch || isHeroThesisDuplicated || isSignatureElementDuplicated || uniqueGenericPhraseHits.length > 0,
-    warnIf: isDuplicated || emojiSlots.length > 0,
+    warnIf: isDuplicated || emojiSlots.length > 0 || !!crossIndustryGroup,
   });
 }
 
@@ -1067,6 +1082,19 @@ async function buildBatchContext(
     sectionStructures.push({ missionId: currentMissionId, sectionOrder: [] });
   }
 
+  // Real hero Pattern Selection choice per mission (lib/design-intelligence/
+  // section-patterns.ts), sourced from the SAME rows as sectionStructures
+  // above — "" for a row predating ComponentNode.pattern or with no hero
+  // section, findCrossIndustryPatternConvergence's own "no data" exclusion.
+  const heroPatternByMissionId = new Map<string, string>(
+    rows
+      .filter((r) => !!r.components)
+      .map((r) => {
+        const heroNode = ((r.components as unknown as ComponentNode[]) ?? []).find((c) => c.section === "hero");
+        return [r.mission_id, heroNode?.pattern ?? ""] as const;
+      })
+  );
+
   const otherTypographyFamilies = rows
     .filter((r) => r.mission_id !== currentMissionId && !!r.refined_design)
     .map((r) => (r.refined_design as unknown as RefinedDesign).typography?.families ?? [])
@@ -1077,7 +1105,13 @@ async function buildBatchContext(
     .filter((r) => !!r.brief)
     .map((r) => {
       const brief = r.brief as unknown as DesignBrief;
-      return { missionId: r.mission_id, heroThesis: brief.heroThesis ?? "", signatureElement: brief.signatureElement?.element ?? "" };
+      return {
+        missionId: r.mission_id,
+        heroThesis: brief.heroThesis ?? "",
+        signatureElement: brief.signatureElement?.element ?? "",
+        industryBucket: r.industry_bucket ?? "",
+        heroPattern: heroPatternByMissionId.get(r.mission_id) ?? "",
+      };
     });
   if (!designSignatures.some((s) => s.missionId === currentMissionId)) {
     designSignatures.push({ missionId: currentMissionId, heroThesis: "", signatureElement: "" });

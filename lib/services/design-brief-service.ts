@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Json } from "@/lib/supabase/database.types";
 import type { AnalysisCategory, NormalizedAnalysis } from "@/lib/services/analysis-types";
-import type { ContactInfo, ContentSection, ReviewsSummary } from "@/lib/adapters/types";
+import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage } from "@/lib/adapters/types";
 import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
 import { generateInsights, type Insight } from "@/lib/services/insight-service";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
@@ -94,6 +94,17 @@ export interface DesignBrief {
   faqEvidence?: ContentSection[];
   /** Passed through from NormalizedAnalysis.reviews unchanged — real review count/rating, when the crawl found structured review data. */
   reviews?: ReviewsSummary;
+  /**
+   * Passed through from NormalizedAnalysis.gallery unchanged — real photos
+   * the business itself publishes (crawl-adapter.ts's extractGallery),
+   * never a diagnostic page screenshot (see app/missions/[id]/preview/
+   * page.tsx's heroImageUrl comment). The one legitimate evidence source
+   * for an image-led hero/gallery pattern (lib/design-intelligence/
+   * section-patterns.ts) — absent or empty means honestly no real
+   * photography exists for this business, never backfilled with stock
+   * imagery (§8).
+   */
+  gallery?: GalleryImage[];
   targetAudience: string;
   positioning: string;
   direction: {
@@ -350,6 +361,7 @@ export async function runDesignBrief(
         team: normalized.team,
         faqEvidence: normalized.faqEvidence,
         reviews: normalized.reviews,
+        gallery: normalized.gallery,
       },
       // Real spend once a live key is configured — logged per run so cost
       // is visible in server logs rather than invisible until a bill
@@ -378,6 +390,7 @@ export async function runDesignBrief(
       team: normalized.team,
       faqEvidence: normalized.faqEvidence,
       reviews: normalized.reviews,
+      gallery: normalized.gallery,
       targetAudience: creative.targetAudience,
       positioning: creative.positioning,
       direction: creative.direction,

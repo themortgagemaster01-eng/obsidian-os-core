@@ -803,6 +803,41 @@ function SectionBody({
     );
   }
 
+  if (section === "gallery") {
+    // real-photo-grid (SECTION_PATTERN_REGISTRY.gallery): the business's own
+    // real photos (design-generation-service.ts's "image-N" slots, sourced
+    // from crawl-adapter.ts's extractGallery — never a diagnostic page
+    // screenshot) in a simple grid, each with its own real alt text
+    // ("image-alt-N", paired by index) when the crawler captured one.
+    // SlotValue alone can't render this — it only ever emits text — so this
+    // section needs its own real <img> markup, unlike every other section
+    // here, which is real content data flowing through plain text/typography.
+    const images = node.slots.filter((s) => isRealSlot(s) && s.name.startsWith("image-") && !s.name.includes("alt"));
+    const altByIndex = new Map(
+      node.slots
+        .filter((s) => isRealSlot(s) && s.name.startsWith("image-alt-"))
+        .map((s) => [s.name.replace("image-alt-", ""), s] as const)
+    );
+    return (
+      <div>
+        <SectionHeading section={section} refinedDesign={refinedDesign} fontStack={headingFontStack} color={textColor} isSignature={isSignature} accent={accent} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(14rem, 1fr))", gap: "0.75rem" }}>
+          {images.map((slot) => {
+            const alt = altByIndex.get(slot.name.replace("image-", ""));
+            return (
+              <img
+                key={slot.name}
+                src={slot.value!}
+                alt={alt?.value ?? ""}
+                style={{ width: "100%", height: "16rem", objectFit: "cover", display: "block" }}
+              />
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   if (section === "credibility" || section === "contact") {
     const realSlots = node.slots.filter(isRealSlot);
     if (realSlots.length === 0) return null;

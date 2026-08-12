@@ -3,7 +3,7 @@ import { extractJsonFromLlmResponse } from "@/lib/llm/json-response";
 
 import type { AnalysisCategory } from "@/lib/services/analysis-types";
 import type { DesignBriefCitation } from "@/lib/services/design-brief-service";
-import type { ContactInfo, ContentSection, ReviewsSummary } from "@/lib/adapters/types";
+import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage } from "@/lib/adapters/types";
 import type { IndustryBucket, ReferenceDirection } from "@/lib/design-references/reference-library";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 
@@ -196,6 +196,8 @@ export interface DesignIntelligenceInput {
   faqEvidence?: ContentSection[];
   /** Real review count/rating, when the crawl found structured review data. */
   reviews?: ReviewsSummary;
+  /** Real photos the business itself publishes (crawl-adapter.ts's extractGallery) — the only real evidence this prompt's own "real photography suggests an image-led hospitality direction" guidance (below) can actually be grounded in; empty/absent means honestly no real photography was found. */
+  gallery?: GalleryImage[];
 }
 
 const VALID_LAYOUT_FAMILIES: LayoutFamily[] = [
@@ -330,6 +332,14 @@ function describeContentSections(label: string, sections: ContentSection[] | und
   return `- ${label} (real, from ${sections[0].sourceUrl}${sections.length > 1 ? " and other pages" : ""}):\n${lines.join("\n")}`;
 }
 
+/** Renders real gallery-image evidence honestly — a count and source, never the images themselves described as anything more specific than "photo" (this module never sees the pixels, only that a real `<img>` was found). */
+function describeGallery(gallery: GalleryImage[] | undefined): string {
+  if (!gallery || gallery.length === 0) {
+    return "- Real photography: none found by the crawler — do not assume or imply real photos exist; an image-led direction is only honest if photography evidence is listed here.";
+  }
+  return `- Real photography (real, ${gallery.length} photo${gallery.length === 1 ? "" : "s"} found, from ${gallery[0].sourceUrl}): this business genuinely has its own real photos available — an image-led/imagery-first direction is a legitimate, evidence-backed choice.`;
+}
+
 function describeReviews(reviews: ReviewsSummary | undefined): string {
   if (!reviews || (reviews.averageRating === null && reviews.count === null)) {
     return "- Reviews: none found by the crawler.";
@@ -375,6 +385,7 @@ ${describeContentSections("Certifications/credentials", input.certifications)}
 ${describeContentSections("Team", input.team)}
 ${describeContentSections("FAQ", input.faqEvidence)}
 ${describeReviews(input.reviews)}
+${describeGallery(input.gallery)}
 
 Candidate reference directions for this industry bucket (inspiration for your reasoning only — never copy their structure):
 ${references}

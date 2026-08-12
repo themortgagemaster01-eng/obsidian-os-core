@@ -493,6 +493,56 @@ describe("design-qa-service: qaGenericTemplate", () => {
     const result = qaGenericTemplate(buildValidInput());
     assert.equal(result.verdict, "PASS");
   });
+
+  test("WARNs (not FAILs) when this mission's real hero pattern is shared with another mission in a genuinely DIFFERENT industry — the Friedman Flagship Final Content Pass's anti-template convergence check", () => {
+    const input = buildValidInput();
+    const thisHeroPattern = input.components.find((c) => c.section === "hero")?.pattern;
+    assert.ok(thisHeroPattern, "fixture must actually produce a hero pattern for this test to exercise the real check");
+    const withCrossIndustryConvergence: QaStructuredInput = {
+      ...input,
+      industryBucket: "restaurant",
+      batch: {
+        ...input.batch,
+        designSignatures: [
+          ...input.batch.designSignatures.map((s) => ({ ...s, industryBucket: "restaurant", heroPattern: thisHeroPattern })),
+          {
+            missionId: "mission-2",
+            heroThesis: "A completely different thesis for a completely different business.",
+            signatureElement: "credibility-certification-display",
+            industryBucket: "lawFirm",
+            heroPattern: thisHeroPattern,
+          },
+        ],
+      },
+    };
+    const result = qaGenericTemplate(withCrossIndustryConvergence);
+    assert.equal(result.verdict, "WARN");
+    assert.ok(result.findings.some((f) => /hero pattern is shared/.test(f) && /genuinely different industries/.test(f)));
+  });
+
+  test("does NOT warn when the shared hero pattern occurs only within the SAME industry bucket", () => {
+    const input = buildValidInput();
+    const thisHeroPattern = input.components.find((c) => c.section === "hero")?.pattern;
+    const withSameIndustryConvergence: QaStructuredInput = {
+      ...input,
+      industryBucket: "restaurant",
+      batch: {
+        ...input.batch,
+        designSignatures: [
+          ...input.batch.designSignatures.map((s) => ({ ...s, industryBucket: "restaurant", heroPattern: thisHeroPattern })),
+          {
+            missionId: "mission-2",
+            heroThesis: "A completely different thesis for a different restaurant.",
+            signatureElement: "gallery-atmosphere-treatment",
+            industryBucket: "restaurant",
+            heroPattern: thisHeroPattern,
+          },
+        ],
+      },
+    };
+    const result = qaGenericTemplate(withSameIndustryConvergence);
+    assert.ok(!result.findings.some((f) => /hero pattern is shared/.test(f)));
+  });
 });
 
 describe("design-qa-service: runStructuredDeterministicChecks", () => {
