@@ -387,12 +387,37 @@ describe("design-generation-service: assembleComponents", () => {
     const components = assembleComponents(wireframe, {
       businessName: "Acme",
       citedInsights: [],
-      realTestimonials: ["Great service!", "Would recommend."],
+      realTestimonials: [
+        { quote: "Great service!", attribution: null },
+        { quote: "Would recommend.", attribution: null },
+      ],
       contactEvidence: NO_CONTACT_EVIDENCE,
     });
     const testimonials = components.find((c) => c.section === "testimonials")!;
     assert.equal(testimonials.slots.length, 2);
     assert.ok(testimonials.slots.every((s) => s.source === "real"));
+  });
+
+  test("pairs a real attribution with its quote as a separate testimonial-attribution-N slot; omits it entirely (never placeholder) when no real attribution was captured", () => {
+    const wireframe = generateWireframe(briefFor("general", "editorial"), { hasRealTestimonials: true });
+    const components = assembleComponents(wireframe, {
+      businessName: "Acme",
+      citedInsights: [],
+      realTestimonials: [
+        { quote: "She was with me through my entire divorce.", attribution: "Carolyn M. Grimes" },
+        { quote: "Would recommend to anyone.", attribution: null },
+      ],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+    });
+    const testimonials = components.find((c) => c.section === "testimonials")!;
+    assert.equal(testimonials.slots.length, 3);
+    const attribution1 = testimonials.slots.find((s) => s.name === "testimonial-attribution-1")!;
+    assert.equal(attribution1.source, "real");
+    assert.equal(attribution1.value, "Carolyn M. Grimes");
+    assert.equal(
+      testimonials.slots.some((s) => s.name === "testimonial-attribution-2"),
+      false
+    );
   });
 });
 
@@ -579,6 +604,47 @@ describe("design-generation-service: assembleComponents credibility/faq evidence
     assert.equal(faq.slots.length, 1);
     assert.equal(faq.slots[0].source, "placeholder");
     assert.equal(faq.slots[0].value, null);
+  });
+});
+
+describe("design-generation-service: team section (Evidence Depth pass — no longer folded into credibility)", () => {
+  test("wireframe includes a dedicated \"team\" section only when hasRealTeam is true, placed before contact", () => {
+    const withoutTeam = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
+    assert.ok(!withoutTeam.sections.some((s) => s.type === "team"));
+
+    const withTeam = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false, hasRealTeam: true });
+    const order = withTeam.sections.map((s) => s.type);
+    assert.ok(order.includes("team"));
+    assert.ok(order.indexOf("team") < order.indexOf("contact"));
+  });
+
+  test("real team evidence produces real, capped team-N slots on the \"team\" section, never on \"credibility\"", () => {
+    const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false, hasRealTeam: true });
+    const components = assembleComponents(wireframe, {
+      businessName: "Acme Law",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      team: [
+        { heading: "OUR TEAM", excerpt: "Carolyn M. Grimes, Partner. Jessica L. Leischner, Partner.", sourceUrl: "https://acme-law.test/team" },
+      ],
+    });
+    const team = components.find((c) => c.section === "team")!;
+    assert.equal(team.slots.length, 1);
+    assert.equal(team.slots[0].name, "team-1");
+    assert.equal(team.slots[0].source, "real");
+    assert.equal(team.slots[0].value, "Carolyn M. Grimes, Partner. Jessica L. Leischner, Partner.");
+
+    const credibility = components.find((c) => c.section === "credibility")!;
+    assert.ok(!credibility.slots.some((s) => s.name.startsWith("team-")), "team slots must not leak into credibility — this produced the customer-facing \"TEAM-1\" label leak regression");
+  });
+
+  test("team section falls back to a single placeholder when no real team evidence exists", () => {
+    const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false, hasRealTeam: true });
+    const components = assembleComponents(wireframe, { businessName: "Acme Law", citedInsights: [], contactEvidence: NO_CONTACT_EVIDENCE });
+    const team = components.find((c) => c.section === "team")!;
+    assert.equal(team.slots.length, 1);
+    assert.equal(team.slots[0].source, "placeholder");
+    assert.equal(team.slots[0].value, null);
   });
 });
 

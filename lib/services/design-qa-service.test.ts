@@ -323,6 +323,73 @@ describe("design-qa-service: qaTrust", () => {
     assert.equal(result.verdict, "FAIL");
     assert.ok(result.findings.some((f) => /question-1/.test(f) && /does not trace/.test(f)));
   });
+
+  test("PASSes for a real 'testimonial-attribution-N' slot sourced from a crawled testimonial's real heading (Evidence Depth pass) — attribution must trace against crawled headings, not quote excerpts", () => {
+    const brief = briefFor({}, { industryBucket: "lawFirm", industry: "law firm" });
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: true });
+    const components = assembleComponents(wireframe, {
+      businessName: brief.businessName,
+      citedInsights: brief.citedInsights,
+      contactEvidence: brief.contactEvidence,
+      realTestimonials: [{ quote: "She was with me through my entire divorce.", attribution: "Carolyn M. Grimes" }],
+    });
+    const refinedDesign = refineDesign({ wireframe }, brief, SAMPLE_DESIGN_MEMORY);
+    const input: QaStructuredInput = {
+      ...buildValidInput(),
+      wireframe,
+      components,
+      refinedDesign,
+      crawl: {
+        certifications: [],
+        testimonials: [
+          { heading: "Carolyn M. Grimes", excerpt: "She was with me through my entire divorce.", sourceUrl: "https://acme.test/testimonials/" },
+        ],
+        faq: [],
+      },
+    };
+
+    const attributionSlot = components.flatMap((c) => c.slots).find((s) => s.name === "testimonial-attribution-1");
+    assert.ok(attributionSlot, "fixture must actually produce a testimonial-attribution-1 slot");
+
+    const result = qaTrust(input);
+    assert.equal(result.verdict, "PASS");
+    assert.ok(!result.findings.some((f) => /testimonial-attribution-1/.test(f)));
+  });
+
+  test("FAILs when a 'real' testimonial-attribution-N slot traces to no crawled testimonial heading — a fabricated name is still zero-tolerance", () => {
+    const brief = briefFor({}, { industryBucket: "lawFirm", industry: "law firm" });
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: true });
+    const components = assembleComponents(wireframe, {
+      businessName: brief.businessName,
+      citedInsights: brief.citedInsights,
+      contactEvidence: brief.contactEvidence,
+      realTestimonials: [{ quote: "She was with me through my entire divorce.", attribution: "Carolyn M. Grimes" }],
+    });
+    const tamperedComponents = components.map((c) => ({
+      ...c,
+      slots: c.slots.map((s): ComponentSlot =>
+        s.name === "testimonial-attribution-1" ? { ...s, value: "A Completely Fabricated Name" } : s
+      ),
+    }));
+    const refinedDesign = refineDesign({ wireframe }, brief, SAMPLE_DESIGN_MEMORY);
+    const input: QaStructuredInput = {
+      ...buildValidInput(),
+      wireframe,
+      components: tamperedComponents,
+      refinedDesign,
+      crawl: {
+        certifications: [],
+        testimonials: [
+          { heading: "Carolyn M. Grimes", excerpt: "She was with me through my entire divorce.", sourceUrl: "https://acme.test/testimonials/" },
+        ],
+        faq: [],
+      },
+    };
+
+    const result = qaTrust(input);
+    assert.equal(result.verdict, "FAIL");
+    assert.ok(result.findings.some((f) => /testimonial-attribution-1/.test(f) && /does not trace/.test(f)));
+  });
 });
 
 describe("design-qa-service: qaConversion", () => {

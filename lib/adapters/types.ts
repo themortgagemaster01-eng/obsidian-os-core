@@ -63,6 +63,9 @@ export interface ContentSection {
   sourceUrl: string;
 }
 
+/** The non-fabricated fallback ContentSection.heading a testimonial gets when no real name/attribution is structurally present next to its quote (crawl-adapter.ts's findTestimonialsByStructure) — shared so a consumer can tell "no real attribution" apart from an actual captured name without duplicating the literal string. */
+export const GENERIC_TESTIMONIAL_HEADING = "Testimonial";
+
 export interface ReviewsSummary {
   averageRating: number | null;
   count: number | null;

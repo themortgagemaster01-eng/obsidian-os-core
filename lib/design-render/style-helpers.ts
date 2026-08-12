@@ -45,6 +45,7 @@ export function remToPx(rem: number): number {
 export const SECTION_HEADING_LABEL: Record<SectionType, string> = {
   hero: "",
   credibility: "Why choose us",
+  team: "Meet the team",
   services: "Services",
   menu: "Menu",
   gallery: "Gallery",

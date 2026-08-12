@@ -403,6 +403,18 @@ describe("crawl-adapter: testimonial structural detection (no 'testimonial' CSS 
     assert.equal(facts.testimonials.length, 1);
     assert.equal(facts.testimonials[0].heading, "a satisfied customer");
   });
+
+  test("a real quote longer than the generic 300-char section-excerpt cap is stored in full, not chopped off mid-sentence — the real Friedman Grimes regression (\"...He has excellent knowledgeable com\")", () => {
+    const longQuote =
+      "On the recommendation of a friend, I chose to consult with Mr. Friedman, since I am an aged person with no family or dependents. I needed advice for a will, and a young person who would settle my estate upon my death, or organize care in case of a terminal illness. He has excellent knowledgeable communication skills and made a very difficult process feel completely manageable from start to finish.";
+    assert.ok(longQuote.length > 300, "test quote must exceed the old SECTION_EXCERPT_MAX_CHARS cap to actually exercise the fix");
+    const html = `<html><body><p>&#8220;${longQuote}&#8221;</p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/testimonials");
+    assert.equal(facts.testimonials.length, 1);
+    assert.equal(facts.testimonials[0].excerpt, longQuote);
+    assert.ok(facts.testimonials[0].excerpt.endsWith("start to finish."), "must retain the real final sentence, not truncate mid-word partway through");
+  });
 });
 
 describe("crawl-adapter: footer quality scoring (real business content in a footer is no longer blanket-discarded)", () => {

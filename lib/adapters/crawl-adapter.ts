@@ -11,6 +11,7 @@ import type {
   FormInfo,
   MapEmbed,
 } from "@/lib/adapters/types";
+import { GENERIC_TESTIMONIAL_HEADING } from "@/lib/adapters/types";
 
 const FETCH_TIMEOUT_MS = 15_000;
 /**
@@ -682,7 +683,7 @@ function findTestimonialsByStructure($: cheerio.CheerioAPI, sourceUrl: string): 
 
     const prevText = $el.prev().text().trim().replace(/\s+/g, " ");
     const nextText = $el.next().text().trim().replace(/\s+/g, " ");
-    let heading = "Testimonial";
+    let heading = GENERIC_TESTIMONIAL_HEADING;
     const attribution = nextText.match(ATTRIBUTION_PATTERN);
     if (attribution) {
       heading = attribution[1].trim() || heading;
@@ -694,7 +695,13 @@ function findTestimonialsByStructure($: cheerio.CheerioAPI, sourceUrl: string): 
     if (seen.has(dedupeKey)) return;
     seen.add(dedupeKey);
 
-    sections.push({ heading, excerpt: quote.slice(0, SECTION_EXCERPT_MAX_CHARS), sourceUrl });
+    // quote is already bounded by MIN_QUOTE_CHARS/MAX_QUOTE_CHARS above (a
+    // real, complete testimonial) — re-slicing it to the generic
+    // SECTION_EXCERPT_MAX_CHARS (300, sized for nav-blob excerpts, not
+    // quotes) chopped real testimonials off mid-sentence on the rendered
+    // page (Evidence Depth investigation, Friedman Grimes: "...He has
+    // excellent knowledgeable com"). Store the full validated quote.
+    sections.push({ heading, excerpt: quote, sourceUrl });
   });
 
   return sections;

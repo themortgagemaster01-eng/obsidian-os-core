@@ -475,7 +475,21 @@ export function qaTrust(input: QaStructuredInput): DeterministicCategoryResult {
     for (const slot of node.slots) {
       if (slot.source !== "real" || slot.value === null) continue;
 
-      if (slot.name.startsWith("testimonial-")) {
+      if (slot.name.startsWith("testimonial-attribution-")) {
+        // design-generation-service.ts sources this slot from a
+        // testimonial's real ContentSection.heading (crawl-adapter.ts's
+        // findTestimonialsByStructure) — a different field than the quote
+        // excerpt checked below, so it must trace against crawled
+        // testimonial headings, not excerpts (checking excerpts here would
+        // false-flag every real attribution as untraceable fabrication).
+        const realAttributions = input.crawl?.testimonials.map((t) => t.heading) ?? [];
+        const traces = realAttributions.some((h) => h === slot.value);
+        if (!traces) {
+          findings.push(
+            `CRITICAL: ${node.section}.${slot.name} is tagged "real" but its value does not trace to any crawled testimonial attribution — untraceable real-tagged content (§4.8).`
+          );
+        }
+      } else if (slot.name.startsWith("testimonial-")) {
         const realTestimonials = input.crawl?.testimonials.map((t) => t.excerpt) ?? [];
         const traces = realTestimonials.some((t) => t.includes(slot.value!) || slot.value!.includes(t));
         if (!traces) {

@@ -697,24 +697,38 @@ function SectionBody({
 
   if (section === "testimonials") {
     // Editorial pull-quote treatment (Premium Presentation Pass §5/§6):
-    // one large quotation at a time rather than a grid of bordered cards —
-    // real attribution isn't captured separately from the excerpt today
-    // (design-generation-service.ts only ever produces the excerpt text
-    // itself), so each quote stands alone rather than pairing a name this
-    // pipeline doesn't actually have.
-    const quotes = node.slots.filter(isRealSlot);
+    // one large quotation at a time rather than a grid of bordered cards.
+    // Real attribution (design-generation-service.ts's "testimonial-
+    // attribution-N" slot, when the crawler found a real name structurally
+    // next to the quote) is paired with its quote by matching index below
+    // the divider rule; a quote with no real attribution just omits that
+    // line rather than pairing a name this pipeline doesn't actually have.
+    const quotes = node.slots.filter((s) => isRealSlot(s) && s.name.startsWith("testimonial-") && !s.name.includes("attribution"));
+    const attributionByIndex = new Map(
+      node.slots
+        .filter((s) => isRealSlot(s) && s.name.startsWith("testimonial-attribution-"))
+        .map((s) => [s.name.replace("testimonial-attribution-", ""), s] as const)
+    );
     return (
       <div>
         <SectionHeading section={section} refinedDesign={refinedDesign} fontStack={headingFontStack} color={textColor} isSignature={isSignature} accent={accent} />
         <div style={{ display: "flex", flexDirection: "column", gap: "2.5rem" }}>
-          {quotes.map((slot) => (
-            <blockquote key={slot.name} style={{ margin: 0, maxWidth: "44rem" }}>
-              <p style={{ fontFamily: headingFontStack, fontSize: "1.4em", lineHeight: 1.4, fontWeight: 400 }}>
-                <SlotValue slot={slot} />
-              </p>
-              <div style={{ width: "2rem", height: "2px", backgroundColor: accent, marginTop: "1rem" }} />
-            </blockquote>
-          ))}
+          {quotes.map((slot) => {
+            const attribution = attributionByIndex.get(slot.name.replace("testimonial-", ""));
+            return (
+              <blockquote key={slot.name} style={{ margin: 0, maxWidth: "44rem" }}>
+                <p style={{ fontFamily: headingFontStack, fontSize: "1.4em", lineHeight: 1.4, fontWeight: 400 }}>
+                  <SlotValue slot={slot} />
+                </p>
+                <div style={{ width: "2rem", height: "2px", backgroundColor: accent, marginTop: "1rem" }} />
+                {attribution && (
+                  <p style={{ fontSize: "0.85rem", opacity: MUTED_TEXT_OPACITY, marginTop: "0.6rem" }}>
+                    <SlotValue slot={attribution} />
+                  </p>
+                )}
+              </blockquote>
+            );
+          })}
         </div>
       </div>
     );

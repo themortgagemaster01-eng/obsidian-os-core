@@ -8,6 +8,7 @@ import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
 import type { ContactInfo, ContentSection, ReviewsSummary } from "@/lib/adapters/types";
+import { GENERIC_TESTIMONIAL_HEADING } from "@/lib/adapters/types";
 
 import {
   websiteDesignRepository,
@@ -43,6 +44,7 @@ import { createEventBus, type EventBus } from "@/lib/events/event-bus";
 export type SectionType =
   | "hero"
   | "credibility"
+  | "team"
   | "services"
   | "menu"
   | "gallery"
@@ -101,6 +103,7 @@ const WIREFRAME_TEMPLATE_BY_BUCKET: Record<IndustryBucket, SectionType[]> = {
 const RATIONALE_BY_SECTION: Record<SectionType, string> = {
   hero: "Leads with the business's actual story per the Design Brief's direction, not a generic centered SaaS hero (§5).",
   credibility: "Credibility signals placed per the Design Brief's positioning — real data only, never a fabricated trust signal (§8).",
+  team: "Included only because real team/staff data exists for this mission — omitted otherwise, never a fabricated headcount or bio (§8).",
   services: "Offerings presented in a scannable, content-driven shape, not a default icon-feature grid (§5, §9).",
   menu: "Menu-first structure because the primary visitor decision here is what's being served (§9, §10).",
   gallery: "Imagery leads because atmosphere is functionally part of the pitch for this business (§10).",
@@ -210,6 +213,8 @@ function buildSectionRationale(type: SectionType, brief: DesignBrief): string {
 export interface GenerateWireframeOptions {
   /** True only when real, already-captured testimonial data exists for this mission — never assumed (§8). */
   hasRealTestimonials: boolean;
+  /** True only when real, already-captured team/staff data exists for this mission — never assumed (§8). Optional (defaults to false) so every existing hasRealTestimonials-only call site stays valid. */
+  hasRealTeam?: boolean;
 }
 
 /**
@@ -232,7 +237,8 @@ export interface GenerateWireframeOptions {
 export function generateWireframe(brief: DesignBrief, options: GenerateWireframeOptions): Wireframe {
   const baseOrder = WIREFRAME_TEMPLATE_BY_BUCKET[brief.industryBucket];
   const withTestimonials = options.hasRealTestimonials ? insertBeforeContact(baseOrder, "testimonials") : baseOrder;
-  const sectionOrder = applyContentEmphasis(withTestimonials, brief.contentEmphasis);
+  const withTeam = options.hasRealTeam ? insertBeforeContact(withTestimonials, "team") : withTestimonials;
+  const sectionOrder = applyContentEmphasis(withTeam, brief.contentEmphasis);
 
   if (matchesGenericSaasTemplate(sectionOrder)) {
     throw new Error(
@@ -304,6 +310,7 @@ const HERO_KIND_BY_LAYOUT_FAMILY: Record<LayoutFamily, string> = {
 
 const COMPONENT_KIND_BY_SECTION: Record<Exclude<SectionType, "hero">, string> = {
   credibility: "TrustSignalRow",
+  team: "TeamList",
   services: "ServiceList",
   menu: "MenuList",
   gallery: "PhotoGallery",
@@ -321,11 +328,17 @@ const MAX_SERVICE_SLOTS = 6;
 const MAX_CERTIFICATION_SLOTS = 3;
 const MAX_TEAM_SLOTS = 3;
 
+/** A real testimonial quote plus its real attribution, when the crawler found one structurally present next to the quote — attribution is null (never guessed) when none was found, matching crawl-adapter.ts's own GENERIC_TESTIMONIAL_HEADING fallback discipline. */
+export interface RealTestimonial {
+  quote: string;
+  attribution: string | null;
+}
+
 export interface AssembleComponentsContext {
   businessName: string;
   citedInsights: DesignBriefCitation[];
-  /** Real testimonial text, when captured — required if the wireframe includes a "testimonials" section (see generateWireframe's hasRealTestimonials gate). */
-  realTestimonials?: string[];
+  /** Real testimonial quote + attribution, when captured — required if the wireframe includes a "testimonials" section (see generateWireframe's hasRealTestimonials gate). */
+  realTestimonials?: RealTestimonial[];
   /** Real, mechanically-extracted contact facts (DesignBrief.contactEvidence) — each field renders as a real slot only when actually captured; missing fields stay honestly placeholder, never invented (§8). */
   contactEvidence: ContactInfo;
   /**
@@ -590,12 +603,21 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
         slots.push(placeholderSlot("certifications"));
       }
 
-      if (context.team && context.team.length > 0) {
-        context.team.slice(0, MAX_TEAM_SLOTS).forEach((t, i) => slots.push(realSlot(`team-${i + 1}`, t.excerpt)));
-      }
-
       return slots;
     }
+    case "team":
+      // A dedicated section (not folded into "credibility") so it gets its
+      // own heading and its own editorial treatment instead of surfacing
+      // inside "Why choose us" under a raw slot-id label like "TEAM-1" —
+      // real regression from the Evidence Depth pass: the generic
+      // credibility/contact renderer path (components/design-preview/
+      // design-preview.tsx) title-cases each real slot's own internal name
+      // as a label, which is appropriate for reviewCount/certification-N but
+      // leaked the internal slot id verbatim for team entries.
+      if (context.team && context.team.length > 0) {
+        return context.team.slice(0, MAX_TEAM_SLOTS).map((t, i) => realSlot(`team-${i + 1}`, t.excerpt));
+      }
+      return [placeholderSlot("teamMembers")];
     case "services":
       if (context.services && context.services.length > 0) {
         return context.services
@@ -617,7 +639,18 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
           "A wireframe with a \"testimonials\" section requires real testimonial text — this section should only ever be generated when hasRealTestimonials was true (§8's zero-fabrication rule)."
         );
       }
-      return context.realTestimonials.map((text, i) => realSlot(`testimonial-${i + 1}`, text));
+      // A real attribution (e.g. "Carolyn M. Grimes") gets its own slot,
+      // named so it's still identifiable as this quote's attribution
+      // (testimonial-attribution-N) rather than merged into the quote text
+      // itself — the renderer pairs them by index. Omitted entirely (never
+      // a placeholder) when the crawler found no real name/attribution next
+      // to this quote — never a guessed name (§8).
+      const slots: ComponentSlot[] = [];
+      context.realTestimonials.forEach((t, i) => {
+        slots.push(realSlot(`testimonial-${i + 1}`, t.quote));
+        if (t.attribution) slots.push(realSlot(`testimonial-attribution-${i + 1}`, t.attribution));
+      });
+      return slots;
     }
     case "serviceArea":
       return [placeholderSlot("areasServed")];
@@ -695,7 +728,7 @@ export function assembleComponents(
 }
 
 export interface GenerateWebsiteStructureOptions extends GenerateWireframeOptions {
-  realTestimonials?: string[];
+  realTestimonials?: RealTestimonial[];
   /** Approved per-mission design choices from Design Intelligence. */
   designMemory?: DesignMemory | null;
 }
@@ -881,9 +914,16 @@ export async function runDesignGeneration(
 
     const brief = briefRow.brief as unknown as DesignBrief;
     const designMemory = briefRow.design_memory as unknown as DesignMemory | null;
-    const realTestimonials = (brief.testimonials ?? []).map((section) => section.excerpt);
+    // attribution stays null (never guessed) when the crawler only found the
+    // generic GENERIC_TESTIMONIAL_HEADING fallback rather than a real
+    // structurally-present name (crawl-adapter.ts's findTestimonialsByStructure).
+    const realTestimonials: RealTestimonial[] = (brief.testimonials ?? []).map((section) => ({
+      quote: section.excerpt,
+      attribution: section.heading !== GENERIC_TESTIMONIAL_HEADING ? section.heading : null,
+    }));
     const { wireframe, components, refinedDesign, contentWarnings } = generateWebsiteStructure(brief, {
       hasRealTestimonials: realTestimonials.length > 0,
+      hasRealTeam: (brief.team ?? []).length > 0,
       realTestimonials,
       designMemory,
     });
