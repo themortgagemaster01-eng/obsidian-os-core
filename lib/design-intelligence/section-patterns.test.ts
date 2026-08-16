@@ -2,30 +2,74 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { resolveHeroPattern, HERO_PATTERN_VOCABULARY, SECTION_PATTERN_REGISTRY } from "@/lib/design-intelligence/section-patterns";
+import type { IndustryBucket } from "@/lib/design-references/reference-library";
 
-describe("section-patterns: resolveHeroPattern", () => {
-  test("picks image-full-bleed only when layoutFamily is imagery-led/listing-led AND real photography evidence exists", () => {
-    assert.equal(resolveHeroPattern("imagery-led", true), "image-full-bleed");
-    assert.equal(resolveHeroPattern("listing-led", true), "image-full-bleed");
+const ALL_BUCKETS: IndustryBucket[] = [
+  "restaurant",
+  "lawFirm",
+  "dentistMedical",
+  "homeService",
+  "realEstate",
+  "fitness",
+  "luxuryServices",
+  "general",
+];
+
+describe("section-patterns: resolveHeroPattern (business-type -> visual strategy)", () => {
+  test("follows the CTO's own suggested table when real photography exists: restaurant -> Editorial (editorial-typographic) is the top-ranked preference", () => {
+    assert.equal(resolveHeroPattern("restaurant", true), "editorial-typographic");
   });
 
-  test("falls back to editorial-typographic when layoutFamily supports imagery but no real photography evidence exists — never fabricates an image hero", () => {
-    assert.equal(resolveHeroPattern("imagery-led", false), "editorial-typographic");
-    assert.equal(resolveHeroPattern("listing-led", false), "editorial-typographic");
+  test("lawFirm prefers Editorial, both with and without real photography — a law firm's top preference never depends on photo evidence", () => {
+    assert.equal(resolveHeroPattern("lawFirm", true), "editorial-typographic");
+    assert.equal(resolveHeroPattern("lawFirm", false), "editorial-typographic");
   });
 
-  test("falls back to editorial-typographic for a non-imagery layoutFamily even when real photography exists — imagery-led is a real reason to prefer an image hero, not just 'any photo exists'", () => {
-    assert.equal(resolveHeroPattern("credibility-led", true), "editorial-typographic");
-    assert.equal(resolveHeroPattern("editorial", true), "editorial-typographic");
-    assert.equal(resolveHeroPattern("schedule-led", true), "editorial-typographic");
-    assert.equal(resolveHeroPattern("menu-led", true), "editorial-typographic");
+  test("homeService (HVAC/contractor) prefers Service/Product (image-full-bleed) only when real photography exists, falling back to Bold Commerce (offset-overlap) otherwise — never Editorial, which isn't in its preference list", () => {
+    assert.equal(resolveHeroPattern("homeService", true), "image-full-bleed");
+    assert.equal(resolveHeroPattern("homeService", false), "offset-overlap");
   });
 
-  test("every resolved pattern is a member of the declared vocabulary", () => {
-    for (const layoutFamily of ["editorial", "imagery-led", "credibility-led", "schedule-led", "menu-led", "listing-led"] as const) {
+  test("luxuryServices prefers Luxury Minimal (oversized-typographic), matching the CTO's 'Professional Services -> Luxury Minimal/Editorial' guidance", () => {
+    assert.equal(resolveHeroPattern("luxuryServices", true), "oversized-typographic");
+    assert.equal(resolveHeroPattern("luxuryServices", false), "oversized-typographic");
+  });
+
+  test("never selects a photo-dependent pattern without real photography, for any industry", () => {
+    for (const bucket of ALL_BUCKETS) {
+      const pattern = resolveHeroPattern(bucket, false);
+      assert.ok(
+        !["centered-cinematic", "split-media-text", "image-full-bleed"].includes(pattern),
+        `${bucket} selected a photo-dependent pattern (${pattern}) with hasRealImagery: false`
+      );
+    }
+  });
+
+  test("real photography can change the selected pattern for a business whose preference list ranks a photo pattern above a non-photo one", () => {
+    const withoutPhoto = resolveHeroPattern("realEstate", false);
+    const withPhoto = resolveHeroPattern("realEstate", true);
+    assert.notEqual(withoutPhoto, withPhoto);
+  });
+
+  test("falls back to the general preference list for an unrecognized bucket rather than throwing", () => {
+    // @ts-expect-error deliberately passing a value outside the IndustryBucket union to prove the runtime fallback, not just the type
+    assert.equal(resolveHeroPattern("not-a-real-bucket", false), "editorial-typographic");
+  });
+
+  test("declares exactly six unique, selectable hero patterns, and every industry/evidence combination resolves to one of them", () => {
+    assert.equal(HERO_PATTERN_VOCABULARY.length, 6);
+    assert.equal(new Set(HERO_PATTERN_VOCABULARY).size, 6);
+    for (const bucket of ALL_BUCKETS) {
       for (const hasRealImagery of [true, false]) {
-        assert.ok(HERO_PATTERN_VOCABULARY.includes(resolveHeroPattern(layoutFamily, hasRealImagery)));
+        assert.ok(HERO_PATTERN_VOCABULARY.includes(resolveHeroPattern(bucket, hasRealImagery)));
       }
+    }
+  });
+
+  test("every industry's preference list is satisfiable without photography — the function never has to fall through to an undocumented default", () => {
+    for (const bucket of ALL_BUCKETS) {
+      const pattern = resolveHeroPattern(bucket, false);
+      assert.ok(HERO_PATTERN_VOCABULARY.includes(pattern));
     }
   });
 });

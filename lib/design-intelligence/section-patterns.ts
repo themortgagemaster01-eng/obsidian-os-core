@@ -1,17 +1,19 @@
-import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
+import type { IndustryBucket } from "@/lib/design-references/reference-library";
 
 /**
  * The Generalized Premium Design Pattern Library (Friedman Flagship Final
- * Content Pass, Step 2). Friedman, Grimes, Meinken & Leischner PLLC is the
- * flagship REFERENCE implementation — its numbered practice-area index
- * (design-preview.tsx, "services" section), editorial testimonial pull-quote
- * ("testimonials"), and structured team rows ("team") are not one-off
- * Friedman code; they are the first real, evidence-driven implementations of
- * the pattern categories this module names. This module's job is to make
- * the underlying PRINCIPLE — "compose real evidence into a deliberate
- * editorial treatment appropriate to how much of it exists, never a generic
- * card grid, never padded when evidence is thin" — a reusable, generalized
- * capability instead of Friedman-specific code.
+ * Content Pass, Step 2, extended by the CTO's "Benchmark Follow-Up: Fix
+ * Extraction + Eliminate Template Convergence" directive). Friedman, Grimes,
+ * Meinken & Leischner PLLC is the flagship REFERENCE implementation — its
+ * numbered practice-area index (design-preview.tsx, "services" section),
+ * editorial testimonial pull-quote ("testimonials"), and structured team
+ * rows ("team") are not one-off Friedman code; they are the first real,
+ * evidence-driven implementations of the pattern categories this module
+ * names. This module's job is to make the underlying PRINCIPLE — "compose
+ * real evidence into a deliberate editorial treatment appropriate to how
+ * much of it exists, never a generic card grid, never padded when evidence
+ * is thin" — a reusable, generalized capability instead of Friedman-
+ * specific code.
  *
  * Architecture: CRAWL -> EVIDENCE -> DESIGN INTELLIGENCE -> PATTERN
  * SELECTION -> COMPOSITION -> RENDERER -> QA. Design Intelligence (the LLM,
@@ -20,56 +22,130 @@ import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
  * signatureElement, and contentEmphasis — that reasoning is real and
  * expensive to duplicate. PATTERN SELECTION, this module, is deliberately
  * NOT a second LLM call: it's a small, deterministic, testable function
- * that translates Design Intelligence's already-made creative call plus
- * hard evidence facts (does real photography exist? how many testimonials?)
- * into a concrete per-section pattern id design-generation-service.ts's
- * assembleComponents() can act on and components/design-preview/design-
- * preview.tsx can render — the same "Generation is deterministic and rule-
- * based, never a second LLM layer" precedent this codebase already holds to
- * everywhere else (design-generation-service.ts's own header comment).
+ * that translates a business-type visual strategy (below) plus hard
+ * evidence facts (does real photography exist?) into a concrete per-section
+ * pattern id design-generation-service.ts's assembleComponents() can act on
+ * and components/design-preview/design-preview.tsx can render — the same
+ * "Generation is deterministic and rule-based, never a second LLM layer"
+ * precedent this codebase already holds to everywhere else (design-
+ * generation-service.ts's own header comment).
  *
  * Evidence-density awareness is built into each resolver, not bolted on
  * separately: a resolver that would pick an evidence-hungry pattern with no
  * evidence to back it instead falls back to the pattern that degrades
  * honestly — most content types generalize by construction already (a
  * numbered index with 1 real category and one with 5 both use the same
- * pattern id; only genuinely evidence-*gated* patterns, like an image-led
- * hero, need this module to decide between two DIFFERENT patterns).
- *
- * Deliberately scoped, not exhaustive: every section category names its
- * full intended pattern vocabulary (documented below) so Design
- * Intelligence/Generation have real room to grow into over time, but only
- * the patterns backed by a genuine, checkable evidence signal today
- * (currently: hero) have more than one real, distinct implementation.
- * Registering a category with a single canonical pattern is an honest
- * statement of "this is the one strong, evidence-adaptive treatment that
- * exists today," not a placeholder pretending to be a full library —
- * building several near-identical "variants" that don't actually compose
- * differently would be decoration for its own sake, exactly what docs/
- * DESIGN_INTELLIGENCE.md §2 warns against.
+ * pattern id; only genuinely evidence-*gated* patterns, like a photo-backed
+ * hero, need this module to decide between DIFFERENT patterns).
  */
 
 // ===========================================================================
-// Hero — the one category with a real, evidence-gated second pattern today.
+// Hero — six real, structurally distinct compositions (CTO Benchmark
+// Follow-Up directive §3/§8: "the underlying layout, composition,
+// typography hierarchy, imagery treatment, and CTA structure need to
+// vary," not just color). Each internal id below corresponds 1:1 to one of
+// the CTO's six lettered patterns — kept as descriptive technical ids
+// (what the composition IS) rather than the letters themselves, with the
+// mapping documented here once so it's unambiguous everywhere else in the
+// codebase:
+//
+//   editorial-typographic  = Pattern A, Editorial      — large type-first
+//     composition, no photography, magazine/editorial feel. A left hairline
+//     rule + eyebrow label carries hierarchy instead of imagery. Outline CTA.
+//   centered-cinematic     = Pattern B, Cinematic      — full-bleed real
+//     photography, dark scrim, centered display type, dramatic/storytelling
+//     register. Outline CTA on the scrim.
+//   split-media-text       = Pattern C, Local Story    — real photography
+//     placed asymmetrically beside (not behind) the text in a two-column
+//     grid — warmer, more human-scaled than a full-bleed dramatic treatment;
+//     reads as "here's our place/team," not "look at this."  Outline CTA.
+//   image-full-bleed       = Pattern D, Service/Product — real photography
+//     fills the hero, text is LEFT-aligned (not centered) over it, and the
+//     CTA is a solid FILLED button (not outline) — the more conversion-
+//     forward, benefit-led treatment the CTO's description calls for.
+//   oversized-typographic  = Pattern E, Luxury Minimal — the widest
+//     container and the largest display type scale of any pattern, no
+//     border/rule decoration at all, CTA rendered as a plain understated
+//     text link rather than a boxed button — restraint itself is the
+//     signal, per docs/DESIGN_INTELLIGENCE.md's luxury-services guidance.
+//   offset-overlap         = Pattern F, Bold Commerce  — the prose block is
+//     offset and given its own tinted background panel (visual energy/
+//     "stronger cards" without literally being a card grid elsewhere on the
+//     page), paired with a solid FILLED, larger CTA button — the most
+//     conversion-urgent of the six.
+//
+// Never a random assignment (CTO §4): resolveHeroPattern below always
+// starts from a per-industryBucket ranked preference list (the CTO's own
+// "suggested starting logic" table) and only ever removes a candidate for a
+// concrete evidence reason (no real photography for a photo-dependent
+// pattern) — it never swaps in a pattern industryBucket didn't already rank
+// for this business's category.
 // ===========================================================================
 
-export const HERO_PATTERN_VOCABULARY = ["editorial-typographic", "image-full-bleed"] as const;
+export const HERO_PATTERN_VOCABULARY = [
+  "editorial-typographic",
+  "centered-cinematic",
+  "split-media-text",
+  "image-full-bleed",
+  "oversized-typographic",
+  "offset-overlap",
+] as const;
 export type HeroPatternId = (typeof HERO_PATTERN_VOCABULARY)[number];
 
+/** centered-cinematic, split-media-text, and image-full-bleed (Cinematic, Local Story, Service/Product) all require REAL photography the business itself publishes (DesignBrief.gallery, crawl-adapter.ts's extractGallery) — never a Lighthouse/Screenshot-adapter page capture (the exact Friedman Flagship regression this pass's Step 1 fixed). editorial-typographic, oversized-typographic, and offset-overlap never depend on photography at all — the three patterns evidence-thin businesses can always honestly reach. */
+const PHOTO_DEPENDENT_HERO_PATTERNS = new Set<HeroPatternId>(["centered-cinematic", "split-media-text", "image-full-bleed"]);
+
 /**
- * image-full-bleed requires REAL photography the business itself publishes
- * (DesignBrief.gallery, crawl-adapter.ts's extractGallery) — never a
- * Lighthouse/Screenshot-adapter page capture (the exact Friedman Flagship
- * regression this pass's Step 1 fixed: a diagnostic UI screenshot is not
- * "real business photography" and must never be used as decorative hero
- * imagery). Falls back to editorial-typographic — Friedman's own real hero
- * treatment — whenever that evidence doesn't exist, regardless of what
- * layoutFamily Design Intelligence chose; imagery-led is a legitimate
- * REASON to prefer an image hero, never license to fabricate one.
+ * Business-type -> visual strategy (CTO Benchmark Follow-Up directive §4),
+ * translated onto lib/design-references/reference-library.ts's actual
+ * IndustryBucket vocabulary and this module's pattern ids. Order is ranked
+ * preference, highest first — resolveHeroPattern below walks this list and
+ * takes the first candidate real evidence can actually support. Directly
+ * follows the CTO's own suggested table where our bucket vocabulary has a
+ * matching entry (lawFirm, restaurant); "homeService" is this codebase's
+ * one bucket covering both the CTO's separately-named HVAC and Contractor
+ * categories, so its preference list blends both (Service/Product first —
+ * common to both — then Bold Commerce, then Cinematic). The CTO's
+ * Barbershop/Auto Service/Retail examples have no corresponding
+ * IndustryBucket in this codebase today (adding new buckets is a larger,
+ * separate change touching WIREFRAME_TEMPLATE_BY_BUCKET and the reference
+ * library — out of scope for this pass) and are intentionally not mapped.
  */
-export function resolveHeroPattern(layoutFamily: LayoutFamily, hasRealImagery: boolean): HeroPatternId {
-  if (hasRealImagery && (layoutFamily === "imagery-led" || layoutFamily === "listing-led")) {
-    return "image-full-bleed";
+const INDUSTRY_HERO_PREFERENCE: Record<IndustryBucket, HeroPatternId[]> = {
+  // CTO: "Restaurant -> Editorial/Local Story/Cinematic"
+  restaurant: ["editorial-typographic", "split-media-text", "centered-cinematic"],
+  // CTO: "Law Firm -> Editorial/Luxury Minimal"
+  lawFirm: ["editorial-typographic", "oversized-typographic"],
+  // CTO: "HVAC -> Service/Product/Bold Commerce" blended with "Contractor -> Cinematic/Service-Product"
+  homeService: ["image-full-bleed", "offset-overlap", "centered-cinematic"],
+  // No direct CTO example; closest named analogue is "Professional Services -> Luxury Minimal/Editorial" (trust/credibility-led, same register as dentistry)
+  dentistMedical: ["oversized-typographic", "editorial-typographic"],
+  // No direct CTO example; imagery-heavy, individual-listing-driven per docs/DESIGN_INTELLIGENCE.md's own industry table — closest to Local Story/Cinematic
+  realEstate: ["split-media-text", "centered-cinematic"],
+  // No direct CTO example; higher energy tolerance per docs/DESIGN_INTELLIGENCE.md -> Bold Commerce/Cinematic
+  fitness: ["offset-overlap", "centered-cinematic"],
+  // CTO's own "Professional Services -> Luxury Minimal/Editorial" is the direct fit
+  luxuryServices: ["oversized-typographic", "editorial-typographic"],
+  // Safe, evidence-agnostic default
+  general: ["editorial-typographic", "image-full-bleed"],
+};
+
+/**
+ * resolveHeroPattern — Pattern Selection's hero decision. Starts from
+ * INDUSTRY_HERO_PREFERENCE[industryBucket] (falling back to "general" for
+ * an unrecognized bucket, never throwing) and returns the first candidate
+ * that doesn't require photography this business doesn't have. Every
+ * preference list's last resort is reachable without photography (each
+ * list is constructed so its final entries include at least one non-photo-
+ * dependent pattern, and the function's own final fallback below is
+ * editorial-typographic regardless), so this always returns a real,
+ * renderable pattern — never partial/undefined.
+ */
+export function resolveHeroPattern(industryBucket: IndustryBucket, hasRealImagery: boolean): HeroPatternId {
+  const preferences = INDUSTRY_HERO_PREFERENCE[industryBucket] ?? INDUSTRY_HERO_PREFERENCE.general;
+  for (const candidate of preferences) {
+    if (PHOTO_DEPENDENT_HERO_PATTERNS.has(candidate) && !hasRealImagery) continue;
+    return candidate;
   }
   return "editorial-typographic";
 }
@@ -86,7 +162,7 @@ export const SECTION_PATTERN_REGISTRY = {
   hero: {
     vocabulary: HERO_PATTERN_VOCABULARY,
     implemented: HERO_PATTERN_VOCABULARY,
-    note: "Two real, evidence-gated variants: editorial-typographic (no real photography — oversized serif headline, thin eyebrow label, restrained accent CTA, solid palette fill) and image-full-bleed (real business photography exists — the same headline composited over it with a scrim). Chosen by resolveHeroPattern above.",
+    note: "Six real, structurally distinct compositions mapped 1:1 to the CTO's Editorial/Cinematic/Local Story/Service-Product/Luxury Minimal/Bold Commerce patterns (see the module-level comment above for the exact mapping and what varies structurally in each). Selected by resolveHeroPattern's per-industryBucket preference table, gated on real photography for the three photo-dependent patterns.",
   },
   services: {
     vocabulary: ["numbered-editorial-index"] as const,

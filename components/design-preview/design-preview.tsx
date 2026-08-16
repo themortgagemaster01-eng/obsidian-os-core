@@ -220,6 +220,11 @@ export function DesignPreview({
   const contactNode = componentsBySection.get("contact");
   const contactPhone = contactNode?.slots.find((s) => s.name === "phone");
   const realContactPhone = contactPhone && isRealSlot(contactPhone) ? contactPhone.value! : null;
+  // Real tel:-ready value, never re-derived from realContactPhone's
+  // formatted display text (see resolvePhoneHref's own comment — stripping
+  // digits from "(519) 744-9292" drops the +1 country code).
+  const contactPhoneHref = contactNode?.slots.find((s) => s.name === "phoneHref");
+  const realContactPhoneHref = contactPhoneHref && isRealSlot(contactPhoneHref) ? contactPhoneHref.value! : realContactPhone;
 
   return (
     <div
@@ -244,6 +249,8 @@ export function DesignPreview({
           [data-design-preview] { font-size: ${mobileBodyPx}px !important; }
           [data-op-touch-target] { min-width: var(--op-tt-w); min-height: var(--op-tt-h); }
           [data-op-nav-links] { display: none !important; }
+          [data-hero-pattern="split-media-text"] { display: block !important; }
+          [data-hero-pattern="offset-overlap"] { margin-left: 0 !important; }
         }
       `}</style>
 
@@ -251,6 +258,7 @@ export function DesignPreview({
         businessName={businessName}
         renderedSections={renderedSections.map((s) => s.type)}
         realContactPhone={realContactPhone}
+        realContactPhoneHref={realContactPhoneHref}
         neutral={neutral}
         textColor={FALLBACK.text}
         accent={accent}
@@ -280,6 +288,7 @@ export function DesignPreview({
             background={background}
             foreground={foreground}
             backgroundImageUrl={type === "hero" ? heroImageUrl : null}
+            heroPattern={type === "hero" ? node.pattern : undefined}
             isSignature={isSignature}
             accent={accent}
           >
@@ -290,6 +299,7 @@ export function DesignPreview({
               accent={accent}
               textColor={foreground}
               isSignature={isSignature}
+              heroImageUrl={type === "hero" ? heroImageUrl : null}
             />
           </SectionShell>
         );
@@ -314,6 +324,7 @@ function Nav({
   businessName,
   renderedSections,
   realContactPhone,
+  realContactPhoneHref,
   neutral,
   textColor,
   accent,
@@ -322,6 +333,7 @@ function Nav({
   businessName: string;
   renderedSections: SectionType[];
   realContactPhone: string | null;
+  realContactPhoneHref: string | null;
   neutral: string;
   textColor: string;
   accent: string;
@@ -369,7 +381,7 @@ function Nav({
             </div>
           )}
           {realContactPhone && (
-            <a href={`tel:${realContactPhone.replace(/[^\d+]/g, "")}`} style={{ fontSize: "0.85rem", fontWeight: 600, color: accent }}>
+            <a href={`tel:${(realContactPhoneHref ?? realContactPhone).replace(/[^\d+]/g, "")}`} style={{ fontSize: "0.85rem", fontWeight: 600, color: accent }}>
               {realContactPhone}
             </a>
           )}
@@ -402,6 +414,7 @@ function SectionShell({
   background,
   foreground,
   backgroundImageUrl,
+  heroPattern,
   isSignature,
   accent,
   children,
@@ -413,6 +426,7 @@ function SectionShell({
   foreground: string;
   /** Real, already-captured business photography (see DesignPreviewProps.heroImageUrl) — currently only ever passed for "hero". */
   backgroundImageUrl?: string | null;
+  heroPattern?: string;
   /** True for exactly the one section design-generation-service.ts's resolveSignatureSection targets — see SignatureRule. */
   isSignature: boolean;
   accent: string;
@@ -438,7 +452,7 @@ function SectionShell({
         // photograph — the same "reuse an already-safe pairing rather than
         // introduce a new, unvalidated one" discipline as the CTA borders
         // in TouchAffordance above.
-        backgroundImage: backgroundImageUrl
+        backgroundImage: backgroundImageUrl && (heroPattern === "image-full-bleed" || heroPattern === "centered-cinematic")
           ? `linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url("${backgroundImageUrl}")`
           : isSignature && !isHero
             ? `linear-gradient(${background}, ${background}), linear-gradient(${accent}14, ${accent}14)`
@@ -512,6 +526,19 @@ function SectionHeading({
  * correct once this session; the accent is used only as a border; a
  * non-text UI element, held to a looser contrast bar than body text.
  */
+/**
+ * variant (CTO Benchmark Follow-Up directive §3: CTA structure must be part
+ * of what genuinely varies between hero patterns, not just imagery/type):
+ * "outline" is every existing call site's original, unchanged look —
+ * Editorial/Cinematic/Local Story hero CTAs, plus every non-hero section's
+ * CTA (contact/schedule/listings/faq), all keep this default exactly as
+ * before. "filled" (Service/Product, Bold Commerce — the two CTO names as
+ * the more conversion-forward patterns) is a solid accent-color button,
+ * higher visual weight. "text-link" (Luxury Minimal) drops the box/border
+ * entirely — restraint itself is the signal, per docs/DESIGN_INTELLIGENCE.md's
+ * luxury-services guidance that whitespace/typography should carry the
+ * "premium" read rather than a boxed CTA competing with it.
+ */
 function TouchAffordance({
   refinedDesign,
   section,
@@ -519,6 +546,7 @@ function TouchAffordance({
   accent,
   textColor,
   href,
+  variant = "outline",
 }: {
   refinedDesign: RefinedDesign;
   section: SectionType;
@@ -526,10 +554,17 @@ function TouchAffordance({
   accent: string;
   textColor: string;
   href?: string;
+  variant?: "outline" | "filled" | "text-link";
 }) {
   const target = findTouchTarget(refinedDesign, section);
   if (!target) return null;
   const Tag = href ? "a" : "span";
+  const variantStyle: React.CSSProperties =
+    variant === "filled"
+      ? { border: `1.5px solid ${accent}`, backgroundColor: accent, color: getReadableTextColor(accent) }
+      : variant === "text-link"
+        ? { border: "none", borderBottom: `1.5px solid ${accent}`, borderRadius: 0, padding: "0.4rem 0", color: textColor }
+        : { border: `1.5px solid ${accent}`, color: textColor };
   return (
     <Tag
       data-op-touch-target
@@ -542,8 +577,6 @@ function TouchAffordance({
           minWidth: `${target.widthPx}px`,
           minHeight: `${target.heightPx}px`,
           padding: "0.6rem 1.75rem",
-          border: `1.5px solid ${accent}`,
-          color: textColor,
           borderRadius: "0.25rem",
           marginTop: "1.5rem",
           fontWeight: 600,
@@ -552,6 +585,7 @@ function TouchAffordance({
           textTransform: "uppercase",
           "--op-tt-w": `${target.widthPx}px`,
           "--op-tt-h": `${target.heightPx}px`,
+          ...variantStyle,
         } as React.CSSProperties
       }
     >
@@ -564,6 +598,22 @@ function telHref(phone: string): string {
   return `tel:${phone.replace(/[^\d+]/g, "")}`;
 }
 
+/**
+ * Prefers the real "phoneHref" slot (design-generation-service.ts's
+ * resolvePhoneForDisplay — the full E.164 value, e.g. "+15197449292") over
+ * re-deriving a tel: link from the formatted display text, which would
+ * silently drop the +1 country code telHref's own digit-stripping can't
+ * recover ("(519) 744-9292" -> "5197449292", not "+15197449292"). Falls
+ * back to telHref(displayValue) only for an older stored design predating
+ * the phoneHref slot (CTO Benchmark Follow-Up directive §1: "preserve the
+ * underlying tel: link").
+ */
+function resolvePhoneHref(slots: ComponentNode["slots"], displayValue: string): string {
+  const hrefSlot = slots.find((s) => s.name === "phoneHref");
+  if (hrefSlot && isRealSlot(hrefSlot)) return telHref(hrefSlot.value!);
+  return telHref(displayValue);
+}
+
 function SectionBody({
   node,
   refinedDesign,
@@ -571,6 +621,7 @@ function SectionBody({
   accent,
   textColor,
   isSignature,
+  heroImageUrl,
 }: {
   node: ComponentNode;
   refinedDesign: RefinedDesign;
@@ -578,6 +629,7 @@ function SectionBody({
   accent: string;
   textColor: string;
   isSignature: boolean;
+  heroImageUrl: string | null;
 }) {
   const section = node.section;
 
@@ -598,8 +650,37 @@ function SectionBody({
     // how much real text it actually carries.
     const headlineLength = headline && isRealSlot(headline) ? headline.value!.length : 0;
     const lengthScale = headlineLength > 220 ? 0.6 : headlineLength > 140 ? 0.75 : headlineLength > LONG_HEADLINE_SCALE_THRESHOLD ? 0.88 : 1;
+    const heroPattern = node.pattern ?? "editorial-typographic";
+    // CTO Benchmark Follow-Up directive §3: layout, composition, typography
+    // scale, and CTA structure must all genuinely vary per pattern, not
+    // just color. See section-patterns.ts's module comment for the full
+    // A-F CTO-pattern mapping each id below corresponds to.
+    const isSplit = heroPattern === "split-media-text" && !!heroImageUrl;
+    const ctaVariant: "outline" | "filled" | "text-link" =
+      heroPattern === "image-full-bleed" || heroPattern === "offset-overlap"
+        ? "filled" // Service/Product, Bold Commerce — conversion-forward
+        : heroPattern === "oversized-typographic"
+          ? "text-link" // Luxury Minimal — restraint is the signal
+          : "outline"; // Editorial, Cinematic, Local Story
+    const containerStyle: React.CSSProperties = {
+      maxWidth: heroPattern === "oversized-typographic" ? "64rem" : "42rem",
+      display: isSplit ? "grid" : undefined,
+      gridTemplateColumns: isSplit ? "minmax(0, 1fr) minmax(14rem, 0.85fr)" : undefined,
+      alignItems: "center",
+      gap: isSplit ? "3rem" : undefined,
+      marginLeft: heroPattern === "offset-overlap" ? "8%" : undefined,
+      borderLeft: heroPattern === "editorial-typographic" ? `2px solid ${accent}` : undefined,
+      paddingLeft: heroPattern === "editorial-typographic" ? "1.5rem" : undefined,
+      textAlign: heroPattern === "centered-cinematic" ? "center" : undefined,
+    };
+    const proseStyle: React.CSSProperties = {
+      transform: heroPattern === "offset-overlap" ? "translateY(-2rem)" : undefined,
+      padding: heroPattern === "offset-overlap" ? "2rem" : undefined,
+      backgroundColor: heroPattern === "offset-overlap" ? `${textColor}12` : undefined,
+    };
     return (
-      <div style={{ maxWidth: "42rem" }}>
+      <div style={containerStyle} data-hero-pattern={heroPattern}>
+        <div style={proseStyle}>
         {name && isRealSlot(name) && (
           <div>
             <p
@@ -621,7 +702,7 @@ function SectionBody({
           <div
             style={{
               fontFamily: headingFontStack,
-              fontSize: `${Math.round(baseDisplayPx * lengthScale * 1.15)}px`,
+              fontSize: `${Math.round(baseDisplayPx * lengthScale * (heroPattern === "oversized-typographic" ? 1.5 : 1.15))}px`,
               fontWeight: displayRole ? toCssFontWeight(displayRole.weight) : 600,
               lineHeight: 1.08,
               letterSpacing: "-0.01em",
@@ -644,7 +725,9 @@ function SectionBody({
             <SlotValue slot={supportingText} />
           </p>
         )}
-        <TouchAffordance refinedDesign={refinedDesign} section="hero" label="Get in Touch" accent={accent} textColor={textColor} href={`#${sectionAnchorId("contact")}`} />
+        <TouchAffordance refinedDesign={refinedDesign} section="hero" label="Get in Touch" accent={accent} textColor={textColor} href={`#${sectionAnchorId("contact")}`} variant={ctaVariant} />
+        </div>
+        {isSplit && <img src={heroImageUrl!} alt="" style={{ width: "100%", minHeight: "22rem", objectFit: "cover", display: "block" }} />}
       </div>
     );
   }
@@ -664,7 +747,7 @@ function SectionBody({
               </p>
             )}
             {phone && isRealSlot(phone) && (
-              <a href={telHref(phone.value!)} style={{ fontSize: "0.9rem", opacity: MUTED_TEXT_OPACITY, display: "inline-block", marginTop: "0.35rem" }}>
+              <a href={resolvePhoneHref(node.slots, phone.value!)} style={{ fontSize: "0.9rem", opacity: MUTED_TEXT_OPACITY, display: "inline-block", marginTop: "0.35rem" }}>
                 <SlotValue slot={phone} />
               </a>
             )}
@@ -851,14 +934,14 @@ function SectionBody({
       // so it earns proportionate visual weight rather than sitting in the
       // same small label/value row as every other field.
       const phone = realSlots.find((s) => s.name === "phone");
-      const rest = realSlots.filter((s) => s.name !== "phone" && s.name !== "businessName");
+      const rest = realSlots.filter((s) => s.name !== "phone" && s.name !== "phoneHref" && s.name !== "businessName");
       const displayRole = findTypeRole(refinedDesign, "heading1");
       return (
         <div>
           <SectionHeading section={section} refinedDesign={refinedDesign} fontStack={headingFontStack} color={textColor} isSignature={isSignature} accent={accent} />
           {phone && (
             <a
-              href={telHref(phone.value!)}
+              href={resolvePhoneHref(node.slots, phone.value!)}
               style={{
                 display: "block",
                 fontFamily: headingFontStack,

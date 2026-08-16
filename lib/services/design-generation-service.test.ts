@@ -300,7 +300,10 @@ describe("design-generation-service: assembleComponents", () => {
 
     const phone = contact.slots.find((s) => s.name === "phone")!;
     assert.equal(phone.source, "real");
-    assert.equal(phone.value, "519-744-9292");
+    // CTO Benchmark Follow-Up directive §1: phone renders in a normal
+    // human-readable format regardless of the source site's own raw style
+    // — never the real Veslo regression ("15197449292" verbatim).
+    assert.equal(phone.value, "(519) 744-9292");
 
     for (const name of ["address", "hours"]) {
       const slot = contact.slots.find((s) => s.name === name)!;
@@ -319,7 +322,7 @@ describe("design-generation-service: assembleComponents", () => {
     });
     const footerPhone = withPhone.find((c) => c.section === "footer")!.slots.find((s) => s.name === "phone")!;
     assert.equal(footerPhone.source, "real");
-    assert.equal(footerPhone.value, "703-836-9030");
+    assert.equal(footerPhone.value, "(703) 836-9030");
 
     const withoutPhone = assembleComponents(wireframe, { businessName: "Acme Law", citedInsights: [], contactEvidence: NO_CONTACT_EVIDENCE });
     const placeholderFooterPhone = withoutPhone.find((c) => c.section === "footer")!.slots.find((s) => s.name === "phone")!;
@@ -339,11 +342,68 @@ describe("design-generation-service: assembleComponents", () => {
     const contact = components.find((c) => c.section === "contact")!;
 
     assert.equal(contact.slots.find((s) => s.name === "phone")?.source, "real");
-    assert.equal(contact.slots.find((s) => s.name === "phone")?.value, "555-000-1111");
+    assert.equal(contact.slots.find((s) => s.name === "phone")?.value, "(555) 000-1111");
     assert.equal(contact.slots.find((s) => s.name === "address")?.source, "real");
     assert.equal(contact.slots.find((s) => s.name === "address")?.value, "1 Main St, Springfield");
     assert.equal(contact.slots.find((s) => s.name === "hours")?.source, "real");
     assert.equal(contact.slots.find((s) => s.name === "hours")?.value, "Mon-Fri 9am-5pm");
+  });
+
+  describe("design-generation-service: phone display formatting (CTO Benchmark Follow-Up directive §1/§2 — generic, not business-specific)", () => {
+    test("formats a NANP number for display regardless of the source site's own raw style, and emits a separate phoneHref carrying the real tel:-ready E.164 value — the actual Veslo regression (raw '15197449292' rendered verbatim)", () => {
+      const evidence: ContactInfo = {
+        phones: ["15197449292"],
+        phoneEvidence: [{ phone: "15197449292", normalized: "+15197449292", sourceUrl: "https://veslo.test/", source: "tel-link" }],
+        emails: [],
+        address: null,
+        hours: null,
+      };
+      const wireframe = generateWireframe(briefFor("restaurant", "imagery-led"), { hasRealTestimonials: false });
+      const components = assembleComponents(wireframe, { businessName: "Veslo Family Restaurant", citedInsights: [], contactEvidence: evidence });
+      const contact = components.find((c) => c.section === "contact")!;
+      assert.equal(contact.slots.find((s) => s.name === "phone")?.value, "(519) 744-9292");
+      assert.equal(contact.slots.find((s) => s.name === "phoneHref")?.value, "+15197449292");
+      assert.equal(contact.slots.find((s) => s.name === "phoneHref")?.source, "real");
+    });
+
+    test("footer gets the same formatted phone + phoneHref pair as contact", () => {
+      const evidence: ContactInfo = {
+        phones: ["8664822007"],
+        phoneEvidence: [{ phone: "8664822007", normalized: "+18664822007", sourceUrl: "https://alltech-hvac.test/", source: "tel-link" }],
+        emails: [],
+        address: null,
+        hours: null,
+      };
+      const wireframe = generateWireframe(briefFor("homeService", "credibility-led"), { hasRealTestimonials: false });
+      const components = assembleComponents(wireframe, { businessName: "Alltech HVAC", citedInsights: [], contactEvidence: evidence });
+      const footer = components.find((c) => c.section === "footer")!;
+      assert.equal(footer.slots.find((s) => s.name === "phone")?.value, "(866) 482-2007");
+      assert.equal(footer.slots.find((s) => s.name === "phoneHref")?.value, "+18664822007");
+    });
+
+    test("falls back to best-effort formatting from the raw phones[0] string when no phoneEvidence is present — an older stored row or a hand-built fixture, never a crash", () => {
+      const evidence: ContactInfo = { phones: ["(703) 836.9030"], emails: [], address: null, hours: null };
+      const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
+      const components = assembleComponents(wireframe, { businessName: "Acme Law", citedInsights: [], contactEvidence: evidence });
+      const contact = components.find((c) => c.section === "contact")!;
+      assert.equal(contact.slots.find((s) => s.name === "phone")?.value, "(703) 836-9030");
+      assert.equal(contact.slots.find((s) => s.name === "phoneHref")?.value, "+17038369030");
+    });
+
+    test("a non-NANP real number keeps its + prefix rather than being mangled into a wrong-looking domestic shape", () => {
+      const evidence: ContactInfo = {
+        phones: ["+442071234567"],
+        phoneEvidence: [{ phone: "+442071234567", normalized: "+442071234567", sourceUrl: "https://london-firm.test/", source: "tel-link" }],
+        emails: [],
+        address: null,
+        hours: null,
+      };
+      const wireframe = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
+      const components = assembleComponents(wireframe, { businessName: "London Firm", citedInsights: [], contactEvidence: evidence });
+      const contact = components.find((c) => c.section === "contact")!;
+      assert.equal(contact.slots.find((s) => s.name === "phone")?.value, "+442071234567");
+      assert.equal(contact.slots.find((s) => s.name === "phoneHref")?.value, "+442071234567");
+    });
   });
 
   // ===========================================================================

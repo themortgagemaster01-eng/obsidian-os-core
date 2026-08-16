@@ -141,6 +141,26 @@ describe("crawl-adapter: extractStructuredFacts (DOM/regex heuristics, no JSON-L
   });
 });
 
+describe("crawl-adapter: phone normalization and provenance", () => {
+  test("deduplicates common real-world formats by normalized number while retaining the first verified source", () => {
+    const facts = extractStructuredFacts(
+      cheerio.load(`<body><a href="tel:+1 (519) 744-9292">Call</a><p>Phone: 519.744.9292</p><script type="application/ld+json">{"@type":"LocalBusiness","telephone":"519-744-9292"}</script></body>`),
+      "https://business.test/contact"
+    );
+    assert.deepEqual(facts.contact.phones, ["+1 (519) 744-9292"]);
+    assert.deepEqual(facts.contact.phoneEvidence, [{ phone: "+1 (519) 744-9292", normalized: "+15197449292", sourceUrl: "https://business.test/contact", source: "tel-link" }]);
+  });
+
+  test("does not promote bare tracking IDs, ZIP codes, dates, or arbitrary numeric strings into phone evidence", () => {
+    const facts = extractStructuredFacts(
+      cheerio.load(`<body><p>Order 1234567890. ZIP 51974. Date 2026-08-12. Tracking 9988776655.</p></body>`),
+      "https://business.test/"
+    );
+    assert.deepEqual(facts.contact.phones, []);
+    assert.equal(facts.contact.phoneEvidence, undefined);
+  });
+});
+
 describe("crawl-adapter: extractStructuredFacts (no structured content at all)", () => {
   test("returns honest empty defaults, never a guessed value", () => {
     const $ = cheerio.load(EMPTY_HTML);

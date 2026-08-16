@@ -389,8 +389,10 @@ export interface AssembleComponentsContext {
   faqEvidence?: ContentSection[];
   /** DesignBrief.reviews passed through unchanged — real review count/rating, when the crawl found structured review data. Fills the credibility section's reviewCount slot when present; stays placeholder otherwise (§8). */
   reviews?: ReviewsSummary;
-  /** DesignBrief.gallery passed through unchanged — real photos the business itself publishes (crawl-adapter.ts's extractGallery), never a diagnostic page screenshot. Fills the gallery section's real image slots and is the one evidence source resolveHeroPattern (lib/design-intelligence/section-patterns.ts) may pick an image-led hero on; empty/absent means honestly no real photography exists (§8). */
+  /** DesignBrief.gallery passed through unchanged — real photos the business itself publishes (crawl-adapter.ts's extractGallery), never a diagnostic page screenshot. Fills the gallery section's real image slots and is the one evidence source resolveHeroPattern (lib/design-intelligence/section-patterns.ts) may pick a photo-backed hero pattern on; empty/absent means honestly no real photography exists (§8). */
   gallery?: GalleryImage[];
+  /** DesignBrief.industryBucket passed through unchanged — resolveHeroPattern's business-type -> visual strategy input (CTO Benchmark Follow-Up directive §4). Defaults to "general" when absent (a context built directly, bypassing generateWebsiteStructure) rather than throwing — hero pattern selection degrades to the safe default list, it never crashes Component Assembly over a missing classification. */
+  industryBucket?: IndustryBucket;
 }
 
 function realSlot(name: string, value: string): ComponentSlot {
@@ -399,6 +401,60 @@ function realSlot(name: string, value: string): ComponentSlot {
 
 function placeholderSlot(name: string): ComponentSlot {
   return { name, source: "placeholder", value: null };
+}
+
+// ===========================================================================
+// Phone display formatting (CTO Benchmark Follow-Up directive §1/§2: "format
+// it as a normal human-readable phone number wherever displayed; preserve
+// the underlying tel: link" — fixed generically, never a Veslo-specific
+// patch). crawl-adapter.ts's extractContact already normalizes real phone
+// evidence into E.164-shaped form (PhoneEvidence.normalized, e.g.
+// "+15197449292") with real source provenance (tel: link > JSON-LD >
+// visible text); this is the presentation-layer half — Generation composes
+// real evidence into customer-facing slots, so display formatting belongs
+// here, not in the adapter (lib/adapters/ stays I/O-only per CLAUDE.md).
+// ===========================================================================
+
+/**
+ * NANP (+1 followed by 10 digits — the USA/Canada numbers this pipeline's
+ * businesses overwhelmingly are) formats as "(519) 744-9292". Any other
+ * real E.164 number (a country code this function has no template for) is
+ * returned with its "+" prefix intact rather than guessed at — a plain
+ * international number is still honest and dialable, never mangled into a
+ * wrong-looking domestic shape.
+ */
+function formatPhoneForDisplay(normalized: string): string {
+  const nanpMatch = normalized.match(/^\+1(\d{3})(\d{3})(\d{4})$/);
+  if (nanpMatch) {
+    const [, area, exchange, line] = nanpMatch;
+    return `(${area}) ${exchange}-${line}`;
+  }
+  return normalized;
+}
+
+/**
+ * Real phone evidence, formatted for display, paired with its own real
+ * tel:-ready href — never re-derived from the display string (stripping
+ * digits from "(519) 744-9292" would silently drop the +1 country code the
+ * original tel: link had). Prefers ContactInfo.phoneEvidence[0] (crawl-
+ * adapter.ts's tel-link > JSON-LD > visible-text priority order, already
+ * normalized); falls back to best-effort normalization of the plain
+ * `phones[0]` string for a ContactInfo value with no provenance (an older
+ * stored row, or a hand-built test/API fixture predating phoneEvidence) —
+ * still generic, never business-specific, and never invents a number that
+ * wasn't in `phones` to begin with.
+ */
+function resolvePhoneForDisplay(contactEvidence: ContactInfo): { display: string; href: string } | null {
+  const evidence = contactEvidence.phoneEvidence?.[0];
+  if (evidence) {
+    return { display: formatPhoneForDisplay(evidence.normalized), href: evidence.normalized };
+  }
+  const raw = contactEvidence.phones[0];
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, "");
+  const normalized =
+    digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits.startsWith("1") ? `+${digits}` : raw.trim().startsWith("+") ? raw.trim() : `+${digits}`;
+  return { display: formatPhoneForDisplay(normalized), href: normalized };
 }
 
 // ===========================================================================
@@ -746,12 +802,16 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
       }
       return [placeholderSlot("faqContent")];
     }
-    case "contact":
+    case "contact": {
+      // "phone" is the formatted display string; "phoneHref" is the real
+      // tel:-ready E.164 value, kept as its OWN slot rather than re-derived
+      // from the display text by the renderer (stripping digits from
+      // "(519) 744-9292" would silently drop the +1 country code) — see
+      // resolvePhoneForDisplay above.
+      const phone = resolvePhoneForDisplay(context.contactEvidence);
       return [
         realSlot("businessName", context.businessName),
-        context.contactEvidence.phones.length > 0
-          ? realSlot("phone", context.contactEvidence.phones[0])
-          : placeholderSlot("phone"),
+        ...(phone ? [realSlot("phone", phone.display), realSlot("phoneHref", phone.href)] : [placeholderSlot("phone")]),
         context.contactEvidence.address
           ? realSlot("address", context.contactEvidence.address)
           : placeholderSlot("address"),
@@ -759,18 +819,19 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
           ? realSlot("hours", context.contactEvidence.hours)
           : placeholderSlot("hours"),
       ];
-    case "footer":
+    }
+    case "footer": {
       // phone reuses context.contactEvidence — already real, already flowing
       // to the contact section's own phone slot above; the footer's own
       // "closing statement" treatment (Premium Presentation Pass, §10) reads
       // better able to restate a real action than end on business-name-only.
+      const phone = resolvePhoneForDisplay(context.contactEvidence);
       return [
         realSlot("businessName", context.businessName),
         realSlot("copyrightYear", String(new Date().getFullYear())),
-        context.contactEvidence.phones.length > 0
-          ? realSlot("phone", context.contactEvidence.phones[0])
-          : placeholderSlot("phone"),
+        ...(phone ? [realSlot("phone", phone.display), realSlot("phoneHref", phone.href)] : [placeholderSlot("phone")]),
       ];
+    }
   }
 }
 
@@ -791,7 +852,7 @@ export function assembleComponents(
     const componentKind =
       type === "hero" ? HERO_KIND_BY_LAYOUT_FAMILY[wireframe.layoutFamily] : COMPONENT_KIND_BY_SECTION[type];
     const pattern =
-      type === "hero" ? resolveHeroPattern(wireframe.layoutFamily, !!context.gallery && context.gallery.length > 0) : undefined;
+      type === "hero" ? resolveHeroPattern(context.industryBucket ?? "general", !!context.gallery && context.gallery.length > 0) : undefined;
     return { section: type, componentKind, pattern, slots: buildSlots(type, context) };
   });
 }
@@ -881,6 +942,7 @@ export function generateWebsiteStructure(
     faqEvidence: brief.faqEvidence,
     reviews: brief.reviews,
     gallery: brief.gallery,
+    industryBucket: brief.industryBucket,
   };
   const components = assembleComponents(wireframe, assembleContext);
   const contentWarnings = collectContentWarnings(assembleContext);

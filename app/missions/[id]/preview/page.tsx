@@ -130,7 +130,8 @@ function PreviewBody({
   // caused when it was.
   const heroPattern = components.find((c) => c.section === "hero")?.pattern;
   const briefGallery = (brief?.brief as unknown as DesignBrief | null)?.gallery;
-  const heroImageUrl = heroPattern === "image-full-bleed" ? (briefGallery?.[0]?.src ?? null) : null;
+  const imageHeroPatterns = new Set(["image-full-bleed", "split-media-text", "centered-cinematic"]);
+  const heroImageUrl = imageHeroPatterns.has(heroPattern ?? "") ? (briefGallery?.[0]?.src ?? null) : null;
 
   return (
     <div className="border-t border-border">

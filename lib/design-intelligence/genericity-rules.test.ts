@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { findGenericPhrases, findDuplicateDesignSignatures, findCrossIndustryPatternConvergence } from "@/lib/design-intelligence/genericity-rules";
+import { findGenericPhrases, findDuplicateDesignSignatures, findCrossIndustryPatternConvergence, findStructuralConvergence } from "@/lib/design-intelligence/genericity-rules";
 
 describe("genericity-rules", () => {
   test("findGenericPhrases flags known hollow marketing filler", () => {
@@ -98,5 +98,38 @@ describe("genericity-rules", () => {
       { missionId: "b", heroThesis: "y", signatureElement: "y" },
     ]);
     assert.deepEqual(result, []);
+  });
+
+  test("findStructuralConvergence detects identical rendered topology, not color or copy similarity", () => {
+    const common = {
+      layoutFamily: "credibility-led",
+      heroPattern: "oversized-typographic",
+      sectionOrder: ["hero", "credibility", "services", "contact", "footer"],
+      navigationSections: ["credibility", "services", "contact"],
+      heroHasCta: true,
+      contactHasCta: true,
+      heroMediaMode: "none" as const,
+      componentHierarchy: ["hero:CredibilityHero:oversized-typographic", "credibility:TrustSignalRow:canonical", "services:ServiceList:canonical", "contact:ContactBlock:canonical", "footer:FooterBlock:canonical"],
+    };
+    assert.deepEqual(findStructuralConvergence([
+      { missionId: "a", heroThesis: "Different copy A", signatureElement: "x", ...common },
+      { missionId: "b", heroThesis: "Different copy B", signatureElement: "y", ...common },
+    ]), [["a", "b"]]);
+  });
+
+  test("findStructuralConvergence does not reject legitimately similar designs when their composition differs", () => {
+    const base = {
+      layoutFamily: "editorial",
+      sectionOrder: ["hero", "services", "contact", "footer"],
+      navigationSections: ["services", "contact"],
+      heroHasCta: true,
+      contactHasCta: true,
+      heroMediaMode: "none" as const,
+      componentHierarchy: ["hero:EditorialHero:editorial-typographic", "services:ServiceList:canonical", "contact:ContactBlock:canonical", "footer:FooterBlock:canonical"],
+    };
+    assert.deepEqual(findStructuralConvergence([
+      { missionId: "a", heroThesis: "A", signatureElement: "x", heroPattern: "editorial-typographic", ...base },
+      { missionId: "b", heroThesis: "B", signatureElement: "y", heroPattern: "offset-overlap", ...base, layoutFamily: "schedule-led", heroMediaMode: "none", componentHierarchy: ["hero:EnergeticHero:offset-overlap", ...base.componentHierarchy.slice(1)] },
+    ]), []);
   });
 });

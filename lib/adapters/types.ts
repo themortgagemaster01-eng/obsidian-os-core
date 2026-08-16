@@ -34,9 +34,18 @@ export interface CrawlPage {
  */
 export interface ContactInfo {
   phones: string[];
+  /** Per-number crawl provenance; optional for compatibility with older rows. */
+  phoneEvidence?: PhoneEvidence[];
   emails: string[];
   address: string | null;
   hours: string | null;
+}
+
+export interface PhoneEvidence {
+  phone: string;
+  normalized: string;
+  sourceUrl: string;
+  source: "tel-link" | "json-ld" | "visible-text";
 }
 
 export interface SocialLinks {

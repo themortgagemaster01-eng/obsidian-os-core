@@ -4,6 +4,7 @@ import type {
   CrawlPage,
   CrawlRawResult,
   ContactInfo,
+  PhoneEvidence,
   SocialLinks,
   ContentSection,
   ReviewsSummary,
@@ -143,7 +144,9 @@ function formatJsonLdAddress(address: unknown): string | null {
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
-const PHONE_REGEX = /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/g;
+// Visible text must carry human phone formatting. Bare 10-digit strings are
+// commonly tracking/account IDs and are accepted only from tel: or JSON-LD.
+const PHONE_REGEX = /(?:\+?1[\s.-]?)?(?:\(\s*\d{3}\s*\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}(?:\s*(?:x|ext\.?|extension)\s*\d{1,6})?/gi;
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const MAX_CONTACT_ITEMS = 5;
 
@@ -277,19 +280,45 @@ function extractAddress($: cheerio.CheerioAPI, addressFromJsonLd: string | null)
   );
 }
 
-function extractContact($: cheerio.CheerioAPI, jsonLd: JsonLdEntity[]): ContactInfo {
-  const bodyText = $("body").text();
+function normalizePhoneCandidate(value: string): { phone: string; normalized: string } | null {
+  const withoutScheme = value.replace(/^tel:/i, "").split(/[?#]/, 1)[0].trim();
+  const main = withoutScheme.replace(/(?:\s*(?:x|ext\.?|extension)\s*\d{1,6})$/i, "");
+  const digits = main.replace(/\D/g, "");
+  if (digits.length === 10) {
+    return { phone: main.trim(), normalized: `+1${digits}` };
+  }
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return { phone: main.trim(), normalized: `+${digits}` };
+  }
+  // JSON-LD and tel: values may be international E.164 values. Visible text
+  // never reaches this form unless it explicitly includes the + prefix.
+  if (withoutScheme.startsWith("+") && digits.length >= 8 && digits.length <= 15) {
+    return { phone: `+${digits}`, normalized: `+${digits}` };
+  }
+  return null;
+}
 
-  const phonesFromLinks = $('a[href^="tel:"]')
-    .map((_, el) => $(el).attr("href")?.replace(/^tel:/, "").trim())
-    .get()
-    .filter((v): v is string => !!v);
-  const phonesFromJsonLd = jsonLd.map((e) => e.telephone).filter((v): v is string => !!v);
-  const phonesFromText = bodyText.match(PHONE_REGEX) ?? [];
-  const phones = [...new Set([...phonesFromLinks, ...phonesFromJsonLd, ...phonesFromText])].slice(
-    0,
-    MAX_CONTACT_ITEMS
-  );
+function extractContact($: cheerio.CheerioAPI, jsonLd: JsonLdEntity[], sourceUrl: string): ContactInfo {
+  const bodyText = $("body").text();
+  const candidates: Array<{ value: string; source: PhoneEvidence["source"] }> = [
+    ...$('a[href^="tel:"]')
+      .map((_, el) => $(el).attr("href")?.trim())
+      .get()
+      .filter((value): value is string => !!value)
+      .map((value) => ({ value, source: "tel-link" as const })),
+    ...jsonLd.map((entity) => entity.telephone).filter((value): value is string => !!value).map((value) => ({ value, source: "json-ld" as const })),
+    ...(bodyText.match(PHONE_REGEX) ?? []).map((value) => ({ value, source: "visible-text" as const })),
+  ];
+  const phoneEvidence: PhoneEvidence[] = [];
+  const seenPhones = new Set<string>();
+  for (const candidate of candidates) {
+    const phone = normalizePhoneCandidate(candidate.value);
+    if (!phone || seenPhones.has(phone.normalized)) continue;
+    seenPhones.add(phone.normalized);
+    phoneEvidence.push({ ...phone, sourceUrl, source: candidate.source });
+    if (phoneEvidence.length >= MAX_CONTACT_ITEMS) break;
+  }
+  const phones = phoneEvidence.map((item) => item.phone);
 
   const emailsFromLinks = $('a[href^="mailto:"]')
     .map((_, el) => $(el).attr("href")?.replace(/^mailto:/, "").split("?")[0]?.trim())
@@ -313,7 +342,7 @@ function extractContact($: cheerio.CheerioAPI, jsonLd: JsonLdEntity[]): ContactI
     : null;
   const hours = extractHours($, hoursFromJsonLd);
 
-  return { phones, emails, address, hours };
+  return { phones, ...(phoneEvidence.length > 0 ? { phoneEvidence } : {}), emails, address, hours };
 }
 
 const SOCIAL_PATTERNS: { key: keyof SocialLinks; pattern: RegExp }[] = [
@@ -945,7 +974,7 @@ export function extractStructuredFacts($: cheerio.CheerioAPI, sourceUrl: string)
   ]);
 
   return {
-    contact: extractContact($, jsonLd),
+    contact: extractContact($, jsonLd, sourceUrl),
     socials: extractSocials($, jsonLd),
     certifications: bySections.certifications,
     licenses: bySections.licenses,
@@ -964,18 +993,24 @@ export function extractStructuredFacts($: cheerio.CheerioAPI, sourceUrl: string)
 type StructuredFacts = ReturnType<typeof extractStructuredFacts>;
 
 function mergeContactInfo(perPage: ContactInfo[]): ContactInfo {
-  const phones = new Set<string>();
+  const phoneEvidence: PhoneEvidence[] = [];
+  const normalizedPhones = new Set<string>();
   const emails = new Set<string>();
   let address: string | null = null;
   let hours: string | null = null;
   for (const c of perPage) {
-    c.phones.forEach((p) => phones.add(p));
+    for (const item of c.phoneEvidence ?? c.phones.map((phone) => ({ phone, normalized: phone.replace(/\D/g, ""), sourceUrl: "", source: "visible-text" as const }))) {
+      if (normalizedPhones.has(item.normalized)) continue;
+      normalizedPhones.add(item.normalized);
+      phoneEvidence.push(item);
+    }
     c.emails.forEach((e) => emails.add(e));
     if (!address && c.address) address = c.address;
     if (!hours && c.hours) hours = c.hours;
   }
   return {
-    phones: [...phones].slice(0, MAX_CONTACT_ITEMS),
+    phones: phoneEvidence.slice(0, MAX_CONTACT_ITEMS).map((item) => item.phone),
+    ...(phoneEvidence.length > 0 ? { phoneEvidence: phoneEvidence.slice(0, MAX_CONTACT_ITEMS) } : {}),
     emails: [...emails].slice(0, MAX_CONTACT_ITEMS),
     address,
     hours,

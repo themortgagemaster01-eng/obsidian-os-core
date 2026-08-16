@@ -26,6 +26,7 @@ import {
   findGenericPhrases,
   findDuplicateDesignSignatures,
   findCrossIndustryPatternConvergence,
+  findStructuralConvergence,
   type MissionDesignSignature,
 } from "@/lib/design-intelligence/genericity-rules";
 import { validateMotionChoice } from "@/lib/design-intelligence/motion-rules";
@@ -637,6 +638,8 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
 
   const crossIndustryConvergenceGroups = findCrossIndustryPatternConvergence(input.batch.designSignatures);
   const crossIndustryGroup = crossIndustryConvergenceGroups.find((g) => g.includes(input.missionId));
+  const structuralConvergenceGroups = findStructuralConvergence(input.batch.designSignatures);
+  const structuralGroup = structuralConvergenceGroups.find((g) => g.includes(input.missionId));
 
   const genericPhraseHits = [
     ...findGenericPhrases(input.designBrief.positioning ?? ""),
@@ -655,6 +658,9 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
     findings.push(
       `WARN: this mission's hero pattern is shared with ${crossIndustryGroup.length - 1} other mission(s) in this batch across genuinely different industries — worth a human's attention as a possible "AI sameness" default rather than an evidence-driven choice, though not automatically wrong (docs/DESIGN_INTELLIGENCE.md §5). Not flagged when the shared pattern occurs only within the same industry bucket, where evidence is often genuinely similar.`
     );
+  }
+  if (structuralGroup) {
+    findings.push(`WARN: this mission shares the same full rendered structural signature with ${structuralGroup.length - 1} other mission(s): hero composition, layout family, section order, navigation, CTA placement, media relationship, and component hierarchy all converge. Human review required.`);
   }
 
   const emojiSlots: string[] = [];
@@ -676,6 +682,12 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
         ? `Hero pattern shared across ${crossIndustryGroup.length} missions spanning different industries: ${crossIndustryGroup.join(", ")}.`
         : "No hero-pattern convergence found across genuinely different industries in this batch."
     ),
+    evidence(
+      "findStructuralConvergence",
+      structuralGroup
+        ? `Full structural signature shared with ${structuralGroup.length - 1} other mission(s): ${structuralGroup.filter((id) => id !== input.missionId).join(", ")}.`
+        : "No full rendered structural-signature convergence found in this batch."
+    ),
     evidence("findGenericPhrases", uniqueGenericPhraseHits.length > 0 ? `Banned phrases found: ${uniqueGenericPhraseHits.join(", ")}.` : "No banned generic-marketing phrases found."),
     evidence("emoji-as-icon scan", `${emojiSlots.length} real-slot value(s) containing an emoji character.`),
     evidence(
@@ -687,7 +699,7 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
   return deterministicResult(findings, ev, {
     evidenceSource: "structured",
     failIf: genericMatch || isHeroThesisDuplicated || isSignatureElementDuplicated || uniqueGenericPhraseHits.length > 0,
-    warnIf: isDuplicated || emojiSlots.length > 0 || !!crossIndustryGroup,
+    warnIf: isDuplicated || emojiSlots.length > 0 || !!crossIndustryGroup || !!structuralGroup,
   });
 }
 
@@ -1094,6 +1106,9 @@ async function buildBatchContext(
         return [r.mission_id, heroNode?.pattern ?? ""] as const;
       })
   );
+  const componentsByMissionId = new Map<string, ComponentNode[]>(
+    rows.filter((r) => !!r.components).map((r) => [r.mission_id, r.components as unknown as ComponentNode[]])
+  );
 
   const otherTypographyFamilies = rows
     .filter((r) => r.mission_id !== currentMissionId && !!r.refined_design)
@@ -1105,12 +1120,28 @@ async function buildBatchContext(
     .filter((r) => !!r.brief)
     .map((r) => {
       const brief = r.brief as unknown as DesignBrief;
+      const designRow = rows.find((design) => design.mission_id === r.mission_id);
+      const components = componentsByMissionId.get(r.mission_id) ?? [];
+      const renderedSections = ((designRow?.wireframe as unknown as Wireframe | null)?.sections ?? [])
+        .map((section) => section.type)
+        .filter((section) => {
+          const component = components.find((node) => node.section === section);
+          return !["menu", "gallery", "services", "schedule", "listings", "serviceArea", "credibility", "faq"].includes(section) || !!component?.slots.some((slot) => slot.source === "real");
+        });
+      const hero = components.find((node) => node.section === "hero");
       return {
         missionId: r.mission_id,
         heroThesis: brief.heroThesis ?? "",
         signatureElement: brief.signatureElement?.element ?? "",
         industryBucket: r.industry_bucket ?? "",
         heroPattern: heroPatternByMissionId.get(r.mission_id) ?? "",
+        layoutFamily: (designRow?.wireframe as unknown as Wireframe | null)?.layoutFamily ?? "",
+        sectionOrder: renderedSections,
+        navigationSections: renderedSections.filter((section) => section !== "hero" && section !== "footer"),
+        heroHasCta: !!hero,
+        contactHasCta: renderedSections.includes("contact"),
+        heroMediaMode: hero?.pattern === "split-media-text" ? "split" : hero?.pattern === "image-full-bleed" || hero?.pattern === "centered-cinematic" ? "background" : "none",
+        componentHierarchy: components.map((component) => `${component.section}:${component.componentKind}:${component.pattern ?? "canonical"}`),
       };
     });
   if (!designSignatures.some((s) => s.missionId === currentMissionId)) {

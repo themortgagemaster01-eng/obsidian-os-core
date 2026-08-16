@@ -73,6 +73,14 @@ export interface MissionDesignSignature {
   industryBucket?: string;
   /** design-generation-service.ts's hero ComponentNode.pattern (lib/design-intelligence/section-patterns.ts's HeroPatternId), when this mission has run Pattern Selection — "" for a legacy row predating that field. */
   heroPattern?: string;
+  /** Deterministic rendered-composition signals, populated for newly generated runs. */
+  layoutFamily?: string;
+  sectionOrder?: string[];
+  navigationSections?: string[];
+  heroHasCta?: boolean;
+  contactHasCta?: boolean;
+  heroMediaMode?: "none" | "background" | "split";
+  componentHierarchy?: string[];
 }
 
 /** Normalizes for comparison — case/whitespace shouldn't hide a real duplicate, and shouldn't manufacture a false one either. */
@@ -156,4 +164,32 @@ export function findCrossIndustryPatternConvergence(entries: MissionDesignSignat
   return [...byHeroPattern.values()]
     .filter((group) => new Set(group.map((g) => g.industryBucket)).size > 1)
     .map((group) => group.map((g) => g.missionId));
+}
+
+/**
+ * Full structural convergence is intentionally stronger than an identical
+ * color/font/hero-copy comparison. A result is emitted only when every
+ * render-affecting topology signal is known and identical: layout family,
+ * hero composition/media relationship, ordered sections, actual navigation,
+ * CTA placement, and component hierarchy. Missing legacy data is excluded.
+ */
+export function findStructuralConvergence(entries: MissionDesignSignature[]): string[][] {
+  const groups = new Map<string, string[]>();
+  for (const entry of entries) {
+    if (!entry.layoutFamily || !entry.heroPattern || !entry.sectionOrder || !entry.navigationSections || !entry.componentHierarchy || entry.heroHasCta === undefined || entry.contactHasCta === undefined || !entry.heroMediaMode) continue;
+    const key = JSON.stringify({
+      layoutFamily: entry.layoutFamily,
+      heroPattern: entry.heroPattern,
+      sectionOrder: entry.sectionOrder,
+      navigationSections: entry.navigationSections,
+      heroHasCta: entry.heroHasCta,
+      contactHasCta: entry.contactHasCta,
+      heroMediaMode: entry.heroMediaMode,
+      componentHierarchy: entry.componentHierarchy,
+    });
+    const group = groups.get(key);
+    if (group) group.push(entry.missionId);
+    else groups.set(key, [entry.missionId]);
+  }
+  return [...groups.values()].filter((group) => group.length > 1);
 }
