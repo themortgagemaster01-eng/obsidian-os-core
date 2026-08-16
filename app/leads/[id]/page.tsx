@@ -116,13 +116,20 @@ export default async function LeadDetailPage({ params }: PageParams) {
 
         <section>
           <h2 className="mb-3 text-lg font-semibold text-foreground">Why This Business Is An Opportunity</h2>
-          <p className="text-sm text-muted-foreground">{profile.whyOpportunity}</p>
-          {profile.makeoverPotentialReasons.length > 0 && (
-            <ul className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
-              {profile.makeoverPotentialReasons.map((reason, i) => (
-                <li key={i}>— {reason}</li>
+          {profile.makeoverPotential === "reject" ? (
+            <div className="flex flex-col gap-1 text-sm text-muted-foreground">
+              {profile.opportunityReasons.map((reason, i) => (
+                <p key={i}>{reason}</p>
+              ))}
+            </div>
+          ) : profile.opportunityReasons.length > 0 ? (
+            <ul className="flex flex-col gap-1 text-sm text-foreground">
+              {profile.opportunityReasons.map((reason, i) => (
+                <li key={i}>✓ {reason}</li>
               ))}
             </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">{profile.whyOpportunity}</p>
           )}
         </section>
 

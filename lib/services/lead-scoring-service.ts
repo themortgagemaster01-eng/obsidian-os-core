@@ -198,15 +198,10 @@ export function computeLeadOpportunityScore(crawl: CrawlRawResult): OpportunityS
 export interface RankableLead {
   id: string;
   opportunityScore: number | null;
+  /** Optional tie-break (CTO Phase 3 directive: "ranking-by-opportunity-then-confidence"); a caller ranking leads that don't carry a confidence score yet (or don't care about the tie-break) can omit it — ties then keep their relative input order, same as before this field existed. */
+  confidenceScore?: number | null;
 }
 
-/**
- * rankLeads — highest opportunityScore first; a lead with no score yet
- * (qualification didn't complete) sorts last, never treated as a 0 (a real
- * 0 and "we don't know yet" are different facts, same discipline
- * opportunity-scoring-service.ts's own null-vs-zero handling already
- * applies to an unmeasured category).
- */
 // ===========================================================================
 // Makeover Potential — the fourth score (Phase 2, CTO Lead Hunter directive
 // §2). Not a fifth independent measurement: a deliberate READ of the three
@@ -283,11 +278,35 @@ export function computeMakeoverPotential(
   return { potential, reasons };
 }
 
+// ===========================================================================
+// Ranking — Rank, the CTO Phase 3 directive's own explicit pipeline stage
+// (Research -> Rank -> Design), not an implicit side effect of a database
+// ORDER BY a caller might forget to apply consistently.
+// ===========================================================================
+
+/**
+ * rankLeads — highest opportunityScore first; a lead with no score yet
+ * (qualification didn't complete) sorts last, never treated as a 0 (a real
+ * 0 and "we don't know yet" are different facts, same discipline
+ * opportunity-scoring-service.ts's own null-vs-zero handling already
+ * applies to an unmeasured category). Ties on opportunityScore break on
+ * confidenceScore next (same null-sorts-last treatment) — "ranking-by-
+ * opportunity-then-confidence" per the CTO Phase 3 directive: of two leads
+ * with an identical real upside, the one this pipeline actually knows more
+ * about is the safer one to queue first.
+ */
 export function rankLeads<T extends RankableLead>(leads: T[]): T[] {
   return [...leads].sort((a, b) => {
-    if (a.opportunityScore === null && b.opportunityScore === null) return 0;
-    if (a.opportunityScore === null) return 1;
-    if (b.opportunityScore === null) return -1;
-    return b.opportunityScore - a.opportunityScore;
+    if (a.opportunityScore !== b.opportunityScore) {
+      if (a.opportunityScore === null) return 1;
+      if (b.opportunityScore === null) return -1;
+      return b.opportunityScore - a.opportunityScore;
+    }
+    const aConfidence = a.confidenceScore ?? null;
+    const bConfidence = b.confidenceScore ?? null;
+    if (aConfidence === bConfidence) return 0;
+    if (aConfidence === null) return 1;
+    if (bConfidence === null) return -1;
+    return bConfidence - aConfidence;
   });
 }

@@ -90,6 +90,29 @@ export interface BusinessIntelligenceProfile {
   notYetAssessed: string[];
   trustSignals: string[];
 
+  /**
+   * Phase 3 (CTO Opportunity Intelligence directive): evidence THE BUSINESS
+   * ITSELF looks legitimate/healthy — distinct from websiteOpportunitySignals
+   * below (evidence about the SITE). Each entry is gated on real captured
+   * evidence; a signal the crawl has no way to verify (e.g. "independent
+   * business" — this codebase has no franchise/chain-detection heuristic)
+   * is never included just because a mockup example listed it.
+   */
+  businessStrengthSignals: string[];
+  /** Phase 3: evidence the CURRENT SITE underperforms or has real, evidenced room for a redesign — never a claim about a category this crawl doesn't measure (Mobile/Design stay in notYetAssessed, not here). */
+  websiteOpportunitySignals: string[];
+  /**
+   * Phase 3: the itemized "why pursue this business" checklist (extends
+   * Phase 2's single-sentence whyOpportunity below into structured,
+   * evidence-cited bullets) — businessStrengthSignals + websiteOpportunitySignals
+   * combined in mockup-checklist order for a REJECTable lead, or the real
+   * makeover-potential gate reason(s) when this lead is a Reject (matches
+   * the CTO's own Subway-shaped example verbatim in spirit: "Website
+   * already performs strongly. No meaningful redesign opportunity
+   * identified.").
+   */
+  opportunityReasons: string[];
+
   recommendedHeroPattern: HeroPatternId | null;
   recommendedVisualStrategy: string | null;
   recommendedConversionGoal: string | null;
@@ -141,6 +164,21 @@ const LEGITIMACY_SIGNAL_WEAKNESS_LABEL: Record<string, string> = {
   "Has a real, non-empty homepage title": "No real, non-empty homepage title found.",
 };
 
+/**
+ * Same passing-case-phrased-label problem as LEGITIMACY_SIGNAL_WEAKNESS_LABEL
+ * above, for computeWebsiteScore's own signals (lead-scoring-service.ts) —
+ * "Has a meta description" reused verbatim for a FAILED signal read as a
+ * positive claim (Phase 3 catch: this was a real, latent bug in the `seo`
+ * weakness list below, never exercised by a fixture with a failing SEO
+ * signal until now).
+ */
+const WEBSITE_SIGNAL_WEAKNESS_LABEL: Record<string, string> = {
+  "Has a meta description": "No meta description found.",
+  "Exactly one H1 (real heading hierarchy)": "No clear single H1 heading found — heading hierarchy is unclear.",
+  "robots.txt present": "No robots.txt found.",
+  "sitemap.xml present": "No sitemap.xml found.",
+};
+
 function categorizeWeaknesses(
   website: ReturnType<typeof computeWebsiteScore>,
   opportunity: ReturnType<typeof computeLeadOpportunityScore>,
@@ -149,8 +187,8 @@ function categorizeWeaknesses(
   contact: ContactInfo
 ): { weaknesses: BusinessIntelligenceProfile["weaknesses"]; notYetAssessed: string[]; trustSignals: string[] } {
   const seo = website.signals
-    .filter((s) => !s.passed && ["Has a meta description", "Exactly one H1 (real heading hierarchy)", "robots.txt present", "sitemap.xml present"].includes(s.label))
-    .map((s) => s.label);
+    .filter((s) => !s.passed && s.label in WEBSITE_SIGNAL_WEAKNESS_LABEL)
+    .map((s) => WEBSITE_SIGNAL_WEAKNESS_LABEL[s.label]);
   const performance = website.signals.filter((s) => !s.passed && s.label === "Page size is not badly bloated").map(() => "Homepage is unusually large/bloated (structural proxy — full Lighthouse timing runs after promotion).");
 
   const conversion: string[] = [];
@@ -179,6 +217,97 @@ function categorizeWeaknesses(
     notYetAssessed: ["design", "mobile"],
     trustSignals,
   };
+}
+
+// ===========================================================================
+// Phase 3 (CTO Opportunity Intelligence directive) — businessStrengthSignals
+// / websiteOpportunitySignals. v1 thresholds, not a final answer, same
+// disclosure lead-scoring-service.ts's own module comment already carries
+// for its scoring weights. Deliberately does NOT include every signal the
+// CTO's own hypothetical "Bella Luna" mockup listed — "Independent
+// business" has no real evidence source in this codebase (no franchise/
+// chain-detection heuristic exists), so it's omitted rather than fabricated;
+// see this file's own module comment and the Phase 3 report for the full
+// disclosure of what's evidence-gated out.
+// ===========================================================================
+
+const STRONG_LOCAL_REPUTATION_MIN_RATING = 4.0;
+const ESTABLISHED_CUSTOMER_BASE_MIN_REVIEW_COUNT = 15;
+const HIGH_QUALITY_PHOTOGRAPHY_MIN_IMAGES = 3;
+const STRONG_CONTENT_MIN_SERVICES = 3;
+const MULTI_PAGE_REDESIGN_MIN_CONTENT_UNITS = 2;
+
+/**
+ * deriveBusinessStrengthSignals — real evidence THE BUSINESS is legitimate
+ * and healthy, each entry gated on a real, cited measurement (never present
+ * just because a signal "sounds plausible" for this industry).
+ */
+function deriveBusinessStrengthSignals(crawl: CrawlRawResult, contact: ContactInfo): string[] {
+  const signals: string[] = [];
+
+  if (contact.phones.length > 0 || contact.emails.length > 0 || contact.address) {
+    signals.push("Real, verifiable contact information published");
+  }
+  if (crawl.reviews.averageRating !== null && crawl.reviews.averageRating >= STRONG_LOCAL_REPUTATION_MIN_RATING) {
+    signals.push(`Strong local reputation (${crawl.reviews.averageRating.toFixed(1)}★ average rating${crawl.reviews.source ? `, ${crawl.reviews.source}` : ""})`);
+  }
+  if (crawl.reviews.count !== null && crawl.reviews.count >= ESTABLISHED_CUSTOMER_BASE_MIN_REVIEW_COUNT) {
+    signals.push(`Established customer base (${crawl.reviews.count} real reviews captured)`);
+  }
+  if (crawl.testimonials.length > 0) {
+    signals.push(`Real client testimonials published (${crawl.testimonials.length} captured)`);
+  }
+  if (crawl.gallery.length >= HIGH_QUALITY_PHOTOGRAPHY_MIN_IMAGES) {
+    signals.push(`High-quality photography available (${crawl.gallery.length} real images captured)`);
+  }
+  if (crawl.services.length >= STRONG_CONTENT_MIN_SERVICES) {
+    signals.push(`Strong menu/service content (${crawl.services.length} real entries captured)`);
+  }
+
+  return signals;
+}
+
+/**
+ * deriveWebsiteOpportunitySignals — real evidence the CURRENT SITE
+ * underperforms or has real, evidenced room for a redesign. Reuses the same
+ * SEO/performance/conversion weakness labels categorizeWeaknesses already
+ * derived (never a second, divergent computation of the same facts), plus
+ * one positively-framed structural signal ("multiple real pages/services")
+ * that isn't a weakness at all but genuinely is real evidence a redesign
+ * has real content to work with — the CTO mockup's own "Multiple pages/
+ * services provide redesign opportunity" line.
+ */
+function deriveWebsiteOpportunitySignals(crawl: CrawlRawResult, weaknesses: BusinessIntelligenceProfile["weaknesses"]): string[] {
+  const signals: string[] = [...weaknesses.seo, ...weaknesses.performance, ...weaknesses.conversion];
+
+  const contentUnits = crawl.services.length + Math.max(crawl.pages.length - 1, 0);
+  if (contentUnits >= MULTI_PAGE_REDESIGN_MIN_CONTENT_UNITS) {
+    signals.push(`Multiple real pages/services (${contentUnits} captured) provide real structure for a redesign, not just a single page to rebuild`);
+  }
+
+  return signals;
+}
+
+/**
+ * deriveOpportunityReasons — Phase 3's itemized "why pursue" checklist
+ * (extends Phase 2's single-sentence whyOpportunity into structured,
+ * evidence-cited bullets, matching the CTO's own mixed-checklist mockup).
+ * A Reject lead gets the real makeover-potential gate reason(s) instead —
+ * the CTO's own Subway-shaped example ("Website already performs strongly.
+ * No meaningful redesign opportunity identified.") is exactly what
+ * computeMakeoverPotential's own reject reasons already say, just not
+ * word-for-word (evidence-cited wording wins over matching mockup prose).
+ */
+function deriveOpportunityReasons(
+  businessStrengthSignals: string[],
+  websiteOpportunitySignals: string[],
+  potential: MakeoverPotential | null,
+  potentialReasons: string[]
+): string[] {
+  if (potential === "reject") {
+    return potentialReasons.length > 0 ? potentialReasons : ["Not a credible makeover prospect — insufficient real evidence or no real upside left to sell."];
+  }
+  return [...businessStrengthSignals, ...websiteOpportunitySignals];
 }
 
 /**
@@ -228,16 +357,21 @@ export function buildBusinessIntelligenceProfile(lead: LeadRow): BusinessIntelli
     notYetAssessed: ["design", "mobile", "seo", "performance", "conversion", "trust"],
     trustSignals: [],
   };
+  let businessStrengthSignals: string[] = [];
+  let websiteOpportunitySignals: string[] = [];
 
   if (crawl) {
     const website = computeWebsiteScore(crawl);
     const opportunity = computeLeadOpportunityScore(crawl);
     const confidence = computeConfidenceScore(crawl);
     weaknessBundle = categorizeWeaknesses(website, opportunity, confidence, crawl.forms, contact);
+    businessStrengthSignals = deriveBusinessStrengthSignals(crawl, contact);
+    websiteOpportunitySignals = deriveWebsiteOpportunitySignals(crawl, weaknessBundle.weaknesses);
   }
 
   const heroPattern = (lead.recommended_hero_pattern as HeroPatternId | null) ?? null;
   const strengths = weaknessBundle.trustSignals;
+  const opportunityReasons = deriveOpportunityReasons(businessStrengthSignals, websiteOpportunitySignals, lead.makeover_potential, makeoverPotentialReasons);
 
   return {
     leadId: lead.id,
@@ -278,6 +412,10 @@ export function buildBusinessIntelligenceProfile(lead: LeadRow): BusinessIntelli
     weaknesses: weaknessBundle.weaknesses,
     notYetAssessed: weaknessBundle.notYetAssessed,
     trustSignals: weaknessBundle.trustSignals,
+
+    businessStrengthSignals,
+    websiteOpportunitySignals,
+    opportunityReasons,
 
     recommendedHeroPattern: heroPattern,
     recommendedVisualStrategy: lead.recommended_design_strategy ?? (heroPattern ? HERO_PATTERN_VISUAL_STRATEGY_LABEL[heroPattern] : null),

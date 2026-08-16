@@ -28,6 +28,8 @@ export type GenerationStatus = "pending" | "running" | "complete" | "failed";
 export type LeadStatus = "pending" | "candidate" | "rejected" | "promoted";
 /** The fourth lead score (0020_lead_makeover_potential.sql) — how strong a makeover opportunity this lead is, derived from the other three scores plus evidence richness (lib/services/lead-scoring-service.ts::computeMakeoverPotential), never an arbitrary threshold alone. */
 export type MakeoverPotential = "very_high" | "high" | "medium" | "low" | "reject";
+/** A single Lead Hunter scan's own funnel-progress record (0021_lead_scan_runs.sql, CTO Phase 3 directive) — same pending/running/complete/failed-shaped domain as AnalysisStatus/GenerationStatus, kept distinct since a scan run is a different kind of job (no "pending" state — a row is only ever inserted once the scan has actually started). */
+export type LeadScanRunStatus = "running" | "complete" | "failed";
 
 export interface Database {
   public: {
@@ -645,6 +647,74 @@ export interface Database {
             columns: ["mission_id"];
             isOneToOne: false;
             referencedRelation: "missions";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      lead_scan_runs: {
+        Row: {
+          id: string;
+          organization_id: string;
+          location: string;
+          industry_buckets: Json;
+          scan_size: number | null;
+          status: LeadScanRunStatus;
+          discovered_count: number | null;
+          qualified_count: number | null;
+          rejected_count: number | null;
+          meaningful_opportunity_count: number | null;
+          high_confidence_count: number | null;
+          queued_count: number | null;
+          error_message: string | null;
+          started_at: string;
+          completed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          location: string;
+          industry_buckets?: Json;
+          scan_size?: number | null;
+          status?: LeadScanRunStatus;
+          discovered_count?: number | null;
+          qualified_count?: number | null;
+          rejected_count?: number | null;
+          meaningful_opportunity_count?: number | null;
+          high_confidence_count?: number | null;
+          queued_count?: number | null;
+          error_message?: string | null;
+          started_at?: string;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          organization_id?: string;
+          location?: string;
+          industry_buckets?: Json;
+          scan_size?: number | null;
+          status?: LeadScanRunStatus;
+          discovered_count?: number | null;
+          qualified_count?: number | null;
+          rejected_count?: number | null;
+          meaningful_opportunity_count?: number | null;
+          high_confidence_count?: number | null;
+          queued_count?: number | null;
+          error_message?: string | null;
+          started_at?: string;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "lead_scan_runs_organization_id_fkey";
+            columns: ["organization_id"];
+            isOneToOne: false;
+            referencedRelation: "organizations";
             referencedColumns: ["id"];
           }
         ];

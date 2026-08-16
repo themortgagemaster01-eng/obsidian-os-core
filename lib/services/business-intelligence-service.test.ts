@@ -111,11 +111,13 @@ describe("business-intelligence-service: buildBusinessIntelligenceProfile", () =
     assert.deepEqual(profile.weaknesses.design, []);
   });
 
-  test("SEO weaknesses reflect real failed structural signals", () => {
+  test("SEO weaknesses reflect real failed structural signals, negated for display rather than reusing the passing-case label verbatim", () => {
     const lead = fakeLead({ crawl_result: crawlFor({ metaDescription: null, sitemapFound: false }) as unknown as LeadRow["crawl_result"] });
     const profile = buildBusinessIntelligenceProfile(lead);
-    assert.ok(profile.weaknesses.seo.includes("Has a meta description"));
-    assert.ok(profile.weaknesses.seo.includes("sitemap.xml present"));
+    assert.ok(profile.weaknesses.seo.includes("No meta description found."));
+    assert.ok(profile.weaknesses.seo.includes("No sitemap.xml found."));
+    assert.ok(!profile.weaknesses.seo.includes("Has a meta description"), "must not reuse the passing-case label verbatim for a failed signal");
+    assert.ok(!profile.weaknesses.seo.includes("sitemap.xml present"), "must not reuse the passing-case label verbatim for a failed signal");
   });
 
   test("Trust weaknesses negate a failed legitimacy signal's pass-phrased label rather than reusing it verbatim (a failed 'Real address captured' signal must never read as a positive claim in the weaknesses list)", () => {
@@ -148,6 +150,92 @@ describe("business-intelligence-service: buildBusinessIntelligenceProfile", () =
   test("a lead with no crawl_result (e.g. a rejected, never-qualified lead) still produces a profile, never throws", () => {
     const lead = fakeLead({ crawl_result: null, contact_evidence: null, social_links: null, website_score: null, opportunity_score: null, confidence_score: null, makeover_potential: null });
     assert.doesNotThrow(() => buildBusinessIntelligenceProfile(lead));
+  });
+});
+
+describe("business-intelligence-service: Phase 3 opportunity intelligence (businessStrengthSignals / websiteOpportunitySignals / opportunityReasons)", () => {
+  test("businessStrengthSignals only includes evidence-gated claims — never 'independent business' or anything else this codebase has no real evidence source for", () => {
+    const profile = buildBusinessIntelligenceProfile(fakeLead());
+    assert.ok(!profile.businessStrengthSignals.some((s) => /independent/i.test(s)), "no franchise/chain-detection heuristic exists — must never claim this");
+  });
+
+  test("Strong local reputation only appears when the real average rating clears the threshold, not merely because a rating exists", () => {
+    const belowThreshold = buildBusinessIntelligenceProfile(
+      fakeLead({ crawl_result: crawlFor({ reviews: { averageRating: 3.2, count: 20, source: "schema.org" } }) as unknown as LeadRow["crawl_result"] })
+    );
+    assert.ok(!belowThreshold.businessStrengthSignals.some((s) => /strong local reputation/i.test(s)));
+
+    const aboveThreshold = buildBusinessIntelligenceProfile(
+      fakeLead({ crawl_result: crawlFor({ reviews: { averageRating: 4.5, count: 20, source: "schema.org" } }) as unknown as LeadRow["crawl_result"] })
+    );
+    assert.ok(aboveThreshold.businessStrengthSignals.some((s) => /strong local reputation/i.test(s)));
+  });
+
+  test("High-quality photography signal is gated on a real minimum image count, not a single photo", () => {
+    const oneImage = buildBusinessIntelligenceProfile(
+      fakeLead({ crawl_result: crawlFor({ gallery: [{ src: "https://acme.test/1.jpg", alt: null, sourceUrl: "https://acme.test/" }] }) as unknown as LeadRow["crawl_result"] })
+    );
+    assert.ok(!oneImage.businessStrengthSignals.some((s) => /photography/i.test(s)));
+
+    const threeImages = buildBusinessIntelligenceProfile(
+      fakeLead({
+        crawl_result: crawlFor({
+          gallery: [
+            { src: "https://acme.test/1.jpg", alt: null, sourceUrl: "https://acme.test/" },
+            { src: "https://acme.test/2.jpg", alt: null, sourceUrl: "https://acme.test/" },
+            { src: "https://acme.test/3.jpg", alt: null, sourceUrl: "https://acme.test/" },
+          ],
+        }) as unknown as LeadRow["crawl_result"],
+      })
+    );
+    assert.ok(threeImages.businessStrengthSignals.some((s) => /photography/i.test(s)));
+  });
+
+  test("websiteOpportunitySignals reuses the same weakness evidence as Website Analysis — never a second, divergent computation of the same facts", () => {
+    const lead = fakeLead({ crawl_result: crawlFor({ metaDescription: null, sitemapFound: false }) as unknown as LeadRow["crawl_result"] });
+    const profile = buildBusinessIntelligenceProfile(lead);
+    for (const w of [...profile.weaknesses.seo, ...profile.weaknesses.performance, ...profile.weaknesses.conversion]) {
+      assert.ok(profile.websiteOpportunitySignals.includes(w));
+    }
+  });
+
+  test("'Multiple real pages/services provide redesign opportunity' only appears once real content clears the minimum, matching the CTO mockup's own framing", () => {
+    const thin = buildBusinessIntelligenceProfile(fakeLead()); // default fixture: 1 service, 1 extra page = 1 content unit
+    assert.ok(!thin.websiteOpportunitySignals.some((s) => /provide real structure for a redesign/i.test(s)));
+
+    const rich = buildBusinessIntelligenceProfile(
+      fakeLead({
+        crawl_result: crawlFor({
+          services: [
+            { heading: "Dine-in", excerpt: "x", sourceUrl: "https://acme.test/" },
+            { heading: "Catering", excerpt: "x", sourceUrl: "https://acme.test/" },
+          ],
+        }) as unknown as LeadRow["crawl_result"],
+      })
+    );
+    assert.ok(rich.websiteOpportunitySignals.some((s) => /provide real structure for a redesign/i.test(s)));
+  });
+
+  test("opportunityReasons for a REJECT lead matches the CTO's own Subway-shaped example in spirit ('already performs strongly, no meaningful opportunity') — never a generic template line", () => {
+    const profile = buildBusinessIntelligenceProfile(
+      fakeLead({
+        makeover_potential: "reject",
+        makeover_potential_reasons: ["The existing website already scores 100/100 on real structural signals — there's no real upside left to sell a redesign on, regardless of business legitimacy."],
+      })
+    );
+    assert.deepEqual(profile.opportunityReasons, ["The existing website already scores 100/100 on real structural signals — there's no real upside left to sell a redesign on, regardless of business legitimacy."]);
+  });
+
+  test("opportunityReasons for a non-reject lead is the itemized checklist (business strength + website opportunity), not one prose sentence", () => {
+    const profile = buildBusinessIntelligenceProfile(fakeLead({ makeover_potential: "high" }));
+    assert.deepEqual(profile.opportunityReasons, [...profile.businessStrengthSignals, ...profile.websiteOpportunitySignals]);
+    assert.ok(profile.opportunityReasons.length > 1, "the whole point of Phase 3 is itemized evidence, not a single line");
+  });
+
+  test("a lead with no crawl_result produces empty signal lists, never fabricated ones", () => {
+    const profile = buildBusinessIntelligenceProfile(fakeLead({ crawl_result: null }));
+    assert.deepEqual(profile.businessStrengthSignals, []);
+    assert.deepEqual(profile.websiteOpportunitySignals, []);
   });
 });
 

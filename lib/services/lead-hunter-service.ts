@@ -17,6 +17,7 @@ import { resolveHeroPattern, HERO_PATTERN_VISUAL_STRATEGY_LABEL } from "@/lib/de
 import { deriveConversionGoal } from "@/lib/services/business-intelligence-service";
 import { leadRepository, type LeadRow } from "@/lib/repositories/lead-repository";
 import { companyRepository } from "@/lib/repositories/company-repository";
+import { leadScanRepository, type LeadScanRunRow } from "@/lib/repositories/lead-scan-repository";
 
 const DISCOVERY_SOURCE = "openstreetmap";
 
@@ -46,6 +47,8 @@ export interface LeadHunterServiceDeps {
   /** Narrowed to exactly what this orchestration calls — a smaller, more honest test-mock surface than the full repository. */
   leadRepository: Pick<typeof leadRepository, "insert" | "update" | "findBySourceAndExternalId">;
   companyRepository: Pick<typeof companyRepository, "findByOrgAndUrl">;
+  /** Phase 3: the scan's own funnel-progress record (supabase/migrations/0021_lead_scan_runs.sql) — narrowed the same way, insert/update only. */
+  leadScanRepository: Pick<typeof leadScanRepository, "insert" | "update">;
   /**
    * Real network calls, injected rather than imported-and-called directly —
    * the same "the LLM provider is a port, injected via deps" precedent
@@ -64,7 +67,7 @@ export interface LeadHunterServiceDeps {
 }
 
 export function createLeadHunterServiceDeps(client: TypedClient): LeadHunterServiceDeps {
-  return { client, leadRepository, companyRepository, geocodeLocation, discoverBusinesses, runCrawlAdapter };
+  return { client, leadRepository, companyRepository, leadScanRepository, geocodeLocation, discoverBusinesses, runCrawlAdapter };
 }
 
 export interface RunLeadHunterScanInput {
@@ -74,7 +77,13 @@ export interface RunLeadHunterScanInput {
   industryBuckets: IndustryBucket[];
   /** CTO directive §1: "make scan size configurable" — clamped inside discoverBusinesses to a hard cap so a misconfigured huge scan can't run away. */
   scanSize?: number;
+  /** Phase 3: how many of this scan's own high-confidence prospects count as "selected for today's queue" in the funnel report below. Defaults to 5 — the standing "Top 5" convention lib/repositories/lead-repository.ts::listTopCandidates and docs/... "Today's Opportunities" already use. */
+  queueSize?: number;
 }
+
+/** CTO Phase 3 directive: "ranking-by-opportunity-then-confidence." A qualified lead counts as a real confidence prospect once its confidence score clears this bar — a v1 threshold (see lead-scoring-service.ts's own "v1, not a final answer" disclosure), not a researched final cutoff. */
+const HIGH_CONFIDENCE_MIN_SCORE = 50;
+const DEFAULT_QUEUE_SIZE = 5;
 
 export interface LeadHunterScanResult {
   location: string;
@@ -83,6 +92,20 @@ export interface LeadHunterScanResult {
   skippedExistingCompanyCount: number;
   qualifiedCount: number;
   rejectedCount: number;
+  /**
+   * Phase 3 funnel (CTO Opportunity Intelligence directive): qualified
+   * leads whose makeover_potential isn't 'reject' — a real, non-zero
+   * upside, not just "the crawl succeeded."
+   */
+  meaningfulOpportunityCount: number;
+  /** meaningfulOpportunityCount further gated on confidence_score >= HIGH_CONFIDENCE_MIN_SCORE — real opportunity AND real, reasonably rich evidence behind it. */
+  highConfidenceCount: number;
+  /** min(queueSize, highConfidenceCount) — the real slice of this scan that would make today's queue, never a fabricated "5" regardless of how few (or many) real high-confidence prospects this scan actually found. */
+  queuedCount: number;
+  /** The CTO's own funnel-report format, built from the real counts above — e.g. "87 businesses scanned → 32 usable websites → 18 meaningful website opportunities → 11 high-confidence prospects → 5 selected for today's queue." */
+  funnelSummary: string;
+  /** The persisted lib/repositories/lead-scan-repository.ts row this scan wrote to (supabase/migrations/0021_lead_scan_runs.sql) — lets a caller (the scan API route) hand the id back to the client, and lets the dashboard find this exact run later even after a fire-and-forget POST returns before the scan finishes. */
+  scanRunId: string;
   leads: LeadRow[];
 }
 
@@ -134,20 +157,63 @@ function mainWeaknesses(websiteSignals: { label: string; passed: boolean }[]): s
   return websiteSignals.filter((s) => !s.passed).map((s) => s.label);
 }
 
+function formatFunnelSummary(counts: {
+  discoveredCount: number;
+  qualifiedCount: number;
+  meaningfulOpportunityCount: number;
+  highConfidenceCount: number;
+  queuedCount: number;
+}): string {
+  return (
+    `${counts.discoveredCount} businesses scanned → ${counts.qualifiedCount} usable websites → ` +
+    `${counts.meaningfulOpportunityCount} meaningful website opportunities → ${counts.highConfidenceCount} high-confidence prospects → ` +
+    `${counts.queuedCount} selected for today's queue`
+  );
+}
+
 /**
  * runLeadHunterScan — the real, end-to-end scan: geocode -> discover ->
  * dedupe against existing companies -> qualify each candidate with a real
  * crawl -> score -> persist every real outcome (candidate AND rejected —
  * a rejected row is itself honest evidence the scan worked, never silently
- * dropped). Sequential, not parallel, by design: real, rate-limited public
- * APIs (Nominatim/Overpass) and up to ~100 real target-site crawls in one
- * scan warrant the same "don't hammer" discipline lib/adapters/crawl-
- * adapter.ts already holds itself to per target site.
+ * dropped) -> Rank -> report the real funnel. Sequential, not parallel, by
+ * design: real, rate-limited public APIs (Nominatim/Overpass) and up to
+ * ~100 real target-site crawls in one scan warrant the same "don't hammer"
+ * discipline lib/adapters/crawl-adapter.ts already holds itself to per
+ * target site.
+ *
+ * Phase 3: writes a lead_scan_runs row (lib/repositories/lead-scan-
+ * repository.ts) for this run BEFORE geocoding even starts, so a geocode
+ * failure — a real failure mode, exercised by this file's own test suite —
+ * is itself recorded as a real `failed` run with a real error_message,
+ * never silently thrown away past POST /api/leads/scan's fire-and-forget
+ * boundary. The row is updated to `complete` with the real funnel counts on
+ * success, mirroring website_analyses' own pending/running/complete/failed
+ * shape.
  */
 export async function runLeadHunterScan(deps: LeadHunterServiceDeps, input: RunLeadHunterScanInput): Promise<LeadHunterScanResult> {
-  const area: GeocodedArea | null = await deps.geocodeLocation(input.location);
+  const queueSize = input.queueSize ?? DEFAULT_QUEUE_SIZE;
+
+  const scanRun: LeadScanRunRow = await deps.leadScanRepository.insert(deps.client, {
+    organization_id: input.organizationId,
+    location: input.location,
+    industry_buckets: input.industryBuckets as unknown as Json,
+    scan_size: input.scanSize ?? null,
+    status: "running",
+  });
+
+  let area: GeocodedArea | null;
+  try {
+    area = await deps.geocodeLocation(input.location);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Geocoding failed";
+    await deps.leadScanRepository.update(deps.client, scanRun.id, { status: "failed", error_message: message, completed_at: new Date().toISOString() });
+    throw err;
+  }
   if (!area) {
-    throw new Error(`Could not resolve "${input.location}" to a real geographic area (Nominatim geocoding found no match).`);
+    const message = `Could not resolve "${input.location}" to a real geographic area (Nominatim geocoding found no match).`;
+    await deps.leadScanRepository.update(deps.client, scanRun.id, { status: "failed", error_message: message, completed_at: new Date().toISOString() });
+    throw new Error(message);
   }
 
   const discovered = await deps.discoverBusinesses({
@@ -159,6 +225,8 @@ export async function runLeadHunterScan(deps: LeadHunterServiceDeps, input: RunL
   let skippedExistingCompanyCount = 0;
   let qualifiedCount = 0;
   let rejectedCount = 0;
+  let meaningfulOpportunityCount = 0;
+  let highConfidenceCount = 0;
   const leads: LeadRow[] = [];
 
   for (const candidate of discovered) {
@@ -232,7 +300,28 @@ export async function runLeadHunterScan(deps: LeadHunterServiceDeps, input: RunL
       qualified_at: new Date().toISOString(),
     });
     leads.push(lead);
+
+    if (makeoverPotentialResult.potential !== "reject") {
+      meaningfulOpportunityCount += 1;
+      if (confidenceResult.score >= HIGH_CONFIDENCE_MIN_SCORE) {
+        highConfidenceCount += 1;
+      }
+    }
   }
+
+  const queuedCount = Math.min(queueSize, highConfidenceCount);
+  const funnelCounts = { discoveredCount: discovered.length, qualifiedCount, meaningfulOpportunityCount, highConfidenceCount, queuedCount };
+
+  await deps.leadScanRepository.update(deps.client, scanRun.id, {
+    status: "complete",
+    discovered_count: funnelCounts.discoveredCount,
+    qualified_count: qualifiedCount,
+    rejected_count: rejectedCount,
+    meaningful_opportunity_count: meaningfulOpportunityCount,
+    high_confidence_count: highConfidenceCount,
+    queued_count: queuedCount,
+    completed_at: new Date().toISOString(),
+  });
 
   return {
     location: area.displayName,
@@ -240,6 +329,11 @@ export async function runLeadHunterScan(deps: LeadHunterServiceDeps, input: RunL
     skippedExistingCompanyCount,
     qualifiedCount,
     rejectedCount,
+    meaningfulOpportunityCount,
+    highConfidenceCount,
+    queuedCount,
+    funnelSummary: formatFunnelSummary(funnelCounts),
+    scanRunId: scanRun.id,
     leads,
   };
 }

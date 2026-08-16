@@ -226,6 +226,32 @@ describe("lead-scoring-service: rankLeads", () => {
     assert.deepEqual(ranked.map((l) => l.id), ["b", "c", "a"]);
   });
 
+  test("Phase 3: ties on opportunityScore break on confidenceScore next — 'ranking-by-opportunity-then-confidence'", () => {
+    const ranked = rankLeads([
+      { id: "a", opportunityScore: 60, confidenceScore: 30 },
+      { id: "b", opportunityScore: 60, confidenceScore: 80 },
+      { id: "c", opportunityScore: 60, confidenceScore: 55 },
+    ]);
+    assert.deepEqual(ranked.map((l) => l.id), ["b", "c", "a"]);
+  });
+
+  test("a tied lead with no confidenceScore at all (an older caller that never opts into the tie-break) sorts last among the tie, never treated as a real 0", () => {
+    const ranked = rankLeads([
+      { id: "a", opportunityScore: 60, confidenceScore: 50 },
+      { id: "b", opportunityScore: 60 },
+    ]);
+    assert.deepEqual(ranked.map((l) => l.id), ["a", "b"]);
+  });
+
+  test("callers who omit confidenceScore entirely keep the original opportunity-only ranking behavior unchanged", () => {
+    const ranked = rankLeads([
+      { id: "a", opportunityScore: 60 },
+      { id: "b", opportunityScore: 60 },
+      { id: "c", opportunityScore: 90 },
+    ]);
+    assert.deepEqual(ranked.map((l) => l.id), ["c", "a", "b"]);
+  });
+
   test("a lead with no score yet sorts last, never treated as a real 0", () => {
     const ranked = rankLeads([
       { id: "a", opportunityScore: null },
