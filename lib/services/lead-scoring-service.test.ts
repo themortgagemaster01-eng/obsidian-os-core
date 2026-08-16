@@ -5,6 +5,7 @@ import {
   computeWebsiteScore,
   computeConfidenceScore,
   computeLeadOpportunityScore,
+  computeMakeoverPotential,
   rankLeads,
 } from "@/lib/services/lead-scoring-service";
 import type { CrawlRawResult } from "@/lib/adapters/types";
@@ -136,6 +137,82 @@ describe("lead-scoring-service: computeLeadOpportunityScore (distinct from Websi
   test("scores 0 for a site that never loaded at all", () => {
     const result = computeLeadOpportunityScore(crawlFor({ fetchError: "ENOTFOUND" }));
     assert.equal(result.score, 0);
+  });
+});
+
+describe("lead-scoring-service: computeMakeoverPotential (Phase 2, CTO directive §2)", () => {
+  function potentialFor(crawl: CrawlRawResult) {
+    return computeMakeoverPotential(computeWebsiteScore(crawl), computeLeadOpportunityScore(crawl), computeConfidenceScore(crawl));
+  }
+
+  test("Reject: no real, verifiable evidence of an operating business — same gate as opportunity score's legitimacy check", () => {
+    const thinEvidenceBadSite = crawlFor({
+      metaDescription: null,
+      contact: { phones: [], emails: [], address: null, hours: null },
+      services: [],
+      internalLinkCount: 1,
+      title: null,
+    });
+    const result = potentialFor(thinEvidenceBadSite);
+    assert.equal(result.potential, "reject");
+    assert.ok(result.reasons[0].includes("No real, verifiable evidence"));
+  });
+
+  test("Reject: a real, legitimate business with an already-great website — the Subway case, no real upside to sell", () => {
+    const result = potentialFor(crawlFor());
+    assert.equal(result.potential, "reject");
+    assert.ok(result.reasons[0].includes("no real upside left"));
+  });
+
+  test("Low: legitimate but thin real opportunity", () => {
+    const lowCrawl = crawlFor({
+      metaDescription: null,
+      contact: { phones: ["555-0001"], emails: [], address: null, hours: null },
+      internalLinkCount: 2,
+    });
+    const result = potentialFor(lowCrawl);
+    assert.equal(result.potential, "low");
+  });
+
+  test("Medium: a real, moderate opportunity", () => {
+    const mediumCrawl = crawlFor({
+      metaDescription: null,
+      headingCounts: { h1: 0, h2: 0, h3: 0, h4: 0, h5: 0, h6: 0 },
+      robotsTxtFound: false,
+      title: null,
+    });
+    const result = potentialFor(mediumCrawl);
+    assert.equal(result.potential, "medium");
+  });
+
+  test("High: strong opportunity backed by real, reasonably rich evidence", () => {
+    const highCrawl = crawlFor({
+      metaDescription: null,
+      headingCounts: { h1: 0, h2: 0, h3: 0, h4: 0, h5: 0, h6: 0 },
+      robotsTxtFound: false,
+      htmlByteSize: 5_000_000,
+    });
+    const result = potentialFor(highCrawl);
+    assert.equal(result.potential, "high");
+  });
+
+  test("Very High: strong opportunity, strong confidence, and rich real evidence", () => {
+    const veryHighCrawl = crawlFor({
+      metaDescription: null,
+      headingCounts: { h1: 0, h2: 0, h3: 0, h4: 0, h5: 0, h6: 0 },
+      robotsTxtFound: false,
+      sitemapFound: false,
+      htmlByteSize: 5_000_000,
+      reviews: { averageRating: 4.5, count: 12, source: "schema.org structured data" },
+    });
+    const result = potentialFor(veryHighCrawl);
+    assert.equal(result.potential, "very_high");
+  });
+
+  test("reasons always cite real evidence, never just the bare verdict", () => {
+    const result = potentialFor(crawlFor({ metaDescription: null, robotsTxtFound: false }));
+    assert.ok(result.reasons.length > 0);
+    assert.ok(result.reasons.every((r) => r.length > 0));
   });
 });
 

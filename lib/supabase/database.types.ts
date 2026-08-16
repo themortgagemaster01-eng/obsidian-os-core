@@ -26,6 +26,8 @@ export type AnalysisStatus = "pending" | "running" | "complete" | "failed";
 export type GenerationStatus = "pending" | "running" | "complete" | "failed";
 /** Lead Hunter's own lifecycle (supabase/migrations/0018_lead_hunter.sql) — deliberately not AnalysisStatus/GenerationStatus, which are job-execution states; a lead's status is a business/qualification outcome, a different kind of state entirely. */
 export type LeadStatus = "pending" | "candidate" | "rejected" | "promoted";
+/** The fourth lead score (0020_lead_makeover_potential.sql) — how strong a makeover opportunity this lead is, derived from the other three scores plus evidence richness (lib/services/lead-scoring-service.ts::computeMakeoverPotential), never an arbitrary threshold alone. */
+export type MakeoverPotential = "very_high" | "high" | "medium" | "low" | "reject";
 
 export interface Database {
   public: {
@@ -536,6 +538,9 @@ export interface Database {
           main_opportunity: string | null;
           recommended_hero_pattern: string | null;
           recommended_design_strategy: string | null;
+          recommended_conversion_goal: string | null;
+          makeover_potential: MakeoverPotential | null;
+          makeover_potential_reasons: Json;
           contact_evidence: Json | null;
           social_links: Json | null;
           crawl_result: Json | null;
@@ -569,6 +574,9 @@ export interface Database {
           main_opportunity?: string | null;
           recommended_hero_pattern?: string | null;
           recommended_design_strategy?: string | null;
+          recommended_conversion_goal?: string | null;
+          makeover_potential?: MakeoverPotential | null;
+          makeover_potential_reasons?: Json;
           contact_evidence?: Json | null;
           social_links?: Json | null;
           crawl_result?: Json | null;
@@ -602,6 +610,9 @@ export interface Database {
           main_opportunity?: string | null;
           recommended_hero_pattern?: string | null;
           recommended_design_strategy?: string | null;
+          recommended_conversion_goal?: string | null;
+          makeover_potential?: MakeoverPotential | null;
+          makeover_potential_reasons?: Json;
           contact_evidence?: Json | null;
           social_links?: Json | null;
           crawl_result?: Json | null;

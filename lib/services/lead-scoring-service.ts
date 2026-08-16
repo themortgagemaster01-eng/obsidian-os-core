@@ -207,6 +207,82 @@ export interface RankableLead {
  * opportunity-scoring-service.ts's own null-vs-zero handling already
  * applies to an unmeasured category).
  */
+// ===========================================================================
+// Makeover Potential — the fourth score (Phase 2, CTO Lead Hunter directive
+// §2). Not a fifth independent measurement: a deliberate READ of the three
+// scores above plus real evidence richness, same "derive from evidence, not
+// arbitrary thresholds alone" discipline this whole module already holds
+// itself to. Legitimacy still gates everything (mirrors
+// computeLeadOpportunityScore's own gate) — a candidate with no verifiable
+// real business behind it is never a makeover prospect no matter how bad
+// its website looks. Symmetrically, a genuinely good existing website
+// (opportunityScore 0) is Reject too — the CTO's own Subway example: a real,
+// legitimate business with nothing left to sell a redesign on.
+// ===========================================================================
+
+export type MakeoverPotential = "very_high" | "high" | "medium" | "low" | "reject";
+
+export interface MakeoverPotentialResult {
+  potential: MakeoverPotential;
+  /** Real, evidence-cited reasons for the verdict — never just the bare enum value (CTO directive §2: "explain WHY a lead is valuable"). */
+  reasons: string[];
+}
+
+/**
+ * computeMakeoverPotential — reads the three already-computed scores (never
+ * re-touches CrawlRawResult itself, keeping this a pure read over other
+ * pure results, same shape as rankLeads above) and buckets into five tiers.
+ * `richness` is the count of real evidence categories confidenceScore's own
+ * evidenceFound already found (services/testimonials/gallery/reviews/etc.)
+ * — a business with a genuinely rich captured profile is a stronger
+ * makeover prospect than one that merely scored the same opportunity number
+ * on thinner evidence, so richness can lift (never invent) a tier alongside
+ * opportunity/confidence.
+ */
+export function computeMakeoverPotential(
+  website: WebsiteScoreResult,
+  opportunity: OpportunityScoreResult,
+  confidence: ConfidenceScoreResult
+): MakeoverPotentialResult {
+  const reasons: string[] = [];
+
+  if (opportunity.legitimacyScore === 0) {
+    return {
+      potential: "reject",
+      reasons: ["No real, verifiable evidence this is an operating business (no phone/email, address, services, internal site structure, or homepage title captured) — not a credible makeover prospect yet, only a name and a URL."],
+    };
+  }
+
+  if (opportunity.score === 0) {
+    return {
+      potential: "reject",
+      reasons: [`The existing website already scores ${website.score}/100 on real structural signals — there's no real upside left to sell a redesign on, regardless of business legitimacy.`],
+    };
+  }
+
+  const richness = confidence.evidenceFound.length;
+
+  reasons.push(`Website scores ${website.score}/100 (real upside: ${100 - website.score} points) with ${opportunity.legitimacyScore}/100 business-legitimacy signals confirmed.`);
+  reasons.push(`${richness}/8 real evidence categories captured: ${confidence.evidenceFound.length > 0 ? confidence.evidenceFound.join(", ") : "none"}.`);
+
+  let potential: MakeoverPotential;
+  if (opportunity.score >= 70 && confidence.score >= 60 && richness >= 4) {
+    potential = "very_high";
+    reasons.push("Strong opportunity, strong confidence, and rich real evidence — ready to pursue now.");
+  } else if (opportunity.score >= 45 && confidence.score >= 40) {
+    potential = "high";
+    reasons.push("Solid opportunity backed by real, reasonably rich evidence.");
+  } else if (opportunity.score >= 25) {
+    potential = "medium";
+    reasons.push(confidence.score < 40 ? "Real opportunity, but thinner captured evidence — worth a second look before committing." : "Moderate opportunity.");
+  } else {
+    potential = "low";
+    reasons.push("Limited real upside or evidence found — not a priority prospect right now.");
+  }
+
+  return { potential, reasons };
+}
+
 export function rankLeads<T extends RankableLead>(leads: T[]): T[] {
   return [...leads].sort((a, b) => {
     if (a.opportunityScore === null && b.opportunityScore === null) return 0;

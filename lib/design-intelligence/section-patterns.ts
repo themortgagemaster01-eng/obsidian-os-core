@@ -150,6 +150,22 @@ export function resolveHeroPattern(industryBucket: IndustryBucket, hasRealImager
   return "editorial-typographic";
 }
 
+/**
+ * Human-readable visual-strategy label per hero pattern — a direct exposure
+ * of the module-level Pattern A-F documentation above as data, not new
+ * reasoning. Lead Hunter (Phase 2) stores this alongside recommended_hero_pattern
+ * so a Lead Detail screen and a launched mission's Design Brief context can
+ * both show the same real, non-duplicated recommendation.
+ */
+export const HERO_PATTERN_VISUAL_STRATEGY_LABEL: Record<HeroPatternId, string> = {
+  "editorial-typographic": "Editorial — large type-first composition, no photography, magazine-style hierarchy.",
+  "centered-cinematic": "Cinematic — full-bleed real photography, dark scrim, centered display type, dramatic register.",
+  "split-media-text": "Local Story — real photography placed beside the text, warm and human-scaled.",
+  "image-full-bleed": "Service/Product — real photography fills the hero, left-aligned text, conversion-forward filled CTA.",
+  "oversized-typographic": "Luxury Minimal — the widest container and largest type scale, no decoration, restraint as the signal.",
+  "offset-overlap": "Bold Commerce — an offset, tinted panel with a large, conversion-urgent filled CTA.",
+};
+
 // ===========================================================================
 // Full documented vocabulary, including single-canonical-pattern categories
 // — real infrastructure for a future pass to extend, not a claim that every

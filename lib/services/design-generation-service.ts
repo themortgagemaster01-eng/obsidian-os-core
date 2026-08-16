@@ -423,7 +423,7 @@ function placeholderSlot(name: string): ComponentSlot {
  * international number is still honest and dialable, never mangled into a
  * wrong-looking domestic shape.
  */
-function formatPhoneForDisplay(normalized: string): string {
+export function formatPhoneForDisplay(normalized: string): string {
   const nanpMatch = normalized.match(/^\+1(\d{3})(\d{3})(\d{4})$/);
   if (nanpMatch) {
     const [, area, exchange, line] = nanpMatch;
@@ -444,7 +444,7 @@ function formatPhoneForDisplay(normalized: string): string {
  * still generic, never business-specific, and never invents a number that
  * wasn't in `phones` to begin with.
  */
-function resolvePhoneForDisplay(contactEvidence: ContactInfo): { display: string; href: string } | null {
+export function resolvePhoneForDisplay(contactEvidence: ContactInfo): { display: string; href: string } | null {
   const evidence = contactEvidence.phoneEvidence?.[0];
   if (evidence) {
     return { display: formatPhoneForDisplay(evidence.normalized), href: evidence.normalized };

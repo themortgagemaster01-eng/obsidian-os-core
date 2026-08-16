@@ -16,6 +16,9 @@ export interface CreateMissionRequest {
   organizationId: string;
   businessName: string;
   websiteUrl: string;
+  /** Phase 2: optional Memory Vault seeding from a promoted lead's own qualification evidence — see lib/services/lead-promotion-service.ts. */
+  industry?: string;
+  businessCategory?: string;
 }
 
 /**
@@ -38,6 +41,8 @@ export async function createMission(
     organizationId: request.organizationId,
     businessName: request.businessName,
     websiteUrl: request.websiteUrl,
+    industry: request.industry,
+    businessCategory: request.businessCategory,
   });
   return mission;
 }

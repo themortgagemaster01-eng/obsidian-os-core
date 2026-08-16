@@ -67,6 +67,7 @@ export default async function LeadHunterPage() {
                     <th className="py-2 pr-4">Website Score</th>
                     <th className="py-2 pr-4">Opportunity</th>
                     <th className="py-2 pr-4">Confidence</th>
+                    <th className="py-2 pr-4">Makeover Potential</th>
                     <th className="py-2 pr-4">Main Weakness</th>
                     <th className="py-2 pr-4">Hero Pattern</th>
                     <th className="py-2 pr-4">Contact</th>
@@ -102,6 +103,14 @@ export default async function LeadHunterPage() {
   );
 }
 
+const MAKEOVER_POTENTIAL_LABEL: Record<string, string> = {
+  very_high: "Very High",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+  reject: "Reject",
+};
+
 function LeadRowView({ lead }: { lead: LeadRow }) {
   const contact = (lead.contact_evidence as { phones?: string[]; emails?: string[] } | null) ?? null;
   const weaknesses = (lead.main_weaknesses as string[] | null) ?? [];
@@ -109,7 +118,9 @@ function LeadRowView({ lead }: { lead: LeadRow }) {
   return (
     <tr className="border-b border-border/60">
       <td className="py-2 pr-4 font-medium text-foreground">
-        {lead.business_name}
+        <Link href={`/leads/${lead.id}`} className="hover:underline">
+          {lead.business_name}
+        </Link>
         {lead.website_url && (
           <a href={lead.website_url} target="_blank" rel="noreferrer" className="ml-2 text-xs text-muted-foreground underline">
             site
@@ -127,6 +138,7 @@ function LeadRowView({ lead }: { lead: LeadRow }) {
         </Badge>
       </td>
       <td className="py-2 pr-4 text-muted-foreground">{lead.confidence_score ?? "—"}</td>
+      <td className="py-2 pr-4 text-muted-foreground">{lead.makeover_potential ? MAKEOVER_POTENTIAL_LABEL[lead.makeover_potential] : "—"}</td>
       <td className="py-2 pr-4 text-muted-foreground">{weaknesses[0] ?? "—"}</td>
       <td className="py-2 pr-4 text-muted-foreground">{lead.recommended_hero_pattern ?? "—"}</td>
       <td className="py-2 pr-4 text-muted-foreground">{contact?.phones?.[0] ?? contact?.emails?.[0] ?? "—"}</td>

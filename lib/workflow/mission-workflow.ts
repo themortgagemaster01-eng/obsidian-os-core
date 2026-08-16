@@ -55,6 +55,9 @@ export interface CreateMissionInput {
   organizationId: string;
   businessName: string;
   websiteUrl: string;
+  /** Optional Memory Vault seeding (Phase 2: a lead promoted into a mission already knows its own industry bucket/category from qualification — see lib/services/lead-promotion-service.ts). Never required; a mission created from a bare URL (the existing "new mission" flow) passes neither and findOrCreateCompany falls back to its own null defaults, unchanged. */
+  industry?: string;
+  businessCategory?: string;
 }
 
 /**
@@ -91,6 +94,8 @@ export async function createMission(
       organizationId: input.organizationId,
       businessName: input.businessName,
       websiteUrl: input.websiteUrl,
+      industry: input.industry,
+      businessCategory: input.businessCategory,
     },
     mission.id
   );

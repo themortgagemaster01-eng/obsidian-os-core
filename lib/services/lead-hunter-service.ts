@@ -12,8 +12,9 @@ import {
 } from "@/lib/adapters/discovery-adapter";
 import { runCrawlAdapter } from "@/lib/adapters/crawl-adapter";
 import { normalizeWebsiteUrl } from "@/lib/services/company-service";
-import { computeWebsiteScore, computeConfidenceScore, computeLeadOpportunityScore } from "@/lib/services/lead-scoring-service";
-import { resolveHeroPattern } from "@/lib/design-intelligence/section-patterns";
+import { computeWebsiteScore, computeConfidenceScore, computeLeadOpportunityScore, computeMakeoverPotential } from "@/lib/services/lead-scoring-service";
+import { resolveHeroPattern, HERO_PATTERN_VISUAL_STRATEGY_LABEL } from "@/lib/design-intelligence/section-patterns";
+import { deriveConversionGoal } from "@/lib/services/business-intelligence-service";
 import { leadRepository, type LeadRow } from "@/lib/repositories/lead-repository";
 import { companyRepository } from "@/lib/repositories/company-repository";
 
@@ -198,6 +199,7 @@ export async function runLeadHunterScan(deps: LeadHunterServiceDeps, input: RunL
     const websiteScoreResult = computeWebsiteScore(crawl);
     const confidenceResult = computeConfidenceScore(crawl);
     const opportunityResult = computeLeadOpportunityScore(crawl);
+    const makeoverPotentialResult = computeMakeoverPotential(websiteScoreResult, opportunityResult, confidenceResult);
     const heroPattern = resolveHeroPattern(industryBucket, crawl.gallery.length > 0);
 
     qualifiedCount += 1;
@@ -220,6 +222,10 @@ export async function runLeadHunterScan(deps: LeadHunterServiceDeps, input: RunL
           ? `Website scores ${websiteScoreResult.score}/100 on real structural signals with ${confidenceResult.evidenceFound.length}/8 real evidence categories captured — real upside for a redesign.`
           : "Thin evidence captured — needs manual review before this is a credible prospect.",
       recommended_hero_pattern: heroPattern,
+      recommended_design_strategy: HERO_PATTERN_VISUAL_STRATEGY_LABEL[heroPattern],
+      recommended_conversion_goal: deriveConversionGoal(crawl.contact, crawl.forms),
+      makeover_potential: makeoverPotentialResult.potential,
+      makeover_potential_reasons: makeoverPotentialResult.reasons as unknown as Json,
       contact_evidence: crawl.contact as unknown as Json,
       social_links: crawl.socials as unknown as Json,
       crawl_result: crawl as unknown as Json,
