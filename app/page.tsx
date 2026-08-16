@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { createClient } from "@/lib/supabase/server";
 import {
   computeMissionControlStats,
@@ -60,6 +62,9 @@ export default async function MissionControlPage() {
             <p className="mt-1 text-sm text-muted-foreground">Signed in as {user.email}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <Link href="/leads" className="text-sm font-medium text-muted-foreground transition-colors duration-200 ease-in-out hover:text-foreground">
+              Lead Hunter
+            </Link>
             <NewMissionDialog />
             <SignOutButton />
           </div>

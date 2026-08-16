@@ -24,6 +24,8 @@ export type OrganizationRole = "owner" | "admin" | "member";
 export type AnalysisStatus = "pending" | "running" | "complete" | "failed";
 /** Shared by design_briefs and website_designs (0010_design_engine.sql) — same job-execution-status domain as AnalysisStatus, reused rather than duplicated since both new tables are the same kind of async run record. */
 export type GenerationStatus = "pending" | "running" | "complete" | "failed";
+/** Lead Hunter's own lifecycle (supabase/migrations/0018_lead_hunter.sql) — deliberately not AnalysisStatus/GenerationStatus, which are job-execution states; a lead's status is a business/qualification outcome, a different kind of state entirely. */
+export type LeadStatus = "pending" | "candidate" | "rejected" | "promoted";
 
 export interface Database {
   public: {
@@ -508,6 +510,130 @@ export interface Database {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      leads: {
+        Row: {
+          id: string;
+          organization_id: string;
+          business_name: string;
+          website_url: string | null;
+          industry: string | null;
+          business_category: string | null;
+          location: string | null;
+          latitude: number | null;
+          longitude: number | null;
+          discovery_source: string;
+          discovery_external_id: string;
+          status: LeadStatus;
+          rejection_reason: string | null;
+          website_score: number | null;
+          opportunity_score: number | null;
+          confidence_score: number | null;
+          main_weaknesses: Json;
+          main_opportunity: string | null;
+          recommended_hero_pattern: string | null;
+          recommended_design_strategy: string | null;
+          contact_evidence: Json | null;
+          social_links: Json | null;
+          crawl_result: Json | null;
+          company_id: string | null;
+          mission_id: string | null;
+          error_message: string | null;
+          discovered_at: string;
+          qualified_at: string | null;
+          promoted_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          business_name: string;
+          website_url?: string | null;
+          industry?: string | null;
+          business_category?: string | null;
+          location?: string | null;
+          latitude?: number | null;
+          longitude?: number | null;
+          discovery_source: string;
+          discovery_external_id: string;
+          status?: LeadStatus;
+          rejection_reason?: string | null;
+          website_score?: number | null;
+          opportunity_score?: number | null;
+          confidence_score?: number | null;
+          main_weaknesses?: Json;
+          main_opportunity?: string | null;
+          recommended_hero_pattern?: string | null;
+          recommended_design_strategy?: string | null;
+          contact_evidence?: Json | null;
+          social_links?: Json | null;
+          crawl_result?: Json | null;
+          company_id?: string | null;
+          mission_id?: string | null;
+          error_message?: string | null;
+          discovered_at?: string;
+          qualified_at?: string | null;
+          promoted_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          organization_id?: string;
+          business_name?: string;
+          website_url?: string | null;
+          industry?: string | null;
+          business_category?: string | null;
+          location?: string | null;
+          latitude?: number | null;
+          longitude?: number | null;
+          discovery_source?: string;
+          discovery_external_id?: string;
+          status?: LeadStatus;
+          rejection_reason?: string | null;
+          website_score?: number | null;
+          opportunity_score?: number | null;
+          confidence_score?: number | null;
+          main_weaknesses?: Json;
+          main_opportunity?: string | null;
+          recommended_hero_pattern?: string | null;
+          recommended_design_strategy?: string | null;
+          contact_evidence?: Json | null;
+          social_links?: Json | null;
+          crawl_result?: Json | null;
+          company_id?: string | null;
+          mission_id?: string | null;
+          error_message?: string | null;
+          discovered_at?: string;
+          qualified_at?: string | null;
+          promoted_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "leads_organization_id_fkey";
+            columns: ["organization_id"];
+            isOneToOne: false;
+            referencedRelation: "organizations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leads_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leads_mission_id_fkey";
+            columns: ["mission_id"];
+            isOneToOne: false;
+            referencedRelation: "missions";
             referencedColumns: ["id"];
           }
         ];
