@@ -118,6 +118,13 @@ describe("business-intelligence-service: buildBusinessIntelligenceProfile", () =
     assert.ok(profile.weaknesses.seo.includes("sitemap.xml present"));
   });
 
+  test("Trust weaknesses negate a failed legitimacy signal's pass-phrased label rather than reusing it verbatim (a failed 'Real address captured' signal must never read as a positive claim in the weaknesses list)", () => {
+    const lead = fakeLead({ crawl_result: crawlFor({ contact: { phones: ["+15550001111"], emails: [], address: null, hours: null } }) as unknown as LeadRow["crawl_result"] });
+    const profile = buildBusinessIntelligenceProfile(lead);
+    assert.ok(!profile.weaknesses.trust.includes("Real address captured"), "must not reuse the passing-case label verbatim for a failed signal");
+    assert.ok(profile.weaknesses.trust.some((w) => /no real address/i.test(w)));
+  });
+
   test("Conversion weakness flags a site with no reachable contact method at all", () => {
     const lead = fakeLead({
       crawl_result: crawlFor({ contact: { phones: [], emails: [], address: null, hours: null }, forms: [] }) as unknown as LeadRow["crawl_result"],

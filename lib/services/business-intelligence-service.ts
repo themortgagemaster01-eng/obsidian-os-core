@@ -124,6 +124,23 @@ export function deriveConversionGoal(contact: ContactInfo, forms: FormInfo[]): s
   return "Request more information — no direct contact evidence captured yet; a generic inquiry CTA is the honest fallback.";
 }
 
+/**
+ * opportunity.legitimacySignals' labels (lead-scoring-service.ts's
+ * computeLegitimacyScore) are phrased for the PASSING case ("Real address
+ * captured") — reused verbatim for a FAILED signal, that same string reads
+ * backwards in a weaknesses list (looks like a claim the evidence exists).
+ * This is the honest negation for display; falls back to the raw label
+ * (never throws) if lead-scoring-service.ts adds a signal this map doesn't
+ * know about yet.
+ */
+const LEGITIMACY_SIGNAL_WEAKNESS_LABEL: Record<string, string> = {
+  "Real phone or email captured": "No real phone or email captured.",
+  "Real address captured": "No real address captured.",
+  "Real service/offering content found": "No real service/offering content found.",
+  "Site has real internal structure (more than a single orphan page)": "Site has no real internal structure — effectively a single orphan page.",
+  "Has a real, non-empty homepage title": "No real, non-empty homepage title found.",
+};
+
 function categorizeWeaknesses(
   website: ReturnType<typeof computeWebsiteScore>,
   opportunity: ReturnType<typeof computeLeadOpportunityScore>,
@@ -147,7 +164,7 @@ function categorizeWeaknesses(
   const trust: string[] = [];
   for (const signal of opportunity.legitimacySignals) {
     if (signal.passed) trustSignals.push(signal.label);
-    else trust.push(signal.label);
+    else trust.push(LEGITIMACY_SIGNAL_WEAKNESS_LABEL[signal.label] ?? signal.label);
   }
   for (const check of ["reviews", "testimonials"] as const) {
     if (!confidence.evidenceFound.includes(check)) {
