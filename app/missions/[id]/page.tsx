@@ -61,6 +61,14 @@ export default async function MissionDetailPage({ params }: PageParams) {
     screenshotUrl = await resolveScreenshotUrl(supabase, analysis.screenshot_url);
   }
 
+  // Phase 4: the new design's own real preview screenshots, resolved the
+  // same way the original site's screenshot already is above — both real
+  // signed URLs, feeding the Before/After panel.
+  const [previewScreenshotDesktopUrl, previewScreenshotMobileUrl] = await Promise.all([
+    resolveScreenshotUrl(supabase, design?.preview_screenshot_desktop_path ?? null),
+    resolveScreenshotUrl(supabase, design?.preview_screenshot_mobile_path ?? null),
+  ]);
+
   return (
     <main className="min-h-screen bg-background">
       <header className="border-b border-border">
@@ -98,6 +106,9 @@ export default async function MissionDetailPage({ params }: PageParams) {
           initialMissionState={mission.state}
           initialDesignBrief={designBrief}
           initialWebsiteDesign={design}
+          originalScreenshotUrl={screenshotUrl}
+          initialPreviewScreenshotDesktopUrl={previewScreenshotDesktopUrl}
+          initialPreviewScreenshotMobileUrl={previewScreenshotMobileUrl}
         />
       </div>
     </main>

@@ -37,6 +37,8 @@ export type DomainEventType =
   | "WebsiteDesignFailed"
   | "DesignQaComplete"
   | "DesignQaFailed"
+  | "PreviewScreenshotCaptured"
+  | "PreviewScreenshotFailed"
   | "ProposalReady"
   | "EmailDraftReady"
   | "MissionApproved"
@@ -149,6 +151,24 @@ export interface DesignQaFailedPayload {
   errorMessage: string;
 }
 
+/**
+ * Phase 4: a real screenshot of the LIVE, authenticated Design Preview route
+ * was captured and uploaded to Supabase Storage (lib/services/preview-
+ * capture-service.ts) — not a deployment (no such capability exists in this
+ * codebase; see lib/workflow/mission-state.ts's own note on why `deployment`
+ * was deliberately removed as a mission state). This is the same
+ * "publishing a preview build is a sub-activity, tracked via events" pattern
+ * that note names — it doesn't transition mission state.
+ */
+export interface PreviewScreenshotCapturedPayload {
+  desktopPath: string;
+  mobilePath: string;
+}
+
+export interface PreviewScreenshotFailedPayload {
+  errorMessage: string;
+}
+
 export interface ProposalReadyPayload {
   proposalId?: string;
   price?: number;
@@ -204,6 +224,8 @@ export type DomainEvent = DomainEventBase &
     | { type: "WebsiteDesignFailed"; payload: WebsiteDesignFailedPayload }
     | { type: "DesignQaComplete"; payload: DesignQaCompletePayload }
     | { type: "DesignQaFailed"; payload: DesignQaFailedPayload }
+    | { type: "PreviewScreenshotCaptured"; payload: PreviewScreenshotCapturedPayload }
+    | { type: "PreviewScreenshotFailed"; payload: PreviewScreenshotFailedPayload }
     | { type: "ProposalReady"; payload: ProposalReadyPayload }
     | { type: "EmailDraftReady"; payload: EmailDraftReadyPayload }
     | { type: "MissionApproved"; payload: MissionApprovedPayload }

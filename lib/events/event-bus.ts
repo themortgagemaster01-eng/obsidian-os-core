@@ -55,6 +55,10 @@ function describeEvent(event: DomainEvent): string {
       }`;
     case "DesignQaFailed":
       return `Design QA failed: ${event.payload.errorMessage}`;
+    case "PreviewScreenshotCaptured":
+      return "Real preview screenshot captured (desktop + mobile)";
+    case "PreviewScreenshotFailed":
+      return `Preview screenshot capture failed: ${event.payload.errorMessage}`;
     case "ProposalReady":
       return "Proposal ready";
     case "EmailDraftReady":

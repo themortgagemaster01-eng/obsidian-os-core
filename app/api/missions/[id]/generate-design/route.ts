@@ -5,6 +5,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { missionRepository } from "@/lib/repositories/mission-repository";
 import { designBriefRepository } from "@/lib/repositories/design-brief-repository";
 import { websiteDesignRepository } from "@/lib/repositories/website-design-repository";
+import { resolveScreenshotUrl } from "@/lib/presentation/resolve-screenshot-url";
 import {
   createDesignGenerationRun,
   createDesignGenerationServiceDeps,
@@ -20,9 +21,16 @@ interface RouteParams {
  * below, for the Founder-facing Generation/Refinement/QA panel to poll.
  * Returns the mission's latest website_designs row as-is — this single row
  * carries generation (`wireframe`/`components`), refinement
- * (`refined_design`), and QA (`qa_result`) once each step has run, so one
- * endpoint covers all three panels' polling needs without a second read
- * path for the same table.
+ * (`refined_design`), QA (`qa_result`), and Phase 4's preview screenshot
+ * paths once each step has run, so one endpoint covers all four panels'
+ * polling needs without a second read path for the same table.
+ *
+ * Phase 4 addition: also resolves the preview screenshot storage paths
+ * (private bucket, same as the original site's own screenshot) into
+ * short-lived signed URLs the browser can actually load — the same
+ * resolution `screenshotUrl` already gets for the original site's
+ * screenshot on GET /api/missions/:id/analysis, applied here to the new
+ * design's own real screenshots.
  */
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   const supabase = createClient();
@@ -41,7 +49,13 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   }
 
   const websiteDesign = await websiteDesignRepository.findLatestByMission(supabase, mission.id);
-  return NextResponse.json({ websiteDesign });
+
+  const [previewScreenshotDesktopUrl, previewScreenshotMobileUrl] = await Promise.all([
+    resolveScreenshotUrl(supabase, websiteDesign?.preview_screenshot_desktop_path ?? null),
+    resolveScreenshotUrl(supabase, websiteDesign?.preview_screenshot_mobile_path ?? null),
+  ]);
+
+  return NextResponse.json({ websiteDesign, previewScreenshotDesktopUrl, previewScreenshotMobileUrl });
 }
 
 /**

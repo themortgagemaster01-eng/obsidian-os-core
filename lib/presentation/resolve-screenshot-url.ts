@@ -14,10 +14,12 @@ const SIGNED_URL_TTL_SECONDS = 60 * 60;
  *
  * Uses the caller's own RLS-scoped client (never falls back to a
  * service-role client here — lib/supabase/service-role.ts is documented as
- * being for the background worker only). No storage.objects RLS policy has
- * been added for this bucket yet (Open Question 6 is still open), so this
- * currently returns null until that policy exists — handled as an honest
- * "unavailable" state by the UI rather than a broken image.
+ * being for the background worker only). A storage.objects RLS policy for
+ * this bucket was added in 0008_screenshot_storage_policy.sql — this
+ * doc comment previously (incorrectly) said no policy existed yet; correcting
+ * that here rather than leaving it stale. A null return still means an
+ * honest "unavailable" state (no screenshot path at all, or a real resolve
+ * failure), never a broken image.
  */
 export async function resolveScreenshotUrl(
   client: SupabaseClient<Database>,

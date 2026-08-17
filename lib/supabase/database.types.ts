@@ -816,6 +816,10 @@ export interface Database {
           components: Json | null;
           refined_design: Json | null;
           qa_result: Json | null;
+          preview_screenshot_desktop_path: string | null;
+          preview_screenshot_mobile_path: string | null;
+          preview_screenshot_captured_at: string | null;
+          preview_screenshot_error: string | null;
           error_message: string | null;
           started_at: string | null;
           completed_at: string | null;
@@ -831,6 +835,10 @@ export interface Database {
           components?: Json | null;
           refined_design?: Json | null;
           qa_result?: Json | null;
+          preview_screenshot_desktop_path?: string | null;
+          preview_screenshot_mobile_path?: string | null;
+          preview_screenshot_captured_at?: string | null;
+          preview_screenshot_error?: string | null;
           error_message?: string | null;
           started_at?: string | null;
           completed_at?: string | null;
@@ -846,6 +854,10 @@ export interface Database {
           components?: Json | null;
           refined_design?: Json | null;
           qa_result?: Json | null;
+          preview_screenshot_desktop_path?: string | null;
+          preview_screenshot_mobile_path?: string | null;
+          preview_screenshot_captured_at?: string | null;
+          preview_screenshot_error?: string | null;
           error_message?: string | null;
           started_at?: string | null;
           completed_at?: string | null;

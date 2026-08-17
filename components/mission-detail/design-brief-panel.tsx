@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DesignBriefView } from "@/components/mission-detail/design-brief-view";
 import { QaReportView } from "@/components/mission-detail/qa-report-view";
+import { BeforeAfterPanel } from "@/components/mission-detail/before-after-panel";
 import type { DesignBriefRow } from "@/lib/repositories/design-brief-repository";
 import type { WebsiteDesignRow } from "@/lib/repositories/website-design-repository";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
@@ -41,12 +42,18 @@ export function DesignBriefPanel({
   initialMissionState,
   initialDesignBrief,
   initialWebsiteDesign,
+  originalScreenshotUrl,
+  initialPreviewScreenshotDesktopUrl,
+  initialPreviewScreenshotMobileUrl,
 }: {
   missionId: string;
   analysisComplete: boolean;
   initialMissionState: MissionState;
   initialDesignBrief: DesignBriefRow | null;
   initialWebsiteDesign: WebsiteDesignRow | null;
+  originalScreenshotUrl: string | null;
+  initialPreviewScreenshotDesktopUrl: string | null;
+  initialPreviewScreenshotMobileUrl: string | null;
 }) {
   const [missionState, setMissionState] = useState(initialMissionState);
   const [designBrief, setDesignBrief] = useState(initialDesignBrief);
@@ -58,6 +65,11 @@ export function DesignBriefPanel({
   const [rejectReason, setRejectReason] = useState("");
   const generationTriggeredRef = useRef(false);
   const qaTriggeredRef = useRef(false);
+  const [previewScreenshotDesktopUrl, setPreviewScreenshotDesktopUrl] = useState(initialPreviewScreenshotDesktopUrl);
+  const [previewScreenshotMobileUrl, setPreviewScreenshotMobileUrl] = useState(initialPreviewScreenshotMobileUrl);
+  const [captureTriggered, setCaptureTriggered] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [captureError, setCaptureError] = useState<string | null>(null);
 
   const briefInFlight = designBrief?.status === "pending" || designBrief?.status === "running";
   const designInFlight = websiteDesign?.status === "pending" || websiteDesign?.status === "running";
@@ -75,20 +87,49 @@ export function DesignBriefPanel({
     return () => clearInterval(interval);
   }, [missionId, briefInFlight]);
 
-  // Poll Generation/Refinement/QA while the design run is in flight, or
-  // while it's complete but QA hasn't been triggered/finished yet.
+  // Poll Generation/Refinement/QA/Preview-Capture while the design run is in
+  // flight, while QA hasn't been triggered/finished yet, or while a real
+  // preview screenshot capture is in flight (Phase 4) — one endpoint, one
+  // poll, since GET .../generate-design now also resolves the preview
+  // screenshot signed URLs alongside the raw website_designs row.
   const qaComplete = !!websiteDesign?.qa_result;
   const needsQaPoll = websiteDesign?.status === "complete" && !qaComplete;
+  const captureInFlight = captureTriggered && !previewScreenshotDesktopUrl && !websiteDesign?.preview_screenshot_error;
   useEffect(() => {
-    if (!designInFlight && !needsQaPoll) return;
+    if (!designInFlight && !needsQaPoll && !captureInFlight) return;
     const interval = setInterval(async () => {
       const res = await fetch(`/api/missions/${missionId}/generate-design`);
       if (!res.ok) return;
-      const body = (await res.json()) as { websiteDesign: WebsiteDesignRow | null };
+      const body = (await res.json()) as {
+        websiteDesign: WebsiteDesignRow | null;
+        previewScreenshotDesktopUrl: string | null;
+        previewScreenshotMobileUrl: string | null;
+      };
       setWebsiteDesign(body.websiteDesign);
+      setPreviewScreenshotDesktopUrl(body.previewScreenshotDesktopUrl);
+      setPreviewScreenshotMobileUrl(body.previewScreenshotMobileUrl);
+      if (body.previewScreenshotDesktopUrl || body.websiteDesign?.preview_screenshot_error) {
+        setCapturing(false);
+        setCaptureError(body.websiteDesign?.preview_screenshot_error ?? null);
+      }
     }, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [missionId, designInFlight, needsQaPoll]);
+  }, [missionId, designInFlight, needsQaPoll, captureInFlight]);
+
+  async function handleCapturePreview() {
+    setCapturing(true);
+    setCaptureError(null);
+    setCaptureTriggered(true);
+    try {
+      const res = await fetch(`/api/missions/${missionId}/capture-preview`, { method: "POST" });
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) throw new Error(body?.error ?? "Failed to start preview screenshot capture");
+      // Polling (above) picks up the real result once the background run finishes.
+    } catch (err) {
+      setCapturing(false);
+      setCaptureError(err instanceof Error ? err.message : "Failed to start preview screenshot capture");
+    }
+  }
 
   // Auto-chain: once approved and generation completes, trigger QA exactly once.
   useEffect(() => {
@@ -279,6 +320,12 @@ export function DesignBriefPanel({
           websiteDesign={websiteDesign}
           designInFlight={designInFlight}
           needsQaPoll={needsQaPoll}
+          originalScreenshotUrl={originalScreenshotUrl}
+          previewScreenshotDesktopUrl={previewScreenshotDesktopUrl}
+          captureTriggered={captureTriggered}
+          captureError={captureError}
+          capturing={capturing}
+          onCapture={handleCapturePreview}
         />
       )}
     </div>
@@ -290,11 +337,23 @@ function GenerationStatus({
   websiteDesign,
   designInFlight,
   needsQaPoll,
+  originalScreenshotUrl,
+  previewScreenshotDesktopUrl,
+  captureTriggered,
+  captureError,
+  capturing,
+  onCapture,
 }: {
   missionId: string;
   websiteDesign: WebsiteDesignRow | null;
   designInFlight: boolean;
   needsQaPoll: boolean;
+  originalScreenshotUrl: string | null;
+  previewScreenshotDesktopUrl: string | null;
+  captureTriggered: boolean;
+  captureError: string | null;
+  capturing: boolean;
+  onCapture: () => void;
 }) {
   if (!websiteDesign) {
     return (
@@ -367,6 +426,18 @@ function GenerationStatus({
           <LayoutTemplate className="h-4 w-4" />
           View Preview
         </Link>
+      )}
+
+      {qaResult && (
+        <BeforeAfterPanel
+          missionId={missionId}
+          originalScreenshotUrl={originalScreenshotUrl}
+          previewScreenshotDesktopUrl={previewScreenshotDesktopUrl}
+          captureTriggered={captureTriggered}
+          captureError={captureError}
+          capturing={capturing}
+          onCapture={onCapture}
+        />
       )}
     </div>
   );

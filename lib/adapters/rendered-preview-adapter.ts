@@ -127,3 +127,58 @@ export async function runRenderedPreviewAdapter(
     await browser?.close();
   }
 }
+
+export interface PreviewScreenshotCaptureResult {
+  desktop: Buffer | null;
+  mobile: Buffer | null;
+  fetchError?: string;
+}
+
+/**
+ * runPreviewScreenshotCapture — Phase 4: the real-screenshot counterpart to
+ * runRenderedPreviewAdapter above, which deliberately measures-and-discards
+ * (its own doc comment: "a screenshot's byte size here is evidence a real
+ * page rendered... nothing more"). This function exists because Phase 4
+ * needs the opposite: the actual PNG bytes, to upload and display as a real
+ * Before/After comparison, not just prove rendering happened. Same
+ * authenticated-navigation mechanism (real session cookies from
+ * lib/services/qa-preview-access.ts, no RLS bypass), same two viewports, so
+ * a Phase 4 "after" screenshot and a QA run's own rendering check are always
+ * looking at the identical real route under the identical real conditions.
+ */
+export async function runPreviewScreenshotCapture(
+  targetUrl: string,
+  options: RenderedPreviewOptions = {}
+): Promise<PreviewScreenshotCaptureResult> {
+  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+  try {
+    browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
+    const page = await browser.newPage();
+
+    if (options.cookies && options.cookies.length > 0) {
+      await page.setCookie(
+        ...options.cookies.map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path ?? "/" }))
+      );
+    }
+
+    await page.goto(targetUrl, { waitUntil: "networkidle2", timeout: NAV_TIMEOUT_MS });
+
+    await page.setViewport(DESKTOP_VIEWPORT);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const desktop = (await page.screenshot({ type: "png", fullPage: true })) as Buffer;
+
+    await page.setViewport(MOBILE_VIEWPORT);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const mobile = (await page.screenshot({ type: "png", fullPage: true })) as Buffer;
+
+    return { desktop, mobile };
+  } catch (err) {
+    return {
+      desktop: null,
+      mobile: null,
+      fetchError: err instanceof Error ? err.message : "Failed to capture preview screenshot",
+    };
+  } finally {
+    await browser?.close();
+  }
+}
