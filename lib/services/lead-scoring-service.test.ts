@@ -97,6 +97,106 @@ describe("lead-scoring-service: computeConfidenceScore", () => {
   });
 });
 
+describe("lead-scoring-service: computeConfidenceScore is a genuine evidence-QUALITY signal (Phase 3.5, CTO directive §4-5) — not a populated-field count", () => {
+  test("a phone only matched via loose text pattern-matching (no tel:/JSON-LD corroboration) scores LOW quality, not the same as a directly-observed one", () => {
+    const result = computeConfidenceScore(crawlFor({ contact: { phones: ["555-0000"], emails: [], address: null, hours: null } }));
+    const phone = result.categories.find((c) => c.label === "phone")!;
+    assert.equal(phone.quality, "low");
+    assert.match(phone.reason, /loose text pattern-matching/);
+  });
+
+  test("a phone confirmed via a real tel: link scores HIGH quality — directly observed, not inferred", () => {
+    const result = computeConfidenceScore(
+      crawlFor({
+        contact: {
+          phones: ["555-0000"],
+          phoneEvidence: [{ phone: "555-0000", normalized: "+15550000000", sourceUrl: "https://acme.test/", source: "tel-link" }],
+          emails: [],
+          address: null,
+          hours: null,
+        },
+      })
+    );
+    const phone = result.categories.find((c) => c.label === "phone")!;
+    assert.equal(phone.quality, "high");
+  });
+
+  test("a phone confirmed via structured JSON-LD also scores HIGH — same tier as tel:, both directly observed", () => {
+    const result = computeConfidenceScore(
+      crawlFor({
+        contact: {
+          phones: ["555-0000"],
+          phoneEvidence: [{ phone: "555-0000", normalized: "+15550000000", sourceUrl: "https://acme.test/", source: "json-ld" }],
+          emails: [],
+          address: null,
+          hours: null,
+        },
+      })
+    );
+    assert.equal(result.categories.find((c) => c.label === "phone")!.quality, "high");
+  });
+
+  test("two identical populated-field counts (this test vs. the low-quality phone test above) produce DIFFERENT scores once quality is accounted for — proof this is no longer a bare field-count", () => {
+    const lowQuality = computeConfidenceScore(crawlFor({ contact: { phones: ["555-0000"], emails: [], address: null, hours: null } }));
+    const highQuality = computeConfidenceScore(
+      crawlFor({
+        contact: {
+          phones: ["555-0000"],
+          phoneEvidence: [{ phone: "555-0000", normalized: "+15550000000", sourceUrl: "https://acme.test/", source: "tel-link" }],
+          emails: [],
+          address: null,
+          hours: null,
+        },
+      })
+    );
+    assert.deepEqual(lowQuality.evidenceFound, highQuality.evidenceFound, "same categories 'found' either way");
+    assert.ok(highQuality.score > lowQuality.score, `expected the tel:-confirmed phone to score higher than the loose-text-only one (${highQuality.score} vs ${lowQuality.score})`);
+  });
+
+  test("address: JSON-LD scores HIGH, a real labeled DOM element scores MEDIUM — both real, neither fabricated, but not equally reliable", () => {
+    const jsonLd = computeConfidenceScore(crawlFor({ contact: { phones: [], emails: [], address: "1 Main St", addressSource: "json-ld", hours: null } }));
+    const labeled = computeConfidenceScore(crawlFor({ contact: { phones: [], emails: [], address: "1 Main St", addressSource: "labeled", hours: null } }));
+    assert.equal(jsonLd.categories.find((c) => c.label === "address")!.quality, "high");
+    assert.equal(labeled.categories.find((c) => c.label === "address")!.quality, "medium");
+  });
+
+  test("reviews are always high quality when present — extractReviews has no unstructured DOM fallback, so a real review is always directly observed", () => {
+    const result = computeConfidenceScore(crawlFor({ reviews: { averageRating: 4.5, count: 20, source: "schema.org structured data" } }));
+    assert.equal(result.categories.find((c) => c.label === "reviews")!.quality, "high");
+  });
+
+  test("richness tiers: one real service entry is only MEDIUM confidence; two or more is HIGH — a second independent instance corroborates the category genuinely exists", () => {
+    const one = computeConfidenceScore(crawlFor({ services: [{ heading: "Services", excerpt: "x", sourceUrl: "https://acme.test/" }] }));
+    const two = computeConfidenceScore(
+      crawlFor({
+        services: [
+          { heading: "Services", excerpt: "x", sourceUrl: "https://acme.test/" },
+          { heading: "Catering", excerpt: "y", sourceUrl: "https://acme.test/" },
+        ],
+      })
+    );
+    assert.equal(one.categories.find((c) => c.label === "services")!.quality, "medium");
+    assert.equal(two.categories.find((c) => c.label === "services")!.quality, "high");
+  });
+
+  test("a category with zero real entries scores 'none', never a fabricated medium/low tier", () => {
+    const result = computeConfidenceScore(crawlFor({ services: [] }));
+    assert.equal(result.categories.find((c) => c.label === "services")!.quality, "none");
+  });
+
+  test("a crawl that failed outright returns empty categories, never fabricated quality tiers for data that was never fetched", () => {
+    const result = computeConfidenceScore(crawlFor({ fetchError: "ETIMEDOUT" }));
+    assert.deepEqual(result.categories, []);
+  });
+
+  test("every category carries a real, non-empty reason — never a bare quality label with no explanation", () => {
+    const result = computeConfidenceScore(crawlFor());
+    for (const category of result.categories) {
+      assert.ok(category.reason.length > 0, `${category.label} has no reason`);
+    }
+  });
+});
+
 describe("lead-scoring-service: computeLeadOpportunityScore (distinct from Website Score — CTO directive §2)", () => {
   test("a legitimate business with a weak website scores HIGH opportunity — real upside, real evidence", () => {
     const weakSiteRealBusiness = crawlFor({
@@ -191,6 +291,19 @@ describe("lead-scoring-service: computeMakeoverPotential (Phase 2, CTO directive
       headingCounts: { h1: 0, h2: 0, h3: 0, h4: 0, h5: 0, h6: 0 },
       robotsTxtFound: false,
       htmlByteSize: 5_000_000,
+      // Phase 3.5: confidence is now evidence-QUALITY-aware, not a bare
+      // populated-field count — "reasonably rich evidence" means real
+      // provenance (a tel:/mailto: link, structured JSON-LD address), not
+      // just a phone/email string with no corroboration.
+      contact: {
+        phones: ["555-000-1111"],
+        phoneEvidence: [{ phone: "555-000-1111", normalized: "+15550001111", sourceUrl: "https://acme.test/", source: "tel-link" }],
+        emails: ["hi@acme.test"],
+        emailEvidence: [{ email: "hi@acme.test", sourceUrl: "https://acme.test/", source: "mailto-link" }],
+        address: "1 Main St",
+        addressSource: "json-ld",
+        hours: null,
+      },
     });
     const result = potentialFor(highCrawl);
     assert.equal(result.potential, "high");
@@ -204,6 +317,25 @@ describe("lead-scoring-service: computeMakeoverPotential (Phase 2, CTO directive
       sitemapFound: false,
       htmlByteSize: 5_000_000,
       reviews: { averageRating: 4.5, count: 12, source: "schema.org structured data" },
+      // Phase 3.5: strong confidence now requires real corroborated
+      // provenance across multiple categories, not just populated fields.
+      contact: {
+        phones: ["555-000-1111"],
+        phoneEvidence: [{ phone: "555-000-1111", normalized: "+15550001111", sourceUrl: "https://acme.test/", source: "tel-link" }],
+        emails: ["hi@acme.test"],
+        emailEvidence: [{ email: "hi@acme.test", sourceUrl: "https://acme.test/", source: "mailto-link" }],
+        address: "1 Main St",
+        addressSource: "json-ld",
+        hours: null,
+      },
+      services: [
+        { heading: "Services", excerpt: "Real services offered.", sourceUrl: "https://acme.test/" },
+        { heading: "Catering", excerpt: "Real catering services.", sourceUrl: "https://acme.test/" },
+      ],
+      testimonials: [
+        { heading: "Testimonial", excerpt: "Great work!", sourceUrl: "https://acme.test/" },
+        { heading: "Testimonial", excerpt: "Highly recommend.", sourceUrl: "https://acme.test/" },
+      ],
     });
     const result = potentialFor(veryHighCrawl);
     assert.equal(result.potential, "very_high");

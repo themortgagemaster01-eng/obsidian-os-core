@@ -104,6 +104,33 @@ describe("business-intelligence-service: buildBusinessIntelligenceProfile", () =
     assert.deepEqual(profile.availableVideos, []);
   });
 
+  test("Phase 3.5: hoursByDay threads through from the crawl's own structured parse, real day names, never empty when the raw hours text had real day boundaries", () => {
+    const contactWithHours: ContactInfo = {
+      phones: ["+15550001111"],
+      emails: ["hi@acme.test"],
+      address: "1 Main St",
+      hours: "Monday 9am - 5pm; Tuesday 9am - 5pm",
+      hoursByDay: [
+        { day: "Monday", hours: "9:00 AM – 5:00 PM" },
+        { day: "Tuesday", hours: "9:00 AM – 5:00 PM" },
+      ],
+    };
+    const lead = fakeLead({
+      contact_evidence: contactWithHours as unknown as LeadRow["contact_evidence"],
+      crawl_result: crawlFor({ contact: contactWithHours }) as unknown as LeadRow["crawl_result"],
+    });
+    const profile = buildBusinessIntelligenceProfile(lead);
+    assert.deepEqual(profile.hoursByDay, [
+      { day: "Monday", hours: "9:00 AM – 5:00 PM" },
+      { day: "Tuesday", hours: "9:00 AM – 5:00 PM" },
+    ]);
+  });
+
+  test("hoursByDay is honestly empty (not fabricated) when the crawl found no day-name boundary at all", () => {
+    const profile = buildBusinessIntelligenceProfile(fakeLead());
+    assert.deepEqual(profile.hoursByDay, []);
+  });
+
   test("Design and Mobile weaknesses are honestly marked not-yet-assessed rather than fabricated from a crawl that never measured them", () => {
     const profile = buildBusinessIntelligenceProfile(fakeLead());
     assert.ok(profile.notYetAssessed.includes("design"));

@@ -95,7 +95,22 @@ export default async function LeadDetailPage({ params }: PageParams) {
             <dt className="text-muted-foreground">Address</dt>
             <dd className="text-foreground">{profile.address ?? "—"}</dd>
             <dt className="text-muted-foreground">Hours</dt>
-            <dd className="text-foreground">{profile.hours ?? "—"}</dd>
+            <dd className="text-foreground">
+              {profile.hoursByDay.length > 0 ? (
+                <table className="text-sm">
+                  <tbody>
+                    {profile.hoursByDay.map((entry, i) => (
+                      <tr key={i}>
+                        <td className="pr-4 text-muted-foreground">{entry.day}</td>
+                        <td className="text-foreground">{entry.hours}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                profile.hours ?? "—"
+              )}
+            </dd>
           </dl>
         </section>
 

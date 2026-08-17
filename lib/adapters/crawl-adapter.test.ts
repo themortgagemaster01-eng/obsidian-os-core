@@ -303,6 +303,120 @@ describe("crawl-adapter: visible-text hours/address signal (no matching CSS clas
   });
 });
 
+describe("crawl-adapter: Phase 3.5 data quality — address contamination fix", () => {
+  test("the real reported bug: a phone-number line immediately following an address block is never swept into the address ('5 Princess Street West • Waterloo 519-886-1689')", () => {
+    const html = `
+      <html><body><footer>
+        <div>Address:</div>
+        <div>5 Princess Street West • Waterloo</div>
+        <div>519-886-1689</div>
+      </footer></body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.contact.address, "5 Princess Street West • Waterloo");
+    assert.doesNotMatch(facts.contact.address ?? "", /519-886-1689/);
+  });
+
+  test("also stops before an email line following an address block", () => {
+    const html = `<html><body><div>Address:</div><div>100 Arnold Street</div><div>hello@example.com</div></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.contact.address, "100 Arnold Street");
+  });
+
+  test("defense-in-depth: a phone number concatenated onto the SAME address text node (no separate sibling at all) is still stripped from the end", () => {
+    const html = `<html><body><div>Address:</div><div>5 Princess Street West, 519-886-1689</div></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.contact.address, "5 Princess Street West");
+  });
+
+  test("a real address with no trailing phone is completely unaffected by the new stop/strip logic", () => {
+    const html = `<html><body><div>Address:</div><div>100 Arnold Street. Kitchener, Ontario, Canada. N2H 6E2</div></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.contact.address, "100 Arnold Street. Kitchener, Ontario, Canada. N2H 6E2");
+  });
+
+  test("addressSource is tagged 'json-ld' when JSON-LD supplied it, 'labeled' when the visible-text label signal did", () => {
+    const jsonLdHtml = `<html><head><script type="application/ld+json">{"@type":"LocalBusiness","address":{"streetAddress":"123 Main St","addressLocality":"Springfield"}}</script></head><body></body></html>`;
+    const jsonLdFacts = extractStructuredFacts(cheerio.load(jsonLdHtml), "https://example.test/");
+    assert.equal(jsonLdFacts.contact.addressSource, "json-ld");
+
+    const labeledHtml = `<html><body><div>Address:</div><div>100 Arnold Street</div></body></html>`;
+    const labeledFacts = extractStructuredFacts(cheerio.load(labeledHtml), "https://example.test/");
+    assert.equal(labeledFacts.contact.addressSource, "labeled");
+  });
+});
+
+describe("crawl-adapter: Phase 3.5 data quality — structured day-by-day hours", () => {
+  test("the real reported bug: an hours widget with day and time as separate child elements (no literal whitespace between them in the source) no longer collapses into a run-on string", () => {
+    const html =
+      `<html><body><div class="hours"><div>Tuesday</div><div>5 pm to 11 pm</div><div>Wednesday</div><div>5 pm to 11 pm</div><div>Thursday</div><div>5 pm to 12 am</div></div></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.doesNotMatch(facts.contact.hours ?? "", /pmWednesday|pmThursday|11 pm5/, "must never read as a run-on string with no word boundaries");
+    assert.match(facts.contact.hours ?? "", /Tuesday 5 pm to 11 pm/);
+  });
+
+  test("hoursByDay produces real, normalized per-day entries from that same widget", () => {
+    const html =
+      `<html><body><div class="hours"><div>Tuesday</div><div>5 pm to 11 pm</div><div>Wednesday</div><div>5 pm to 11 pm</div><div>Thursday</div><div>5 pm to 12 am</div></div></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    const byDay = facts.contact.hoursByDay ?? [];
+    assert.deepEqual(
+      byDay.map((e) => e.day),
+      ["Tuesday", "Wednesday", "Thursday"]
+    );
+    assert.equal(byDay.find((e) => e.day === "Tuesday")?.hours, "5:00 PM – 11:00 PM");
+    assert.equal(byDay.find((e) => e.day === "Thursday")?.hours, "5:00 PM – 12:00 AM");
+  });
+
+  test("a day RANGE ('Wednesday-Saturday') expands into one real entry per calendar day, all sharing the same real hours — never collapsed or mis-split", () => {
+    const html = `
+      <html><body><footer>
+        <h2>Hours of operation:</h2>
+        <h2>Monday Closed</h2>
+        <h2>Wednesday-Saturday 11:30am - 8:00pm</h2>
+      </footer></body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    const byDay = facts.contact.hoursByDay ?? [];
+    assert.equal(byDay.find((e) => e.day === "Monday")?.hours, "Closed");
+    for (const day of ["Wednesday", "Thursday", "Friday", "Saturday"]) {
+      assert.equal(byDay.find((e) => e.day === day)?.hours, "11:30 AM – 8:00 PM", `expected ${day} to share the range's real hours`);
+    }
+    assert.equal(byDay.find((e) => e.day === "Tuesday"), undefined, "a day outside the real range must not be fabricated");
+  });
+
+  test("hoursByDay is honestly empty when the raw hours text has no real day-name boundary at all (e.g. '9am-5pm daily') — the raw hours string stays the fallback", () => {
+    const html = `<html><body><div>Hours:</div><div>9am-5pm daily</div></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.deepEqual(facts.contact.hoursByDay ?? [], []);
+    assert.ok(facts.contact.hours);
+  });
+});
+
+describe("crawl-adapter: Phase 3.5 data quality — email provenance", () => {
+  test("emailEvidence tags a mailto: link as 'mailto-link' — the same direct/structural tier as a tel: link", () => {
+    const html = `<html><body><a href="mailto:hi@example.com">Email us</a></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.contact.emailEvidence?.[0]?.source, "mailto-link");
+  });
+
+  test("emailEvidence tags a body-text-only match as 'visible-text' — inferred, not directly observed", () => {
+    const html = `<html><body><p>Reach us at hi@example.com anytime.</p></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.contact.emailEvidence?.[0]?.source, "visible-text");
+  });
+});
+
 describe("crawl-adapter: page URL/title classification signal (no matching CSS class)", () => {
   test("a sub-page whose URL path names a category, with no CSS-class match, contributes its own main content as one real evidence item — Lakeshore's real shape: /dental-services/emergency-dentist with no matching class anywhere on the page", () => {
     const html = `

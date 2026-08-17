@@ -101,38 +101,125 @@ export function computeWebsiteScore(crawl: CrawlRawResult): WebsiteScoreResult {
 // Confidence Score — how much real data was actually captured.
 // ===========================================================================
 
+export type EvidenceQuality = "high" | "medium" | "low" | "none";
+
+export interface ConfidenceCategoryResult {
+  label: string;
+  quality: EvidenceQuality;
+  /** Why this tier — real, evidence-cited, never a bare label (CLAUDE.md's "confidence ratings are mandatory... a reason" principle, applied one level deeper than the aggregate score). */
+  reason: string;
+}
+
+/** v1 weights, not a final answer (see module comment) — high/medium/low/none map to 100/60/25/0%, not a straight present-or-not binary. */
+const QUALITY_WEIGHT: Record<EvidenceQuality, number> = { high: 1, medium: 0.6, low: 0.25, none: 0 };
+
 export interface ConfidenceScoreResult {
   score: number;
-  /** Which of the checked evidence categories were actually found real content for — the honest basis for the score, not just a bare number. */
+  /** Which of the checked evidence categories were found at all (quality !== "none") — kept for existing callers ("N/8 real evidence categories captured" etc.). `categories` below is the real basis for the score. */
   evidenceFound: string[];
+  categories: ConfidenceCategoryResult[];
 }
 
 /**
- * computeConfidenceScore — proportion of a fixed set of real-evidence
- * categories this candidate's crawl actually populated. A crawl that
- * failed outright scores 0 confidence — we know nothing real about this
- * candidate, which is itself an honest, real answer.
+ * Phone/email quality (CTO Phase 3.5 directive §4-5: "whether structured
+ * data backs it up, whether directly observed vs inferred"). Reuses
+ * PhoneEvidence/EmailEvidence's own real source tracking (crawl-adapter.ts)
+ * — a tel:/mailto: link or JSON-LD entry is a deliberate, structural site
+ * element (directly observed); a number/address only matched by loose
+ * regex scanning of the page's visible text is inferred, and stays low
+ * confidence even though it's still real, honestly-found evidence.
+ */
+function phoneQuality(crawl: CrawlRawResult): ConfidenceCategoryResult {
+  if (crawl.contact.phones.length === 0) return { label: "phone", quality: "none", reason: "No phone number found by any method." };
+  const direct = (crawl.contact.phoneEvidence ?? []).some((e) => e.source === "tel-link" || e.source === "json-ld");
+  return direct
+    ? { label: "phone", quality: "high", reason: "Confirmed via a real tel: link or structured JSON-LD data — directly observed, not inferred." }
+    : { label: "phone", quality: "low", reason: "Only matched via loose text pattern-matching on the page body — no tel: link or structured data corroborates it." };
+}
+
+function emailQuality(crawl: CrawlRawResult): ConfidenceCategoryResult {
+  if (crawl.contact.emails.length === 0) return { label: "email", quality: "none", reason: "No email address found by any method." };
+  const direct = (crawl.contact.emailEvidence ?? []).some((e) => e.source === "mailto-link" || e.source === "json-ld");
+  return direct
+    ? { label: "email", quality: "high", reason: "Confirmed via a real mailto: link or structured JSON-LD data — directly observed, not inferred." }
+    : { label: "email", quality: "low", reason: "Only matched via loose text pattern-matching on the page body — no mailto: link or structured data corroborates it." };
+}
+
+/** Address quality: JSON-LD is directly observed (high); a real, explicitly-labeled DOM element ("Address: ...") is a deliberate site element but hand-authored, not machine-structured (medium) — crawl-adapter.ts's extractAddress has no unlabeled-inference fallback the way hours does, so there is no "low" tier for address today. */
+function addressQuality(crawl: CrawlRawResult): ConfidenceCategoryResult {
+  if (!crawl.contact.address) return { label: "address", quality: "none", reason: "No address found by any method." };
+  return crawl.contact.addressSource === "json-ld"
+    ? { label: "address", quality: "high", reason: "Confirmed via structured JSON-LD data — directly observed, not inferred." }
+    : { label: "address", quality: "medium", reason: "Found via a real, explicitly-labeled \"Address:\" element — a deliberate site element, but not machine-structured data." };
+}
+
+/** A direct <meta name="description"> read is inherently unambiguous — there's no "inferred" tier for it the way there is for regex-scraped contact fields. */
+function metaDescriptionQuality(crawl: CrawlRawResult): ConfidenceCategoryResult {
+  return crawl.metaDescription
+    ? { label: "meta description", quality: "high", reason: "A direct read of the page's own <meta> tag — no inference involved." }
+    : { label: "meta description", quality: "none", reason: "No <meta name=\"description\"> tag found." };
+}
+
+/** extractReviews (crawl-adapter.ts) only ever reads real aggregateRating from JSON-LD — no DOM star-rating/badge scraping fallback exists — so a present review is always directly observed, never inferred. */
+function reviewsQuality(crawl: CrawlRawResult): ConfidenceCategoryResult {
+  if (crawl.reviews.count === null && crawl.reviews.averageRating === null) {
+    return { label: "reviews", quality: "none", reason: "No real review data found — this pipeline only trusts structured aggregateRating data, never a scraped star icon or third-party badge." };
+  }
+  return { label: "reviews", quality: "high", reason: `Confirmed via ${crawl.reviews.source ?? "structured data"} — directly observed, not inferred.` };
+}
+
+/**
+ * Richness-tiered categories (services/testimonials/gallery): no
+ * structured-data alternative exists for these — both crawl-adapter.ts's
+ * heuristic content-matchers are the only source. A second independent real
+ * entry corroborates that this business genuinely publishes this category
+ * of content (not a one-off heuristic false match), so 2+ real entries earn
+ * full credit; exactly one earns partial credit; none earns none.
+ */
+function richnessQuality(label: string, count: number): ConfidenceCategoryResult {
+  if (count === 0) return { label, quality: "none", reason: `No real ${label} content found.` };
+  if (count === 1) return { label, quality: "medium", reason: `Exactly one real ${label} entry found — real, but not corroborated by a second independent instance.` };
+  return { label, quality: "high", reason: `${count} real ${label} entries found — multiple independent instances corroborate this is a genuine, published category.` };
+}
+
+/**
+ * computeConfidenceScore — a genuine evidence-QUALITY signal (CTO Phase 3.5
+ * directive §4-5), not "how many of 8 fields happen to be populated."
+ * v1 THIS ONLY REPLACES: previously every populated category scored full
+ * credit regardless of how it was captured — a phone found only via loose
+ * regex-scanning of body text counted identically to one confirmed by a
+ * real tel: link AND structured JSON-LD. Each category is now graded on
+ * how it was actually captured: structured data (JSON-LD) or a direct,
+ * unambiguous read (meta description) is high; a real but merely-labeled
+ * DOM element is medium; content only found via loose regex/heuristic
+ * pattern-matching with no corroboration is low; absent is none. A crawl
+ * that failed outright still scores 0 confidence — we know nothing real
+ * about this candidate, which is itself an honest, real answer. This is
+ * NOT a threshold change and does not target any particular output number
+ * — a genuinely thin-evidence business still scores low confidence here,
+ * same as before.
  */
 export function computeConfidenceScore(crawl: CrawlRawResult): ConfidenceScoreResult {
   if (crawl.fetchError) {
-    return { score: 0, evidenceFound: [] };
+    return { score: 0, evidenceFound: [], categories: [] };
   }
 
-  const checks: { label: string; present: boolean }[] = [
-    { label: "phone", present: crawl.contact.phones.length > 0 },
-    { label: "address", present: !!crawl.contact.address },
-    { label: "email", present: crawl.contact.emails.length > 0 },
-    { label: "services", present: crawl.services.length > 0 },
-    { label: "meta description", present: !!crawl.metaDescription },
-    { label: "reviews", present: crawl.reviews.count !== null || crawl.reviews.averageRating !== null },
-    { label: "testimonials", present: crawl.testimonials.length > 0 },
-    { label: "gallery", present: crawl.gallery.length > 0 },
+  const categories: ConfidenceCategoryResult[] = [
+    phoneQuality(crawl),
+    addressQuality(crawl),
+    emailQuality(crawl),
+    richnessQuality("services", crawl.services.length),
+    metaDescriptionQuality(crawl),
+    reviewsQuality(crawl),
+    richnessQuality("testimonials", crawl.testimonials.length),
+    richnessQuality("gallery", crawl.gallery.length),
   ];
 
-  const evidenceFound = checks.filter((c) => c.present).map((c) => c.label);
-  const score = Math.round((evidenceFound.length / checks.length) * 100);
+  const evidenceFound = categories.filter((c) => c.quality !== "none").map((c) => c.label);
+  const totalWeight = categories.reduce((sum, c) => sum + QUALITY_WEIGHT[c.quality], 0);
+  const score = Math.round((totalWeight / categories.length) * 100);
 
-  return { score, evidenceFound };
+  return { score, evidenceFound, categories };
 }
 
 // ===========================================================================

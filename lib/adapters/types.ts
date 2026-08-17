@@ -37,8 +37,24 @@ export interface ContactInfo {
   /** Per-number crawl provenance; optional for compatibility with older rows. */
   phoneEvidence?: PhoneEvidence[];
   emails: string[];
+  /** Per-email crawl provenance (Phase 3.5), same shape and same purpose as phoneEvidence — optional for compatibility with older rows. */
+  emailEvidence?: EmailEvidence[];
   address: string | null;
+  /** How the address was captured (Phase 3.5) — "json-ld" (schema.org structured data) is strictly more reliable than "labeled" (a real "Address:"-labeled DOM element, still real but hand-authored/scraped). Optional for compatibility with older rows; absent means the address came from an older extraction pass this field predates. */
+  addressSource?: "json-ld" | "labeled";
   hours: string | null;
+  /**
+   * Real, structured day-by-day hours (Phase 3.5) — parsed generically from
+   * whatever raw `hours` string was captured (JSON-LD, a DOM hours widget,
+   * or a labeled visible-text block), never a second, divergent extraction.
+   * A day range in the source ("Wed-Sat 11:30am-8pm") expands into one
+   * entry per real calendar day, all sharing the same real hours text —
+   * never collapsed back into a single ambiguous range for display. Empty
+   * when no real day-name boundary could be found in the raw hours text
+   * (e.g. "9am-5pm daily" with no day names at all) — the raw `hours`
+   * string above is still the honest fallback for that case.
+   */
+  hoursByDay?: HoursEntry[];
 }
 
 export interface PhoneEvidence {
@@ -46,6 +62,19 @@ export interface PhoneEvidence {
   normalized: string;
   sourceUrl: string;
   source: "tel-link" | "json-ld" | "visible-text";
+}
+
+export interface EmailEvidence {
+  email: string;
+  sourceUrl: string;
+  source: "mailto-link" | "json-ld" | "visible-text";
+}
+
+export interface HoursEntry {
+  /** Full canonical day name ("Monday", not "Mon"). */
+  day: string;
+  /** e.g. "5:00 PM – 11:00 PM" or "Closed" — real, normalized text, never a guessed time this business never published. */
+  hours: string;
 }
 
 export interface SocialLinks {

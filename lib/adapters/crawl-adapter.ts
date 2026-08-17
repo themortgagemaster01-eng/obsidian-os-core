@@ -5,6 +5,8 @@ import type {
   CrawlRawResult,
   ContactInfo,
   PhoneEvidence,
+  EmailEvidence,
+  HoursEntry,
   SocialLinks,
   ContentSection,
   ReviewsSummary,
@@ -148,6 +150,9 @@ function formatJsonLdAddress(address: unknown): string | null {
 // commonly tracking/account IDs and are accepted only from tel: or JSON-LD.
 const PHONE_REGEX = /(?:\+?1[\s.-]?)?(?:\(\s*\d{3}\s*\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}(?:\s*(?:x|ext\.?|extension)\s*\d{1,6})?/gi;
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+/** Non-global copies of the two patterns above, used only as one-shot .test()/.match() stop-checks (e.g. addressSiblingContinues below) — PHONE_REGEX/EMAIL_REGEX carry the `g` flag and are stateful across .test() calls via lastIndex, which a shared stop-check must never depend on. */
+const PHONE_LIKE = new RegExp(PHONE_REGEX.source, "i");
+const EMAIL_LIKE = new RegExp(EMAIL_REGEX.source, "i");
 const MAX_CONTACT_ITEMS = 5;
 
 // ===========================================================================
@@ -247,11 +252,39 @@ const HOURS_PATTERN_NO_LABEL = new RegExp(
   "i"
 );
 
+/**
+ * Real, reported data-quality bug (CTO Phase 3.5 directive §2): plain
+ * `$el.text()` on a container concatenates every descendant text node with
+ * NO inserted separator at element boundaries (DOM `textContent` behavior,
+ * not a cheerio quirk) — a real widget shaped like
+ * `<div class="hours"><div>Tuesday</div><div>5 pm to 11 pm</div>...</div>`
+ * (day and time as separate child elements, no literal whitespace text node
+ * between them in the source) collapses into "Tuesday5 pm to 11 pm..." when
+ * read as one blob. This walks every leaf descendant (an element with no
+ * element children — the actual text-bearing unit) and joins their own
+ * trimmed text with a single real space, reconstructing real word
+ * boundaries regardless of the source markup's own whitespace habits.
+ */
+function leafTextWithSpacing($: cheerio.CheerioAPI, $el: ReturnType<cheerio.CheerioAPI>): string {
+  if ($el.children().length === 0) {
+    return $el.text().trim();
+  }
+  const parts: string[] = [];
+  $el.find("*").each((_, node) => {
+    const $node = $(node);
+    if ($node.children().length === 0) {
+      const t = $node.text().trim();
+      if (t) parts.push(t);
+    }
+  });
+  return parts.length > 0 ? parts.join(" ") : $el.text().trim();
+}
+
 function extractHours($: cheerio.CheerioAPI, hoursFromJsonLd: string | null): string | null {
   if (hoursFromJsonLd) return hoursFromJsonLd;
 
-  const hoursFromDom =
-    $('[class*="hours" i], [id*="hours" i]').first().text().trim().replace(/\s+/g, " ").slice(0, 300) || null;
+  const hoursWidget = $('[class*="hours" i], [id*="hours" i]').first();
+  const hoursFromDom = hoursWidget.length > 0 ? leafTextWithSpacing($, hoursWidget).replace(/\s+/g, " ").slice(0, 300) || null : null;
   if (hoursFromDom) return hoursFromDom;
 
   const hoursFromLabel = extractLabeledValue(
@@ -268,16 +301,148 @@ function extractHours($: cheerio.CheerioAPI, hoursFromJsonLd: string | null): st
   return noLabelMatch ? noLabelMatch[0].trim().slice(0, 300) : null;
 }
 
+// ===========================================================================
+// Structured day-by-day hours (CTO Phase 3.5 directive §2) — parsed
+// generically from whatever raw hours string extractHours already produced
+// (JSON-LD's "Mo-Fr 09:00-17:00" shorthand, a DOM widget, or a labeled
+// visible-text block), never a second, divergent extraction pass. Works by
+// finding day-name (or day-range) boundaries directly in the string, so it
+// is immune to the exact whitespace-concatenation bug leafTextWithSpacing
+// above defends against at the source — even an imperfectly-joined
+// "Tuesday5 pm to 11 pm" chunk still slices cleanly once "Tuesday"'s own
+// length is known.
+// ===========================================================================
+
+const DAY_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAY_ABBR_TO_FULL: Record<string, string> = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" };
+/** A single day name or a real range ("Wednesday-Saturday", "Mon–Fri", "Tue to Sat") as ONE atomic boundary token — matching bare single day names here would incorrectly split a range into two separate, wrongly-scoped entries (the CTO's own "Wednesday-Saturday 11:30am - 8:00pm" real fixture: both "Wednesday" and "Saturday" independently match \bDAY_NAME\b, so a naive bare-day-name splitter would cut the range in half and lose Thursday/Friday's real hours entirely). */
+const DAY_TOKEN = new RegExp(`\\b${DAY_NAME}(?:\\s*(?:-|–|to)\\s*${DAY_NAME})?\\b`, "gi");
+const TIME_TOKEN = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)/gi;
+
+function canonicalDay(token: string): string | null {
+  return DAY_ABBR_TO_FULL[token.toLowerCase().slice(0, 3)] ?? null;
+}
+
+/** "Wednesday-Saturday" -> [Wednesday, Thursday, Friday, Saturday]; a single day name -> just itself. Wraps around DAY_ORDER (capped at 7 steps) so a real "Fri-Mon" range still resolves, never loops forever on a malformed token. */
+function expandDayToken(token: string): string[] {
+  const rangeMatch = token.match(new RegExp(`^(${DAY_NAME})\\s*(?:-|–|to)\\s*(${DAY_NAME})$`, "i"));
+  if (!rangeMatch) {
+    const single = canonicalDay(token);
+    return single ? [single] : [];
+  }
+  const start = canonicalDay(rangeMatch[1]);
+  const end = canonicalDay(rangeMatch[2]);
+  if (!start || !end) return [];
+  const startIdx = DAY_ORDER.indexOf(start);
+  const endIdx = DAY_ORDER.indexOf(end);
+  const days: string[] = [];
+  let i = startIdx;
+  for (let step = 0; step < 7; step++) {
+    days.push(DAY_ORDER[i]);
+    if (i === endIdx) break;
+    i = (i + 1) % 7;
+  }
+  return days;
+}
+
+/** "5 pm to 11 pm" -> "5:00 PM – 11:00 PM"; a single time with no pair -> just that one, formatted (never fabricates a missing closing time). Real minutes are preserved ("11:30am" -> "11:30 AM"), never rounded away. */
+function normalizeHoursTimeText(text: string): string | null {
+  if (/closed/i.test(text)) return "Closed";
+  const matches = [...text.matchAll(TIME_TOKEN)].map((m) => `${m[1]}:${m[2] ?? "00"} ${m[3].toUpperCase()}`);
+  if (matches.length === 0) return null;
+  return matches.length >= 2 ? `${matches[0]} – ${matches[1]}` : matches[0];
+}
+
+/**
+ * parseHoursByDay — the real structured output (CTO Phase 3.5 directive §2:
+ * "day-by-day with proper spacing/formatting"). Returns [] when the raw
+ * text has no real day-name boundary at all (e.g. "9am-5pm daily" or a
+ * fetch that found no hours) — the caller's existing raw `hours` string
+ * stays the honest fallback for that case, never backfilled with a guess.
+ */
+function parseHoursByDay(raw: string): HoursEntry[] {
+  const tokens = [...raw.matchAll(DAY_TOKEN)];
+  if (tokens.length === 0) return [];
+
+  const entries: HoursEntry[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    const start = token.index;
+    if (start === undefined) continue;
+    const end = i + 1 < tokens.length ? (tokens[i + 1].index ?? raw.length) : raw.length;
+    const rest = raw.slice(start + token[0].length, end).trim();
+    if (!rest) continue;
+    const hoursText = normalizeHoursTimeText(rest) ?? (rest.length <= 40 ? rest : null);
+    if (!hoursText) continue;
+    for (const day of expandDayToken(token[0])) {
+      entries.push({ day, hours: hoursText });
+    }
+  }
+  return entries;
+}
+
 const ADDRESS_LABEL_WITH_COLON = /^(address|location)\s*:\s*/i;
 const ADDRESS_LABEL_ONLY = /^(address|location)\s*:?\s*$/i;
 /** A plausible address *value* starts with a number, per the overwhelming convention of street addresses ("100 Arnold Street...", "3027 Blue Ridge Road...") — guards the "Address these three points before..." false-positive case, where "address" is a verb, not a label. */
 const ADDRESS_VALUE_PLAUSIBLE = /^\d/;
 
-function extractAddress($: cheerio.CheerioAPI, addressFromJsonLd: string | null): string | null {
-  if (addressFromJsonLd) return addressFromJsonLd;
-  return extractLabeledValue($, ADDRESS_LABEL_WITH_COLON, ADDRESS_LABEL_ONLY, (value) =>
-    ADDRESS_VALUE_PLAUSIBLE.test(value)
+/**
+ * Real, reported data-quality bug (CTO Phase 3.5 directive §1): an
+ * "Address:"-label-only element's sibling-gather (extractLabeledValue) had
+ * no stop condition at all, so a phone-number line immediately following
+ * the address block in the DOM (a common real layout — "Address: ... /
+ * Phone: ...") got swept into the same combined address string ("5 Princess
+ * Street West • Waterloo 519-886-1689" — the exact reported case). Stops
+ * the gather the moment a following sibling looks like a DIFFERENT field
+ * entirely: a phone number, an email, or another explicit contact label —
+ * generic, never a per-business pattern.
+ */
+function addressSiblingContinues(siblingText: string): boolean {
+  // A sibling that IS a phone/email once its phone/email substring is
+  // stripped away (nothing real is left) is that field's own line — stop
+  // before it entirely. A sibling that merely CONTAINS one alongside real
+  // remaining text (e.g. a single element combining street + phone) still
+  // continues here; stripTrailingPhone below cleans that case up on the
+  // final combined value instead, since stopping early would throw away
+  // real address text sharing the same element.
+  const stripped = siblingText
+    .replace(new RegExp(PHONE_LIKE.source, "gi"), "")
+    .replace(new RegExp(EMAIL_LIKE.source, "gi"), "")
+    .replace(/[\s•,;\-–:]/g, "");
+  if (stripped.length === 0) return false;
+  if (HOURS_LABEL_WITH_COLON.test(siblingText) || HOURS_LABEL_ONLY.test(siblingText)) return false;
+  if (/^(phone|tel|telephone|call|email|fax)\s*:?\s*$/i.test(siblingText)) return false;
+  return true;
+}
+
+/**
+ * Defense-in-depth for the same bug, one layer deeper: even with the
+ * sibling stop above, a SINGLE element could itself already contain both
+ * fields in one text node (e.g. "5 Princess Street West, call 519-886-1689").
+ * An address genuinely never *ends* with a phone number, so trailing phone-
+ * shaped content (plus whatever bullet/punctuation separated it) is
+ * stripped — never touches phone-shaped text in the middle of a real
+ * address (e.g. no real street address contains one), so this can't corrupt
+ * a genuine value.
+ */
+function stripTrailingPhone(value: string): string {
+  const match = value.match(new RegExp(`[\\s•,;\\-–]*${PHONE_LIKE.source}\\s*$`, "i"));
+  if (!match || match.index === undefined || match.index === 0) return value;
+  return value.slice(0, match.index).trim();
+}
+
+function extractAddress($: cheerio.CheerioAPI, addressFromJsonLd: string | null): { value: string; source: "json-ld" | "labeled" } | null {
+  if (addressFromJsonLd) return { value: addressFromJsonLd, source: "json-ld" };
+  const labeled = extractLabeledValue(
+    $,
+    ADDRESS_LABEL_WITH_COLON,
+    ADDRESS_LABEL_ONLY,
+    (value) => ADDRESS_VALUE_PLAUSIBLE.test(value),
+    addressSiblingContinues
   );
+  if (!labeled) return null;
+  const cleaned = stripTrailingPhone(labeled);
+  return cleaned ? { value: cleaned, source: "labeled" } : null;
 }
 
 function normalizePhoneCandidate(value: string): { phone: string; normalized: string } | null {
@@ -320,19 +485,28 @@ function extractContact($: cheerio.CheerioAPI, jsonLd: JsonLdEntity[], sourceUrl
   }
   const phones = phoneEvidence.map((item) => item.phone);
 
-  const emailsFromLinks = $('a[href^="mailto:"]')
-    .map((_, el) => $(el).attr("href")?.replace(/^mailto:/, "").split("?")[0]?.trim())
-    .get()
-    .filter((v): v is string => !!v);
-  const emailsFromJsonLd = jsonLd.map((e) => e.email).filter((v): v is string => !!v);
-  const emailsFromText = bodyText.match(EMAIL_REGEX) ?? [];
-  const emails = [...new Set([...emailsFromLinks, ...emailsFromJsonLd, ...emailsFromText])].slice(
-    0,
-    MAX_CONTACT_ITEMS
-  );
+  const emailCandidates: Array<{ value: string; source: EmailEvidence["source"] }> = [
+    ...$('a[href^="mailto:"]')
+      .map((_, el) => $(el).attr("href")?.replace(/^mailto:/, "").split("?")[0]?.trim())
+      .get()
+      .filter((v): v is string => !!v)
+      .map((value) => ({ value, source: "mailto-link" as const })),
+    ...jsonLd.map((e) => e.email).filter((v): v is string => !!v).map((value) => ({ value, source: "json-ld" as const })),
+    ...(bodyText.match(EMAIL_REGEX) ?? []).map((value) => ({ value, source: "visible-text" as const })),
+  ];
+  const emailEvidence: EmailEvidence[] = [];
+  const seenEmails = new Set<string>();
+  for (const candidate of emailCandidates) {
+    const normalized = candidate.value.trim().toLowerCase();
+    if (!normalized || seenEmails.has(normalized)) continue;
+    seenEmails.add(normalized);
+    emailEvidence.push({ email: candidate.value.trim(), sourceUrl, source: candidate.source });
+    if (emailEvidence.length >= MAX_CONTACT_ITEMS) break;
+  }
+  const emails = emailEvidence.map((item) => item.email);
 
   const addressFromJsonLd = jsonLd.map((e) => formatJsonLdAddress(e.address)).find((v): v is string => !!v) ?? null;
-  const address = extractAddress($, addressFromJsonLd);
+  const addressResult = extractAddress($, addressFromJsonLd);
 
   const jsonLdHours = jsonLd.map((e) => e.openingHours).find((v) => v !== undefined);
   const hoursFromJsonLd = jsonLdHours
@@ -341,8 +515,18 @@ function extractContact($: cheerio.CheerioAPI, jsonLd: JsonLdEntity[], sourceUrl
       : jsonLdHours
     : null;
   const hours = extractHours($, hoursFromJsonLd);
+  const hoursByDay = hours ? parseHoursByDay(hours) : [];
 
-  return { phones, ...(phoneEvidence.length > 0 ? { phoneEvidence } : {}), emails, address, hours };
+  return {
+    phones,
+    ...(phoneEvidence.length > 0 ? { phoneEvidence } : {}),
+    emails,
+    ...(emailEvidence.length > 0 ? { emailEvidence } : {}),
+    address: addressResult?.value ?? null,
+    ...(addressResult ? { addressSource: addressResult.source } : {}),
+    hours,
+    ...(hoursByDay.length > 0 ? { hoursByDay } : {}),
+  };
 }
 
 const SOCIAL_PATTERNS: { key: keyof SocialLinks; pattern: RegExp }[] = [
@@ -995,9 +1179,13 @@ type StructuredFacts = ReturnType<typeof extractStructuredFacts>;
 function mergeContactInfo(perPage: ContactInfo[]): ContactInfo {
   const phoneEvidence: PhoneEvidence[] = [];
   const normalizedPhones = new Set<string>();
+  const emailEvidence: EmailEvidence[] = [];
+  const seenEmails = new Set<string>();
   const emails = new Set<string>();
   let address: string | null = null;
+  let addressSource: "json-ld" | "labeled" | undefined;
   let hours: string | null = null;
+  let hoursByDay: HoursEntry[] = [];
   for (const c of perPage) {
     for (const item of c.phoneEvidence ?? c.phones.map((phone) => ({ phone, normalized: phone.replace(/\D/g, ""), sourceUrl: "", source: "visible-text" as const }))) {
       if (normalizedPhones.has(item.normalized)) continue;
@@ -1005,15 +1193,30 @@ function mergeContactInfo(perPage: ContactInfo[]): ContactInfo {
       phoneEvidence.push(item);
     }
     c.emails.forEach((e) => emails.add(e));
-    if (!address && c.address) address = c.address;
-    if (!hours && c.hours) hours = c.hours;
+    for (const item of c.emailEvidence ?? []) {
+      const key = item.email.trim().toLowerCase();
+      if (seenEmails.has(key)) continue;
+      seenEmails.add(key);
+      emailEvidence.push(item);
+    }
+    if (!address && c.address) {
+      address = c.address;
+      addressSource = c.addressSource;
+    }
+    if (!hours && c.hours) {
+      hours = c.hours;
+      hoursByDay = c.hoursByDay ?? [];
+    }
   }
   return {
     phones: phoneEvidence.slice(0, MAX_CONTACT_ITEMS).map((item) => item.phone),
     ...(phoneEvidence.length > 0 ? { phoneEvidence: phoneEvidence.slice(0, MAX_CONTACT_ITEMS) } : {}),
     emails: [...emails].slice(0, MAX_CONTACT_ITEMS),
+    ...(emailEvidence.length > 0 ? { emailEvidence: emailEvidence.slice(0, MAX_CONTACT_ITEMS) } : {}),
     address,
+    ...(addressSource ? { addressSource } : {}),
     hours,
+    ...(hoursByDay.length > 0 ? { hoursByDay } : {}),
   };
 }
 

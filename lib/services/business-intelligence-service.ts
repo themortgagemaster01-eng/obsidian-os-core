@@ -19,6 +19,7 @@ import type {
   ReviewsSummary,
   GalleryImage,
   FormInfo,
+  HoursEntry,
 } from "@/lib/adapters/types";
 
 /**
@@ -55,6 +56,8 @@ export interface BusinessIntelligenceProfile {
   email: string | null;
   address: string | null;
   hours: string | null;
+  /** Real, structured day-by-day hours (Phase 3.5) — parsed generically from `hours` above (lib/adapters/crawl-adapter.ts::parseHoursByDay); empty when no real day-name boundary was found in the raw text, in which case `hours` stays the honest display fallback. */
+  hoursByDay: HoursEntry[];
   socialLinks: SocialLinks | null;
 
   services: ContentSection[];
@@ -387,6 +390,7 @@ export function buildBusinessIntelligenceProfile(lead: LeadRow): BusinessIntelli
     email: contact.emails[0] ?? null,
     address: contact.address,
     hours: contact.hours,
+    hoursByDay: contact.hoursByDay ?? [],
     socialLinks: socials,
 
     services: crawl?.services ?? [],
