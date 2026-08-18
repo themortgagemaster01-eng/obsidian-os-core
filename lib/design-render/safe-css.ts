@@ -236,6 +236,34 @@ export function getReadableTextColor(background: string, darkText = "#1A1A1A", l
   return lightContrast >= darkContrast ? lightText : darkText;
 }
 
+/** WCAG AA's normal-text contrast floor — the same 4.5:1 threshold MUTED_TEXT_OPACITY's own comment measures against. */
+const WCAG_AA_NORMAL_TEXT_CONTRAST = 4.5;
+
+/**
+ * Real axe-core "serious" color-contrast violation this fixes: `accent`
+ * (DesignMemory.colorPalette.accent, a real per-business color choice) is
+ * used as literal small-text color in exactly two spots in design-preview.tsx
+ * (the nav phone utility link, the services section's index numeral) with no
+ * contrast check at all — unlike every other text color in that file
+ * (`foreground`/`textColor`), which is either a fixed safe constant or
+ * resolved via getReadableTextColor above. A business whose real accent color
+ * (e.g. an amber/brass tone) doesn't clear 4.5:1 against the background it
+ * actually renders on produces exactly this violation. Returns `accent`
+ * unchanged when it's safe, otherwise `fallbackTextColor` (already guaranteed
+ * readable against the same background by the caller) — never a new,
+ * unvalidated color guess. Non-hex accent values (rgb()/hsl()/keyword —
+ * toSafeCssColor's rarer outputs) can't be measured here, so they pass
+ * through unchanged, preserving this function's prior un-checked behavior
+ * only for the case that was already unmeasurable.
+ */
+export function safeAccentTextColor(accent: string, background: string, fallbackTextColor: string): string {
+  const accentRgb = hexToRgb(accent);
+  const bgRgb = hexToRgb(background);
+  if (!accentRgb || !bgRgb) return accent;
+  const ratio = contrastRatio(relativeLuminance(accentRgb), relativeLuminance(bgRgb));
+  return ratio >= WCAG_AA_NORMAL_TEXT_CONTRAST ? accent : fallbackTextColor;
+}
+
 const WEIGHT_TO_CSS: Record<"regular" | "medium" | "semibold" | "bold", number> = {
   regular: 400,
   medium: 500,

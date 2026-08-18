@@ -145,6 +145,19 @@ describe("design-qa-service: qaSpacing", () => {
     const result = qaSpacing(tampered);
     assert.equal(result.verdict, "FAIL");
   });
+
+  test("PASS for a wireframe carrying a real compositionVariant.paddingBiasSteps — a real regression found while verifying the Jane Bond mission's regenerated design: this independent re-check must apply the same bias refineSpacing did, not compare against the unbiased default", () => {
+    const brief = briefFor(undefined, { industryBucket: "luxuryServices" });
+    const wireframe = generateWireframe(brief, {
+      hasRealTestimonials: false,
+      brandPersonality: ["unpretentious", "quiet"],
+    });
+    assert.notEqual(wireframe.compositionVariant?.paddingBiasSteps, 0, "fixture should actually exercise a non-zero bias");
+    const refinedDesign = refineDesign({ wireframe }, brief, SAMPLE_DESIGN_MEMORY);
+    const input = buildValidInput({ wireframe, refinedDesign });
+    const result = qaSpacing(input);
+    assert.equal(result.verdict, "PASS");
+  });
 });
 
 describe("design-qa-service: qaLayout", () => {
@@ -417,10 +430,26 @@ describe("design-qa-service: qaConversion", () => {
 });
 
 describe("design-qa-service: qaBrandFitStructured", () => {
-  test("discloses that brandPersonality is not currently load-bearing in assembled copy (a real, honest gap)", () => {
+  test("confirms brandPersonality is genuinely structural load-bearing when the wireframe carries a real compositionVariant", () => {
+    // buildValidInput()'s generateWireframe call always resolves a real
+    // compositionVariant (lib/design-intelligence/composition-variants.ts) —
+    // re-verified here via the same personalityPaddingBias function
+    // Generation itself used, not by scanning for brandPersonality's own
+    // adjectives inside real body copy (never the right bar — rendering
+    // "warm"/"family-run" verbatim as page copy is exactly the hollow,
+    // could-paste-onto-any-business phrasing findGenericPhrases exists to
+    // keep off the page).
     const result = qaBrandFitStructured(buildValidInput());
-    assert.ok(result.findings.some((f) => /not \(yet\) load-bearing/.test(f)));
+    assert.ok(result.findings.some((f) => /structural inputs to this mission's compositionVariant/.test(f)));
     assert.equal(result.confidence, "Medium");
+  });
+
+  test("discloses brandPersonality is not (yet) load-bearing for a wireframe predating compositionVariant", () => {
+    const input = buildValidInput();
+    const legacyWireframe = { ...input.wireframe, compositionVariant: undefined };
+    const result = qaBrandFitStructured({ ...input, wireframe: legacyWireframe });
+    assert.ok(result.findings.some((f) => /not \(yet\) load-bearing/.test(f)));
+    assert.equal(result.verdict, "WARN");
   });
 });
 

@@ -181,9 +181,9 @@ export const SECTION_PATTERN_REGISTRY = {
     note: "Six real, structurally distinct compositions mapped 1:1 to the CTO's Editorial/Cinematic/Local Story/Service-Product/Luxury Minimal/Bold Commerce patterns (see the module-level comment above for the exact mapping and what varies structurally in each). Selected by resolveHeroPattern's per-industryBucket preference table, gated on real photography for the three photo-dependent patterns.",
   },
   services: {
-    vocabulary: ["numbered-editorial-index"] as const,
-    implemented: ["numbered-editorial-index"] as const,
-    note: "One canonical pattern (generalized from Friedman's real practice-area index): a numbered list — muted accent numeral, bold category name, lighter real sub-item detail line, hairline dividers. Scales honestly from 1 real category to many by construction; no second variant exists today because a card grid or icon-feature-row alternative would be exactly the generic pattern docs/DESIGN_INTELLIGENCE.md §5/§11 names to avoid, not a genuine second composition.",
+    vocabulary: ["numbered-editorial-index", "grid-cards"] as const,
+    implemented: ["numbered-editorial-index", "grid-cards"] as const,
+    note: "numbered-editorial-index (generalized from Friedman's real practice-area index): a numbered list — muted accent numeral, bold category name, lighter real sub-item detail line, hairline dividers; Editorial/Cinematic/Local Story/Luxury Minimal's pattern. grid-cards (lib/design-intelligence/composition-variants.ts, Service/Product and Bold Commerce's pattern): real offering cards in a responsive grid, matching those two strategies' denser, more conversion-forward register — evidence-gated (MIN_SERVICES_FOR_GRID_CARDS) so a business with fewer than 3 real offerings never gets a sparse-looking 1-2-card grid; falls back to numbered-editorial-index instead.",
   },
   testimonials: {
     vocabulary: ["editorial-pull-quote"] as const,
@@ -200,15 +200,20 @@ export const SECTION_PATTERN_REGISTRY = {
     implemented: ["editorial-accordion"] as const,
     note: "One canonical pattern (Friedman's real treatment): a plain divided-row accordion, real questions only, never a generic filler FAQ.",
   },
+  credibility: {
+    vocabulary: ["divided-rows", "stat-strip"] as const,
+    implemented: ["divided-rows", "stat-strip"] as const,
+    note: "divided-rows: a stacked label/value list, Editorial/Cinematic/Local Story/Luxury Minimal's pattern. stat-strip (composition-variants.ts, Service/Product and Bold Commerce's pattern): the same real evidence (reviewCount, certifications) rendered as an equal-width horizontal row of large stat blocks with vertical dividers — a real trust-badge register matching those two strategies' denser hero treatment. Evidence-gated: only reachable when real certifications or a real review count exist; falls back to divided-rows for a business whose credibility evidence is placeholder-only, since a stat strip with nothing real to show in it is dishonest, not just a style choice.",
+  },
   contact: {
     vocabulary: ["large-closing-statement"] as const,
     implemented: ["large-closing-statement"] as const,
     note: "One canonical pattern (Friedman's real treatment): the verified phone number promoted to large, direct display type as the page's closing action.",
   },
   footer: {
-    vocabulary: ["minimal-editorial"] as const,
-    implemented: ["minimal-editorial"] as const,
-    note: "One canonical pattern: a hairline rule, business name, phone, copyright — no decorative content.",
+    vocabulary: ["minimal-centered", "multi-column"] as const,
+    implemented: ["minimal-centered", "multi-column"] as const,
+    note: "minimal-centered: a hairline rule, business name, phone, copyright — no decorative content; Editorial/Cinematic/Local Story/Luxury Minimal's pattern. multi-column (composition-variants.ts, Service/Product and Bold Commerce's pattern): the same real fields arranged as separate columns rather than one inline row — a denser closing treatment matching those two strategies' page-wide rhythm.",
   },
   gallery: {
     vocabulary: ["real-photo-grid"] as const,

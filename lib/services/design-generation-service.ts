@@ -10,6 +10,7 @@ import type { IndustryBucket } from "@/lib/design-references/reference-library";
 import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage } from "@/lib/adapters/types";
 import { GENERIC_TESTIMONIAL_HEADING } from "@/lib/adapters/types";
 import { resolveHeroPattern } from "@/lib/design-intelligence/section-patterns";
+import { resolveCompositionVariant, type CompositionVariant } from "@/lib/design-intelligence/composition-variants";
 
 import {
   websiteDesignRepository,
@@ -81,6 +82,19 @@ export interface Wireframe {
    * bucket business, whose template has no "serviceArea" section at all).
    */
   signatureElement: DesignBrief["signatureElement"];
+  /**
+   * The one structural composition decision this mission's visual strategy
+   * makes (lib/design-intelligence/composition-variants.ts) — nav style, CTA
+   * arrangement, content width, spacing rhythm, and the services/credibility/
+   * footer pattern choice, all propagated from the same real hero-pattern
+   * resolution assembleComponents already made. Optional so a wireframe hand-
+   * built in a test fixture, or a `website_designs.wireframe` row persisted
+   * before this field existed, still type-checks/renders — the renderer
+   * (design-preview.tsx) falls back to the pre-existing fixed behavior when
+   * absent, the same "older stored row" compatibility discipline
+   * resolveSignatureSection already applies to signatureElement.
+   */
+  compositionVariant?: CompositionVariant;
 }
 
 /**
@@ -216,6 +230,17 @@ export interface GenerateWireframeOptions {
   hasRealTestimonials: boolean;
   /** True only when real, already-captured team/staff data exists for this mission — never assumed (§8). Optional (defaults to false) so every existing hasRealTestimonials-only call site stays valid. */
   hasRealTeam?: boolean;
+  /** True only when this mission has real photography (DesignBrief.gallery) — the same evidence resolveHeroPattern/resolveCompositionVariant gate photo-dependent patterns on. Optional (defaults to false) so every existing call site predating composition-variant resolution stays valid. */
+  hasRealImagery?: boolean;
+  /** Real evidence-density counts feeding resolveCompositionVariant's evidence-gated pattern choices. Optional; every field defaults to 0/false, which safely narrows to the least evidence-hungry pattern rather than throwing. */
+  compositionEvidence?: {
+    services?: number;
+    certifications?: number;
+    hasReviews?: boolean;
+  };
+  /** Design Intelligence's own real brandPersonality/contentTone output (design-intelligence-service.ts's DesignMemory) — feeds resolveCompositionVariant's spacing-rhythm nudge, making these previously-recorded-but-unused fields genuinely load-bearing (CTO Design Intelligence Remediation directive's brand-fit gap). */
+  brandPersonality?: string[];
+  contentTone?: string;
 }
 
 /**
@@ -247,10 +272,23 @@ export function generateWireframe(brief: DesignBrief, options: GenerateWireframe
     );
   }
 
+  const compositionVariant = resolveCompositionVariant({
+    industryBucket: brief.industryBucket,
+    hasRealImagery: !!options.hasRealImagery,
+    evidence: {
+      services: options.compositionEvidence?.services ?? 0,
+      certifications: options.compositionEvidence?.certifications ?? 0,
+      hasReviews: options.compositionEvidence?.hasReviews ?? false,
+    },
+    brandPersonality: options.brandPersonality,
+    contentTone: options.contentTone,
+  });
+
   return {
     layoutFamily: brief.direction.layoutFamily,
     sections: sectionOrder.map((type) => ({ type, rationale: buildSectionRationale(type, brief) })),
     signatureElement: brief.signatureElement,
+    compositionVariant,
   };
 }
 
@@ -848,11 +886,29 @@ export function assembleComponents(
   wireframe: Wireframe,
   context: AssembleComponentsContext
 ): ComponentNode[] {
+  const hasRealImagery = !!context.gallery && context.gallery.length > 0;
+  // wireframe.compositionVariant.heroPattern is the same value resolveHeroPattern
+  // itself computes (composition-variants.ts derives it from this exact
+  // industryBucket + hasRealImagery pair) — preferring it here keeps hero
+  // pattern and every other structural axis (nav/CTA/content-width/services/
+  // credibility/footer pattern) traceable to ONE resolution rather than two
+  // independent calls that could silently drift apart. Falls back to a fresh
+  // resolveHeroPattern call only for a wireframe predating compositionVariant
+  // (an older persisted row, or a hand-built test fixture).
+  const heroPattern = wireframe.compositionVariant?.heroPattern ?? resolveHeroPattern(context.industryBucket ?? "general", hasRealImagery);
   return wireframe.sections.map(({ type }) => {
     const componentKind =
       type === "hero" ? HERO_KIND_BY_LAYOUT_FAMILY[wireframe.layoutFamily] : COMPONENT_KIND_BY_SECTION[type];
     const pattern =
-      type === "hero" ? resolveHeroPattern(context.industryBucket ?? "general", !!context.gallery && context.gallery.length > 0) : undefined;
+      type === "hero"
+        ? heroPattern
+        : type === "services"
+          ? wireframe.compositionVariant?.servicesPattern
+          : type === "credibility"
+            ? wireframe.compositionVariant?.credibilityPattern
+            : type === "footer"
+              ? wireframe.compositionVariant?.footerPattern
+              : undefined;
     return { section: type, componentKind, pattern, slots: buildSlots(type, context) };
   });
 }
@@ -928,7 +984,17 @@ export function generateWebsiteStructure(
   brief: DesignBrief,
   options: GenerateWebsiteStructureOptions
 ): WebsiteStructure {
-  const wireframe = generateWireframe(brief, options);
+  const wireframe = generateWireframe(brief, {
+    ...options,
+    hasRealImagery: !!brief.gallery && brief.gallery.length > 0,
+    compositionEvidence: {
+      services: brief.services?.length ?? 0,
+      certifications: brief.certifications?.length ?? 0,
+      hasReviews: !!brief.reviews && brief.reviews.count !== null,
+    },
+    brandPersonality: options.designMemory?.brandPersonality,
+    contentTone: options.designMemory?.contentTone,
+  });
   const assembleContext: AssembleComponentsContext = {
     businessName: brief.businessName,
     citedInsights: brief.citedInsights,

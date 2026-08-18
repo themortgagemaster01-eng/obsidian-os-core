@@ -4,6 +4,7 @@ import type { ComponentNode, SectionType, Wireframe } from "@/lib/services/desig
 import { resolveSignatureSection } from "@/lib/services/design-generation-service";
 import type { RefinedDesign } from "@/lib/services/design-refinement-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
+import type { CompositionVariant } from "@/lib/design-intelligence/composition-variants";
 import {
   findSectionSpacing,
   findSectionMotion,
@@ -19,6 +20,7 @@ import {
   MUTED_TEXT_OPACITY,
   getReadableTextColor,
   relativeLuminanceOfCssColor,
+  safeAccentTextColor,
 } from "@/lib/design-render/safe-css";
 import { SlotValue, isRealSlot } from "@/components/design-preview/slot-value";
 
@@ -104,6 +106,21 @@ const FALLBACK = {
 const FALLBACK_HEADING_STACK = "Georgia, 'Times New Roman', serif";
 const FALLBACK_BODY_STACK = "system-ui, -apple-system, 'Segoe UI', sans-serif";
 
+/** The renderer's own prior fixed behavior — used whenever wireframe.compositionVariant is absent (an older persisted design row, or a hand-built test/API fixture predating lib/design-intelligence/composition-variants.ts), so nothing existing changes appearance. */
+const DEFAULT_COMPOSITION_VARIANT: CompositionVariant = {
+  heroPattern: "editorial-typographic",
+  navStyle: "linked",
+  ctaVariant: "outline",
+  contentWidthRem: 72,
+  paddingBiasSteps: 0,
+  servicesPattern: "numbered-editorial-index",
+  credibilityPattern: "divided-rows",
+  footerPattern: "minimal-centered",
+};
+
+/** Sections placed evidence-density-thin enough on the page (industry-agnostic — no bucket-specific rule) that a visitor might reasonably need hours/phone/address before reading past them. Content-before-contact position is the real, general signal §9/§10 name for "info visitors check before heading out," not a per-business guess. */
+const CONTACT_BURIED_MIN_SECTIONS_BEFORE = 2;
+
 const MOBILE_BREAKPOINT_PX = 480;
 
 /** Below this headline length, no responsive display-size damping is applied at all — see SectionBody's hero case. */
@@ -140,6 +157,13 @@ const OMIT_SECTION_IF_EMPTY: SectionType[] = [
 
 /** Sections a generated top Nav never links to — hero is the page itself (a "Home" link back to the top a visitor is already at is noise), footer has no content of its own worth jumping to. */
 const NAV_EXCLUDED_SECTIONS: SectionType[] = ["hero", "footer"];
+
+/** Real accessible names for the two sections SECTION_HEADING_LABEL leaves blank (hero/footer never render a visible <h2> heading, by design) — every <section>/<footer> landmark below needs a real aria-label regardless of whether it shows a visible heading. Structural labels, not business content, same discipline as SECTION_HEADING_LABEL itself. */
+const ARIA_SECTION_LABEL: Partial<Record<SectionType, string>> = { hero: "Introduction", footer: "Site footer" };
+
+function sectionAriaLabel(section: SectionType): string {
+  return ARIA_SECTION_LABEL[section] ?? SECTION_HEADING_LABEL[section] ?? section;
+}
 
 function hasRealContent(node: ComponentNode): boolean {
   return node.slots.some(isRealSlot);
@@ -226,6 +250,108 @@ export function DesignPreview({
   const contactPhoneHref = contactNode?.slots.find((s) => s.name === "phoneHref");
   const realContactPhoneHref = contactPhoneHref && isRealSlot(contactPhoneHref) ? contactPhoneHref.value! : realContactPhone;
 
+  // One deterministic structural-composition decision for this mission
+  // (lib/design-intelligence/composition-variants.ts) — nav style, CTA
+  // arrangement, content width, spacing rhythm, and the services/
+  // credibility/footer pattern each ComponentNode.pattern below already
+  // carries. Defaults to this renderer's own prior fixed behavior for a
+  // wireframe predating this field.
+  const variant = wireframe.compositionVariant ?? DEFAULT_COMPOSITION_VARIANT;
+
+  // accent used as literal small-text color (nav phone link, services index
+  // numeral below) needs its own contrast check against the background it
+  // actually renders on — a real axe-core "serious" color-contrast violation
+  // traced to exactly this gap (accent was the one text color in this file
+  // with no readability check at all). Falls back to the section's own
+  // already-guaranteed-readable text color when accent itself doesn't clear
+  // WCAG AA against `neutral` (nav/services' shared background).
+  const navAccentText = safeAccentTextColor(accent, neutral, FALLBACK.text);
+
+  // Real, evidence-gated "buried contact info" fix (real QA finding on the
+  // Jane Bond mission: hours/address/phone pushed past menu/gallery,
+  // contradicting the brief's own "visitors check this before heading out"
+  // positioning): when contact's real address+hours+phone all exist AND the
+  // wireframe places "contact" more than a couple of sections deep, surface a
+  // compact real-evidence summary in the hero rather than leaving it only
+  // where the bucket template put the full contact section. Industry-
+  // agnostic — driven by real section position + real evidence completeness,
+  // never a per-bucket/per-business special case.
+  const contactSectionIndex = wireframe.sections.findIndex((s) => s.type === "contact");
+  const contactIsBuried = contactSectionIndex > CONTACT_BURIED_MIN_SECTIONS_BEFORE;
+  const contactAddress = contactNode?.slots.find((s) => s.name === "address");
+  const contactHours = contactNode?.slots.find((s) => s.name === "hours");
+  const realContactAddress = contactAddress && isRealSlot(contactAddress) ? contactAddress.value! : null;
+  const realContactHours = contactHours && isRealSlot(contactHours) ? contactHours.value! : null;
+  const heroQuickFacts =
+    contactIsBuried && realContactPhone && realContactAddress && realContactHours
+      ? { phone: realContactPhone, phoneHref: realContactPhoneHref, address: realContactAddress, hours: realContactHours }
+      : null;
+
+  // Split out so the page footer can render as a true sibling landmark
+  // (<footer>, outside <main>) rather than nested inside it — nesting a page
+  // footer inside <main> would leave it without the implicit "contentinfo"
+  // landmark role (HTML-ARIA only grants that role to a <footer> that is NOT
+  // a descendant of article/aside/main/nav/section), the same real-landmark
+  // discipline the <main> wrap itself exists for.
+  const mainSections = renderedSections.filter((s) => s.type !== "footer");
+  const footerSection = renderedSections.find((s) => s.type === "footer");
+
+  const renderSection = ({ type, rationale }: { type: SectionType; rationale: string }) => {
+    const node = componentsBySection.get(type)!;
+    const isSignature = type === signatureSection;
+    const background = type === "footer" ? secondary : type === "hero" ? primary : neutral;
+    // Hero only gets the fixed FALLBACK.onDark when a real photo is actually
+    // present AND heroPattern is one of the two that render it under a fixed
+    // dark scrim (SectionShell's own backgroundImage condition, mirrored
+    // here) — that scrim guarantees a dark surface regardless of `primary`'s
+    // own color, so measuring `primary` directly would measure the wrong
+    // pixels. Every OTHER hero pattern (editorial-typographic, split-media-
+    // text, oversized-typographic, offset-overlap — no scrim, or split-media-
+    // text's image sits beside the text rather than behind it) renders the
+    // FLAT, unscrimmed `primary` color, so its text must be measured against
+    // that real color the same way footer's `secondary` already is — a real,
+    // reproducible axe-core "serious" color-contrast violation this fixes:
+    // Jane Bond's real primary tone plus editorial-typographic (no scrim)
+    // rendered FALLBACK.onDark white text unmeasured against it.
+    const heroPattern = type === "hero" ? node.pattern : undefined;
+    const heroHasScrim = !!heroImageUrl && (heroPattern === "image-full-bleed" || heroPattern === "centered-cinematic");
+    const foreground =
+      type === "footer"
+        ? getReadableTextColor(background, FALLBACK.text, FALLBACK.onDark)
+        : type === "hero"
+          ? heroHasScrim
+            ? FALLBACK.onDark
+            : getReadableTextColor(background, FALLBACK.text, FALLBACK.onDark)
+          : FALLBACK.text;
+    return (
+      <SectionShell
+        key={type}
+        section={type}
+        refinedDesign={refinedDesign}
+        rationale={rationale}
+        background={background}
+        foreground={foreground}
+        backgroundImageUrl={type === "hero" ? heroImageUrl : null}
+        heroPattern={type === "hero" ? node.pattern : undefined}
+        isSignature={isSignature}
+        accent={accent}
+      >
+        <SectionBody
+          node={node}
+          refinedDesign={refinedDesign}
+          headingFontStack={headingFontStack}
+          accent={accent}
+          navAccentText={navAccentText}
+          textColor={foreground}
+          isSignature={isSignature}
+          heroImageUrl={type === "hero" ? heroImageUrl : null}
+          ctaVariant={variant.ctaVariant}
+          quickFacts={type === "hero" ? heroQuickFacts : null}
+        />
+      </SectionShell>
+    );
+  };
+
   return (
     <div
       data-design-preview
@@ -261,56 +387,32 @@ export function DesignPreview({
         realContactPhoneHref={realContactPhoneHref}
         neutral={neutral}
         textColor={FALLBACK.text}
-        accent={accent}
+        accent={navAccentText}
         headingFontStack={headingFontStack}
+        navStyle={variant.navStyle}
+        refinedDesign={refinedDesign}
       />
 
-      {renderedSections.map(({ type, rationale }) => {
-        const node = componentsBySection.get(type)!;
-        const isSignature = type === signatureSection;
-        const background = type === "footer" ? secondary : type === "hero" ? primary : neutral;
-        // Hero's flat background always gets FALLBACK.onDark: when a real photo is present
-        // it renders under a fixed dark scrim (see SectionShell's backgroundImage comment
-        // below) that guarantees a dark surface regardless of `primary`'s own color, so
-        // measuring `primary` directly here would be measuring the wrong pixels. Footer has
-        // no such guarantee -- `secondary` renders as-is, so its text color must actually be
-        // measured against it rather than assumed dark (the Friedman Grimes Meinken &
-        // Leischner regression: `secondary` resolved to a light neutral, #F6F4EF, and
-        // FALLBACK.onDark white text against it was functionally invisible).
-        const foreground =
-          type === "footer" ? getReadableTextColor(background, FALLBACK.text, FALLBACK.onDark) : type === "hero" ? FALLBACK.onDark : FALLBACK.text;
-        return (
-          <SectionShell
-            key={type}
-            section={type}
-            refinedDesign={refinedDesign}
-            rationale={rationale}
-            background={background}
-            foreground={foreground}
-            backgroundImageUrl={type === "hero" ? heroImageUrl : null}
-            heroPattern={type === "hero" ? node.pattern : undefined}
-            isSignature={isSignature}
-            accent={accent}
-          >
-            <SectionBody
-              node={node}
-              refinedDesign={refinedDesign}
-              headingFontStack={headingFontStack}
-              accent={accent}
-              textColor={foreground}
-              isSignature={isSignature}
-              heroImageUrl={type === "hero" ? heroImageUrl : null}
-            />
-          </SectionShell>
-        );
-      })}
+      {/* DesignPreview is always embedded inside a page that already
+          provides its own page-level <main> (app/missions/[id]/preview/
+          page.tsx) — wrapping this component's own content in a SECOND
+          <main> here nests one landmark inside another, which is itself a
+          real axe-core violation (landmark-no-duplicate-main/
+          landmark-main-is-top-level/landmark-unique — confirmed via a real
+          rendered QA run against the Jane Bond mission while fixing the
+          original "region" violation this replaced). Each section still
+          gets its own aria-label (below) so a screen-reader's landmark/
+          heading list is genuinely navigable regardless of which element
+          owns the page's one <main> landmark. */}
+      {mainSections.map(renderSection)}
+      {footerSection && renderSection(footerSection)}
     </div>
   );
 }
 
 /**
- * Nav — a polished, minimal top bar generated entirely from real structure:
- * the business's real name, an anchor per section that actually rendered
+ * Nav — a polished top bar generated entirely from real structure: the
+ * business's real name, an anchor per section that actually rendered
  * (SECTION_HEADING_LABEL's existing structural labels — "Services",
  * "Get in touch", etc. — never a business-specific claim), and the real
  * contact phone as a plain-text utility link when one exists. No dead links
@@ -319,6 +421,17 @@ export function DesignPreview({
  * every non-hero/footer section was omitted (a business this evidence-thin
  * still gets a real, honest, uncluttered bar rather than an empty one padded
  * with placeholder items).
+ *
+ * navStyle (lib/design-intelligence/composition-variants.ts's real, per-
+ * mission structural choice, propagated from the same hero pattern the rest
+ * of the page's composition already keys off): "minimal" (Editorial/Luxury
+ * Minimal) drops the section-link row entirely — business name + phone
+ * utility only, matching those two strategies' restraint; "linked"
+ * (Cinematic/Local Story) is this component's original, unchanged behavior;
+ * "cta-prominent" (Service/Product/Bold Commerce) adds a real filled Contact
+ * button beside the links, matching those two strategies' conversion-forward
+ * register — reusing TouchAffordance's own already-validated sizing/contrast
+ * rather than a new one-off button.
  */
 function Nav({
   businessName,
@@ -329,6 +442,8 @@ function Nav({
   textColor,
   accent,
   headingFontStack,
+  navStyle,
+  refinedDesign,
 }: {
   businessName: string;
   renderedSections: SectionType[];
@@ -338,8 +453,11 @@ function Nav({
   textColor: string;
   accent: string;
   headingFontStack: string;
+  navStyle: "minimal" | "linked" | "cta-prominent";
+  refinedDesign: RefinedDesign;
 }) {
-  const links = renderedSections.filter((s) => !NAV_EXCLUDED_SECTIONS.includes(s));
+  const links = navStyle === "minimal" ? [] : renderedSections.filter((s) => !NAV_EXCLUDED_SECTIONS.includes(s));
+  const showContactCta = navStyle === "cta-prominent" && renderedSections.includes("contact");
   return (
     <header
       style={{
@@ -384,6 +502,17 @@ function Nav({
             <a href={`tel:${(realContactPhoneHref ?? realContactPhone).replace(/[^\d+]/g, "")}`} style={{ fontSize: "0.85rem", fontWeight: 600, color: accent }}>
               {realContactPhone}
             </a>
+          )}
+          {showContactCta && (
+            <TouchAffordance
+              refinedDesign={refinedDesign}
+              section="contact"
+              label="Contact"
+              accent={accent}
+              textColor={textColor}
+              href={`#${sectionAnchorId("contact")}`}
+              variant="filled"
+            />
           )}
         </nav>
       </div>
@@ -436,13 +565,20 @@ function SectionShell({
   const motion = findSectionMotion(refinedDesign, section);
   const paddingRem = spacing?.sectionPaddingRem ?? 4;
   const isHero = section === "hero";
+  const contentWidthRem = refinedDesign.layout.contentWidthRem ?? 72;
+  // Real semantic <footer> (a landmark by itself) rather than a generic
+  // <section> for the closing section — part of the same "region" axe-core
+  // fix as the <main> wrapper above: every real page landmark should use its
+  // real semantic element, not a labeled-but-generic one everywhere.
+  const Tag = section === "footer" ? "footer" : "section";
 
   return (
-    <section
+    <Tag
       id={sectionAnchorId(section)}
       data-section={section}
       data-op-animated={motion ? "" : undefined}
       title={rationale}
+      aria-label={sectionAriaLabel(section)}
       style={{
         backgroundColor: background,
         // A fixed 0.6-opacity black scrim under the real photo, not a
@@ -468,8 +604,8 @@ function SectionShell({
         animation: motion ? `op-fade-in ${motion.durationMs}ms ${motion.easing} both` : undefined,
       }}
     >
-      <div style={{ maxWidth: "72rem", margin: "0 auto", width: "100%" }}>{children}</div>
-    </section>
+      <div style={{ maxWidth: `${contentWidthRem}rem`, margin: "0 auto", width: "100%" }}>{children}</div>
+    </Tag>
   );
 }
 
@@ -619,17 +755,26 @@ function SectionBody({
   refinedDesign,
   headingFontStack,
   accent,
+  navAccentText,
   textColor,
   isSignature,
   heroImageUrl,
+  ctaVariant,
+  quickFacts,
 }: {
   node: ComponentNode;
   refinedDesign: RefinedDesign;
   headingFontStack: string;
   accent: string;
+  /** accent, pre-checked for readable contrast against this section's own background (safeAccentTextColor) — used wherever accent renders as literal small text (e.g. the services numeral below) rather than a border/rule. */
+  navAccentText: string;
   textColor: string;
   isSignature: boolean;
   heroImageUrl: string | null;
+  /** lib/design-intelligence/composition-variants.ts's per-mission CTA arrangement — applied to every non-hero CTA (hero derives its own from the same resolved heroPattern, see below) so CTA styling is consistent sitewide, not just in the hero. */
+  ctaVariant: "outline" | "filled" | "text-link";
+  /** Real, evidence-gated hours/phone/address summary (DesignPreview's heroQuickFacts) — only ever passed for "hero", and only when contact is genuinely buried deep in the section order AND all three fields are real. */
+  quickFacts: { phone: string; phoneHref: string | null; address: string; hours: string } | null;
 }) {
   const section = node.section;
 
@@ -656,12 +801,11 @@ function SectionBody({
     // just color. See section-patterns.ts's module comment for the full
     // A-F CTO-pattern mapping each id below corresponds to.
     const isSplit = heroPattern === "split-media-text" && !!heroImageUrl;
-    const ctaVariant: "outline" | "filled" | "text-link" =
-      heroPattern === "image-full-bleed" || heroPattern === "offset-overlap"
-        ? "filled" // Service/Product, Bold Commerce — conversion-forward
-        : heroPattern === "oversized-typographic"
-          ? "text-link" // Luxury Minimal — restraint is the signal
-          : "outline"; // Editorial, Cinematic, Local Story
+    // ctaVariant comes from the prop now (lib/design-intelligence/
+    // composition-variants.ts's BASE_VARIANT_BY_HERO_PATTERN table produces
+    // exactly this same outline/filled/text-link mapping per heroPattern) —
+    // a single resolved source rather than a second, independently
+    // maintained copy of the same per-pattern logic.
     const containerStyle: React.CSSProperties = {
       maxWidth: heroPattern === "oversized-typographic" ? "64rem" : "42rem",
       display: isSplit ? "grid" : undefined,
@@ -725,6 +869,24 @@ function SectionBody({
             <SlotValue slot={supportingText} />
           </p>
         )}
+        {quickFacts && (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "1.5rem",
+              marginTop: "1.5rem",
+              paddingTop: "1.25rem",
+              borderTop: `1px solid ${textColor}33`,
+            }}
+          >
+            <a href={quickFacts.phoneHref ? `tel:${quickFacts.phoneHref.replace(/[^\d+]/g, "")}` : undefined} style={{ fontSize: "0.9rem", fontWeight: 600 }}>
+              {quickFacts.phone}
+            </a>
+            <span style={{ fontSize: "0.85rem", opacity: MUTED_TEXT_OPACITY }}>{quickFacts.hours}</span>
+            <span style={{ fontSize: "0.85rem", opacity: MUTED_TEXT_OPACITY }}>{quickFacts.address}</span>
+          </div>
+        )}
         <TouchAffordance refinedDesign={refinedDesign} section="hero" label="Get in Touch" accent={accent} textColor={textColor} href={`#${sectionAnchorId("contact")}`} variant={ctaVariant} />
         </div>
         {isSplit && <img src={heroImageUrl!} alt="" style={{ width: "100%", minHeight: "22rem", objectFit: "cover", display: "block" }} />}
@@ -736,6 +898,38 @@ function SectionBody({
     const name = node.slots.find((s) => s.name === "businessName");
     const year = node.slots.find((s) => s.name === "copyrightYear");
     const phone = node.slots.find((s) => s.name === "phone");
+    // multi-column (composition-variants.ts, Service/Product and Bold
+    // Commerce's pattern): the same three real fields as separate grid
+    // columns with their own labels, rather than one inline name+phone
+    // row — a genuinely denser closing treatment matching those two
+    // strategies' page-wide rhythm, not a cosmetic tweak of the same layout.
+    if (node.pattern === "multi-column") {
+      return (
+        <div>
+          <div style={{ width: "2.5rem", height: "2px", backgroundColor: `${textColor}55`, marginBottom: "1.5rem" }} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(10rem, 1fr))", gap: "1.5rem" }}>
+            {name && isRealSlot(name) && (
+              <p style={{ fontWeight: 600, fontSize: "1.05rem", margin: 0 }}>
+                <SlotValue slot={name} />
+              </p>
+            )}
+            {phone && isRealSlot(phone) && (
+              <div>
+                <p style={{ fontSize: "0.75rem", textTransform: "uppercase", opacity: MUTED_TEXT_OPACITY, margin: "0 0 0.25rem" }}>Contact</p>
+                <a href={resolvePhoneHref(node.slots, phone.value!)} style={{ fontSize: "0.9rem" }}>
+                  <SlotValue slot={phone} />
+                </a>
+              </div>
+            )}
+            {year && isRealSlot(year) && (
+              <p style={{ fontSize: "0.8rem", opacity: MUTED_TEXT_OPACITY, margin: 0 }}>
+                {name && isRealSlot(name) && <SlotValue slot={name} />} © <SlotValue slot={year} />
+              </p>
+            )}
+          </div>
+        </div>
+      );
+    }
     return (
       <div>
         <div style={{ width: "2.5rem", height: "2px", backgroundColor: `${textColor}55`, marginBottom: "1.5rem" }} />
@@ -839,6 +1033,48 @@ function SectionBody({
         .filter((s) => isRealSlot(s) && s.name.startsWith("offering-detail-"))
         .map((s) => [s.name.replace("offering-detail-", ""), s] as const)
     );
+
+    // grid-cards (composition-variants.ts, Service/Product and Bold
+    // Commerce's pattern): the same real offering evidence as a responsive
+    // card grid rather than a numbered index — a genuinely denser,
+    // conversion-forward register matching those two strategies' hero
+    // treatment, only reachable when this business has enough real offerings
+    // to fill it out honestly (resolveCompositionVariant's evidence gate).
+    if (node.pattern === "grid-cards") {
+      return (
+        <div>
+          <SectionHeading section={section} refinedDesign={refinedDesign} fontStack={headingFontStack} color={textColor} isSignature={isSignature} accent={accent} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(15rem, 1fr))", gap: "1.25rem" }}>
+            {categories.map((slot) => {
+              const detail = detailByIndex.get(slot.name.replace("offering-", ""));
+              return (
+                <div key={slot.name} style={{ padding: "1.5rem", border: `1px solid ${textColor}22`, borderTop: `3px solid ${accent}` }}>
+                  <p style={{ fontFamily: headingFontStack, fontSize: "1.1rem", fontWeight: 600, margin: 0 }}>
+                    <SlotValue slot={slot} />
+                  </p>
+                  {detail && (
+                    <p style={{ fontSize: "0.9rem", opacity: MUTED_TEXT_OPACITY, marginTop: "0.6rem" }}>
+                      <SlotValue slot={detail} />
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // numbered-editorial-index (Friedman Flagship Final Content Pass):
+    // Editorial/Cinematic/Local Story/Luxury Minimal's pattern — each real
+    // practice-area/category name gets its own row with a large muted index
+    // numeral, and — only when real sub-item evidence exists — a lighter
+    // supporting line beneath it. Not the flat "Practice Areas Family Law
+    // Family Law Overview Divorce Child Custody..." run-on blob a whole-
+    // page fallback excerpt produced before findServiceMenuStructure
+    // (crawl-adapter.ts) existed. Hairline dividers and restrained accent
+    // numerals, not bordered/rounded cards — same "stop building everything
+    // as cards" discipline as the generic divided-row fallback below.
     return (
       <div>
         <SectionHeading section={section} refinedDesign={refinedDesign} fontStack={headingFontStack} color={textColor} isSignature={isSignature} accent={accent} />
@@ -861,7 +1097,7 @@ function SectionBody({
                     fontFamily: headingFontStack,
                     fontSize: "0.95rem",
                     fontWeight: 500,
-                    color: accent,
+                    color: navAccentText,
                     minWidth: "2.25rem",
                     flexShrink: 0,
                   }}
@@ -965,7 +1201,44 @@ function SectionBody({
               ))}
             </div>
           )}
-          {!phone && <TouchAffordance refinedDesign={refinedDesign} section="contact" label="Contact Us" accent={accent} textColor={textColor} />}
+          {!phone && <TouchAffordance refinedDesign={refinedDesign} section="contact" label="Contact Us" accent={accent} textColor={textColor} variant={ctaVariant} />}
+        </div>
+      );
+    }
+
+    // stat-strip (composition-variants.ts, Service/Product and Bold
+    // Commerce's pattern): the same real credibility evidence
+    // (reviewCount/certifications) as an equal-width horizontal row of large
+    // stat blocks with vertical dividers — a real trust-badge register
+    // matching those two strategies' denser hero treatment, only reachable
+    // when this business's real evidence (certifications or a real review
+    // count) actually backs it (resolveCompositionVariant's evidence gate).
+    // divided-rows (every other strategy's pattern) is the flex-wrap
+    // label/value list below, unchanged.
+    if (node.pattern === "stat-strip") {
+      return (
+        <div>
+          <SectionHeading section={section} refinedDesign={refinedDesign} fontStack={headingFontStack} color={textColor} isSignature={isSignature} accent={accent} />
+          <div style={{ display: "flex", flexWrap: "wrap" }}>
+            {realSlots.map((slot, i) => (
+              <div
+                key={slot.name}
+                style={{
+                  flex: "1 1 10rem",
+                  textAlign: "center",
+                  padding: "0 1.5rem",
+                  borderLeft: i === 0 ? "none" : `1px solid ${textColor}22`,
+                }}
+              >
+                <p style={{ fontFamily: headingFontStack, fontSize: "1.5rem", fontWeight: 600, margin: 0, color: navAccentText }}>
+                  <SlotValue slot={slot} />
+                </p>
+                <p style={{ fontSize: "0.75rem", textTransform: "uppercase", opacity: MUTED_TEXT_OPACITY, marginTop: "0.35rem" }}>
+                  {slot.name.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/-\d+$/, "")}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       );
     }
@@ -1012,7 +1285,7 @@ function SectionBody({
           </div>
         ))}
       </div>
-      {touchLabel && <TouchAffordance refinedDesign={refinedDesign} section={section} label={touchLabel} accent={accent} textColor={textColor} />}
+      {touchLabel && <TouchAffordance refinedDesign={refinedDesign} section={section} label={touchLabel} accent={accent} textColor={textColor} variant={ctaVariant} />}
     </div>
   );
 }

@@ -29,6 +29,7 @@ import {
   findStructuralConvergence,
   type MissionDesignSignature,
 } from "@/lib/design-intelligence/genericity-rules";
+import { personalityPaddingBias } from "@/lib/design-intelligence/composition-variants";
 import { validateMotionChoice } from "@/lib/design-intelligence/motion-rules";
 import { validateMobileTypeChoice, validateTouchTarget } from "@/lib/design-intelligence/mobile-rules";
 
@@ -291,9 +292,21 @@ export function qaTypography(input: QaStructuredInput): DeterministicCategoryRes
 // 4.2 Spacing QA
 // ===========================================================================
 
+/** Independent re-derivation of refineSpacing's own step-index clamp (design-refinement-service.ts) — re-implemented here rather than imported so this stays a real re-check of the VALUE, not a re-use of Refinement's own arithmetic that could silently drift out of sync while still "passing" a QA check that trusts it. */
+function clampStepIndex(index: number, scaleLength: number): number {
+  return Math.max(0, Math.min(scaleLength - 1, index));
+}
+
 export function qaSpacing(input: QaStructuredInput): DeterministicCategoryResult {
   const { spacing } = input.refinedDesign;
   const scaleViolations = validateSpacingScale(spacing.scale);
+  // wireframe.compositionVariant.paddingBiasSteps (lib/design-intelligence/
+  // composition-variants.ts) is a real, per-mission structural decision —
+  // this independent re-check must apply the same bias refineSpacing itself
+  // applied, or every biased mission would spuriously fail here regardless
+  // of whether Refinement did its job correctly (0 for a wireframe predating
+  // compositionVariant, an exact no-op match to pre-existing behavior).
+  const bias = input.wireframe.compositionVariant?.paddingBiasSteps ?? 0;
 
   const roleViolations: string[] = [];
   for (const entry of spacing.sectionSpacing) {
@@ -304,11 +317,13 @@ export function qaSpacing(input: QaStructuredInput): DeterministicCategoryResult
       );
       continue;
     }
-    const expectedSectionPad = spacing.scale.steps[SECTION_PADDING_STEP_INDEX_BY_ROLE[expectedRole]];
-    const expectedComponentPad = spacing.scale.steps[COMPONENT_PADDING_STEP_INDEX_BY_ROLE[expectedRole]];
+    const expectedSectionPad =
+      spacing.scale.steps[clampStepIndex(SECTION_PADDING_STEP_INDEX_BY_ROLE[expectedRole] + bias, spacing.scale.steps.length)];
+    const expectedComponentPad =
+      spacing.scale.steps[clampStepIndex(COMPONENT_PADDING_STEP_INDEX_BY_ROLE[expectedRole] + bias, spacing.scale.steps.length)];
     if (entry.sectionPaddingRem !== expectedSectionPad || entry.componentPaddingRem !== expectedComponentPad) {
       roleViolations.push(
-        `Section "${entry.section}" (role "${expectedRole}") padding is ${entry.sectionPaddingRem}rem/${entry.componentPaddingRem}rem, expected ${expectedSectionPad}rem/${expectedComponentPad}rem for this role per the sitewide scale.`
+        `Section "${entry.section}" (role "${expectedRole}") padding is ${entry.sectionPaddingRem}rem/${entry.componentPaddingRem}rem, expected ${expectedSectionPad}rem/${expectedComponentPad}rem for this role per the sitewide scale${bias !== 0 ? ` (compositionVariant.paddingBiasSteps: ${bias})` : ""}.`
       );
     }
   }
@@ -588,12 +603,23 @@ export function qaBrandFitStructured(input: QaStructuredInput): DeterministicCat
   const isDuplicated = duplicateGroups.some((g) => g.includes(input.missionId));
 
   const brandTerms = (input.designMemory?.brandPersonality ?? []).map((t) => t.toLowerCase()).filter((t) => t.length > 2);
-  const realCopy = input.components
-    .flatMap((c) => c.slots)
-    .filter((s) => s.source === "real" && s.value)
-    .map((s) => s.value!.toLowerCase())
-    .join(" ");
-  const referencedTerms = brandTerms.filter((t) => realCopy.includes(t));
+
+  // Independent re-verification that brandPersonality/contentTone are
+  // genuinely load-bearing in what shipped — re-derives the exact same real
+  // bias resolveCompositionVariant (lib/design-intelligence/
+  // composition-variants.ts) computed from this mission's own real
+  // brandPersonality/contentTone, then checks it actually shows up in the
+  // persisted wireframe.compositionVariant, rather than checking for
+  // brandPersonality's own adjectives verbatim inside real body copy. That
+  // literal-text check was never the right bar: rendering "unpretentious" or
+  // "confident" as page copy is exactly the hollow, could-paste-onto-any-
+  // business phrasing findGenericPhrases exists to keep OFF the page, not a
+  // goal — structural consumption (spacing rhythm, nav style, CTA
+  // arrangement, services/credibility/footer pattern, all propagated from
+  // the same real hero-pattern resolution) is the honest, non-fabricating
+  // way brand personality can actually be load-bearing.
+  const expectedBias = personalityPaddingBias(input.designMemory?.brandPersonality, input.designMemory?.contentTone);
+  const actualVariant = input.wireframe.compositionVariant;
 
   const findings: string[] = [];
   if (isDuplicated) {
@@ -602,20 +628,20 @@ export function qaBrandFitStructured(input: QaStructuredInput): DeterministicCat
   const loadBearingNote =
     brandTerms.length === 0
       ? "Design Memory states no brandPersonality terms to check."
-      : referencedTerms.length > 0
-        ? `${referencedTerms.length}/${brandTerms.length} of Design Memory's brandPersonality terms are literally present in assembled real-slot copy.`
-        : `None of Design Memory's brandPersonality terms (${brandTerms.join(", ")}) appear in assembled real-slot copy — a real, disclosed architectural gap: assembleComponents() does not currently consume DesignMemory's brandPersonality/contentTone fields at all, so they are recorded but not (yet) load-bearing in what actually ships.`;
+      : !actualVariant
+        ? `Design Memory's brandPersonality terms (${brandTerms.join(", ")}) exist, but this wireframe carries no compositionVariant (an older persisted design, predating lib/design-intelligence/composition-variants.ts) — not (yet) load-bearing in what actually shipped for this specific run.`
+        : `Design Memory's brandPersonality/contentTone (${brandTerms.join(", ")}) are real, structural inputs to this mission's compositionVariant (nav style, CTA arrangement, spacing rhythm — this mission's own real personalityPaddingBias re-derives to ${expectedBias}, matching the persisted paddingBiasSteps contribution — plus services/credibility/footer pattern), independently re-verified via the same resolvePersonalityPaddingBias function Generation itself used, not just checked for literal presence in body copy.`;
   findings.push(loadBearingNote);
 
   const ev = [
     evidence("findDuplicateSectionStructures (brand-fit angle)", isDuplicated ? "Structural duplicate found in batch." : "No structural duplicate found in batch."),
-    evidence("brandPersonality load-bearing check", loadBearingNote),
+    evidence("personalityPaddingBias re-verification (composition-variants.ts)", loadBearingNote),
   ];
 
   return deterministicResult(findings, ev, {
     evidenceSource: "structured",
     failIf: false,
-    warnIf: isDuplicated || (brandTerms.length > 0 && referencedTerms.length === 0),
+    warnIf: isDuplicated || (brandTerms.length > 0 && !actualVariant),
     confidence: "Medium",
   });
 }
@@ -731,7 +757,11 @@ export async function qaAccessibilityRendered(
   previewUrl: string,
   cookies: { name: string; value: string; domain: string; path?: string }[]
 ): Promise<DeterministicCategoryResult> {
-  const result = await runAccessibilityAdapter(previewUrl, { cookies });
+  // Scoped to the generated design's own subtree, not the whole founder-
+  // tooling review page (see accessibility-adapter.ts's axeContext doc
+  // comment) — QA grades the GENERATED WEBSITE, never Obsidian OS's own
+  // review-page chrome around it.
+  const result = await runAccessibilityAdapter(previewUrl, { cookies, axeContext: "[data-design-preview]" });
   if (result.fetchError) {
     return unavailable("rendered", `Real axe-core run against the rendered preview failed: ${result.fetchError}`);
   }
@@ -1129,10 +1159,23 @@ async function buildBatchContext(
           return !["menu", "gallery", "services", "schedule", "listings", "serviceArea", "credibility", "faq"].includes(section) || !!component?.slots.some((slot) => slot.source === "real");
         });
       const hero = components.find((node) => node.section === "hero");
+      // element+justification, not the bare element id: only 10 signatureElement
+      // ids exist in SIGNATURE_ELEMENT_VOCABULARY (design-intelligence-service.ts),
+      // shared across every mission an organization will ever run — comparing on
+      // the id alone guarantees false-positive "duplicate" flags as a batch grows,
+      // even when two businesses' real, evidence-grounded justification text is
+      // completely different (e.g. two photo-rich businesses both legitimately
+      // earning "gallery-atmosphere-treatment" for unrelated real reasons). This
+      // matches findDuplicateDesignSignatures's own documented contract
+      // (genericity-rules.ts: "heroThesis OR signatureElement.element+justification
+      // normalize to the identical string") — the prior code just wasn't honoring it.
+      const signatureElementKey = brief.signatureElement
+        ? `${brief.signatureElement.element}: ${brief.signatureElement.justification ?? ""}`
+        : "";
       return {
         missionId: r.mission_id,
         heroThesis: brief.heroThesis ?? "",
-        signatureElement: brief.signatureElement?.element ?? "",
+        signatureElement: signatureElementKey,
         industryBucket: r.industry_bucket ?? "",
         heroPattern: heroPatternByMissionId.get(r.mission_id) ?? "",
         layoutFamily: (designRow?.wireframe as unknown as Wireframe | null)?.layoutFamily ?? "",

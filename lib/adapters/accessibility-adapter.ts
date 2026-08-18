@@ -27,6 +27,26 @@ export interface AccessibilityAdapterOptions {
    * byte-for-byte the same behavior as before this option existed.
    */
   cookies?: { name: string; value: string; domain: string; path?: string }[];
+  /**
+   * A CSS selector scoping the axe-core run to one subtree (axe.run(context,
+   * ...) accepts a selector directly) — optional and additive, every
+   * existing caller (the Analysis Engine, auditing a target business's real
+   * public site, which has no "our own app chrome" to exclude) omits it and
+   * gets byte-for-byte the same whole-document audit as before this option
+   * existed. design-qa-service.ts's rendered accessibility check passes
+   * "[data-design-preview]" here: QA's real, disclosed job is grading
+   * whether the GENERATED WEBSITE is ready for a founder to present to a
+   * client, not whether Obsidian OS's own founder-facing review-page chrome
+   * (the breadcrumb/status-badge header around the preview,
+   * app/missions/[id]/preview/page.tsx) is accessible — that chrome is
+   * real Obsidian OS product UI with its own separate quality bar, never
+   * shipped to the client, and a violation in it should never count against
+   * a specific business's generated design (the real gap this fixes: a
+   * founder-tooling Badge component's contrast issue was making every
+   * mission's Accessibility QA report a violation that had nothing to do
+   * with that business's actual generated site).
+   */
+  axeContext?: string;
 }
 
 /**
@@ -61,10 +81,10 @@ export async function runAccessibilityAdapter(
     await page.goto(targetUrl, { waitUntil: "networkidle2", timeout: NAV_TIMEOUT_MS });
 
     await page.evaluate(axeSource);
-    const axeResult = (await page.evaluate(() => {
+    const axeResult = (await page.evaluate((contextSelector) => {
       // @ts-expect-error — axe is injected onto window by axeSource above.
-      return window.axe.run();
-    })) as AxeResultLike;
+      return window.axe.run(contextSelector ?? document);
+    }, options.axeContext ?? null)) as AxeResultLike;
 
     const violations: AccessibilityViolation[] = axeResult.violations.map((v) => ({
       id: v.id,

@@ -180,18 +180,35 @@ export const COMPONENT_PADDING_STEP_INDEX_BY_ROLE: Record<SectionSpacingRole, nu
   closing: 1, // 0.5rem
 };
 
-/** refineSpacing — assigns section- and component-level spacing per §4's role-proportional standard, derived from the one sitewide scale (§9's "reuse Obsidian's own numeric scale as a starting default"). */
+function clampStepIndex(index: number, scaleLength: number): number {
+  return Math.max(0, Math.min(scaleLength - 1, index));
+}
+
+/**
+ * refineSpacing — assigns section- and component-level spacing per §4's
+ * role-proportional standard, derived from the one sitewide scale (§9's
+ * "reuse Obsidian's own numeric scale as a starting default"). When the
+ * wireframe carries a real compositionVariant (lib/design-intelligence/
+ * composition-variants.ts), its paddingBiasSteps shifts every role's step
+ * index up or down — Luxury Minimal's real evidence-driven bias toward more
+ * generous whitespace, Bold Commerce's toward tighter, denser rhythm — always
+ * clamped into the one sitewide scale's actual index range, never an invented
+ * off-scale value (§4). Absent for a wireframe predating compositionVariant,
+ * which is exactly equivalent to a zero bias (today's existing behavior,
+ * unchanged).
+ */
 export function refineSpacing(wireframe: Wireframe): SpacingRefinement {
   const scale = DEFAULT_SPACING_SCALE;
   const violations = [...validateSpacingScale(scale)];
+  const bias = wireframe.compositionVariant?.paddingBiasSteps ?? 0;
 
   const sectionSpacing: SectionSpacingValue[] = wireframe.sections.map(({ type }) => {
     const role = spacingRoleFor(type);
     return {
       section: type,
       role,
-      sectionPaddingRem: scale.steps[SECTION_PADDING_STEP_INDEX_BY_ROLE[role]],
-      componentPaddingRem: scale.steps[COMPONENT_PADDING_STEP_INDEX_BY_ROLE[role]],
+      sectionPaddingRem: scale.steps[clampStepIndex(SECTION_PADDING_STEP_INDEX_BY_ROLE[role] + bias, scale.steps.length)],
+      componentPaddingRem: scale.steps[clampStepIndex(COMPONENT_PADDING_STEP_INDEX_BY_ROLE[role] + bias, scale.steps.length)],
     };
   });
 
@@ -202,12 +219,17 @@ export function refineSpacing(wireframe: Wireframe): SpacingRefinement {
 // Layout refinement
 // ===========================================================================
 
+/** The renderer's own prior fixed content-width value — the compositionVariant-absent default, so an older persisted wireframe renders exactly as before. */
+const DEFAULT_CONTENT_WIDTH_REM = 72;
+
 export interface LayoutRefinement {
   grid: GridRhythm;
   /** Re-verified independently of generateWireframe's own check (defense in depth, §5, §11) — should always be false for any wireframe that reached this pass. */
   matchesGenericTemplate: boolean;
   /** §2's "a reader's eye should land on the most important thing first" — mechanically, the wireframe's first section is the hero. */
   leadsWithHero: boolean;
+  /** wireframe.compositionVariant.contentWidthRem when present (lib/design-intelligence/composition-variants.ts's real, evidence-driven per-strategy content width — Luxury Minimal's wider column, Editorial's narrower one), otherwise this renderer's prior fixed 72rem. */
+  contentWidthRem: number;
   violations: string[];
 }
 
@@ -235,7 +257,9 @@ export function refineLayout(wireframe: Wireframe): LayoutRefinement {
     );
   }
 
-  return { grid: DEFAULT_GRID_RHYTHM, matchesGenericTemplate, leadsWithHero, violations };
+  const contentWidthRem = wireframe.compositionVariant?.contentWidthRem ?? DEFAULT_CONTENT_WIDTH_REM;
+
+  return { grid: DEFAULT_GRID_RHYTHM, matchesGenericTemplate, leadsWithHero, contentWidthRem, violations };
 }
 
 // ===========================================================================
