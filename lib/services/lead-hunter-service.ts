@@ -191,6 +191,19 @@ function formatFunnelSummary(counts: {
  * success, mirroring website_analyses' own pending/running/complete/failed
  * shape.
  */
+/**
+ * Phase 5.1 fix: every real failure mode after `scanRun` is created —
+ * geocoding, discovery (the real bug this closes: a real Overpass 504
+ * thrown from discoverBusinesses() propagated straight past the old
+ * geocode-only try/catch, leaving the row stuck at "running" forever,
+ * confirmed live during the Phase 5.0 Kitchener validation), the per-
+ * candidate crawl, or any other exception in the loop below — is now
+ * caught by ONE handler, generic over the failure's stage or cause (never
+ * a special HTTP-504 case). The original error is always rethrown
+ * unchanged after being recorded, never swallowed; the scan run row
+ * always reaches a real terminal `failed` state with a real
+ * error_message, never left orphaned at "running".
+ */
 export async function runLeadHunterScan(deps: LeadHunterServiceDeps, input: RunLeadHunterScanInput): Promise<LeadHunterScanResult> {
   const queueSize = input.queueSize ?? DEFAULT_QUEUE_SIZE;
 
@@ -202,26 +215,40 @@ export async function runLeadHunterScan(deps: LeadHunterServiceDeps, input: RunL
     status: "running",
   });
 
-  let area: GeocodedArea | null;
   try {
-    area = await deps.geocodeLocation(input.location);
+    const area: GeocodedArea | null = await deps.geocodeLocation(input.location);
+    if (!area) {
+      throw new Error(`Could not resolve "${input.location}" to a real geographic area (Nominatim geocoding found no match).`);
+    }
+
+    const discovered = await deps.discoverBusinesses({
+      area,
+      industryBuckets: input.industryBuckets,
+      maxResults: input.scanSize,
+    });
+
+    const result = await runScanAgainstDiscovered(deps, input, scanRun, area, discovered, queueSize);
+    return result;
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Geocoding failed";
-    await deps.leadScanRepository.update(deps.client, scanRun.id, { status: "failed", error_message: message, completed_at: new Date().toISOString() });
+    const message = err instanceof Error ? err.message : "Lead Hunter scan failed for an unknown reason.";
+    await deps.leadScanRepository.update(deps.client, scanRun.id, {
+      status: "failed",
+      error_message: message,
+      completed_at: new Date().toISOString(),
+    });
     throw err;
   }
-  if (!area) {
-    const message = `Could not resolve "${input.location}" to a real geographic area (Nominatim geocoding found no match).`;
-    await deps.leadScanRepository.update(deps.client, scanRun.id, { status: "failed", error_message: message, completed_at: new Date().toISOString() });
-    throw new Error(message);
-  }
+}
 
-  const discovered = await deps.discoverBusinesses({
-    area,
-    industryBuckets: input.industryBuckets,
-    maxResults: input.scanSize,
-  });
-
+/** Split out of runLeadHunterScan purely so the try/catch above wraps a single call rather than needing to re-indent this whole block — no behavior change, same deps/inputs, still throws real errors for the same outer handler to catch. */
+async function runScanAgainstDiscovered(
+  deps: LeadHunterServiceDeps,
+  input: RunLeadHunterScanInput,
+  scanRun: LeadScanRunRow,
+  area: GeocodedArea,
+  discovered: DiscoveredBusiness[],
+  queueSize: number
+): Promise<LeadHunterScanResult> {
   let skippedExistingCompanyCount = 0;
   let qualifiedCount = 0;
   let rejectedCount = 0;

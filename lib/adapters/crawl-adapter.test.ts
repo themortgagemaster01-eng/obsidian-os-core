@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as cheerio from "cheerio";
 
 import { extractStructuredFacts, mergeStructuredFacts, prioritizeSampleUrls } from "@/lib/adapters/crawl-adapter";
+import { resolveIndustryBucket } from "@/lib/design-references/reference-library";
 
 const JSON_LD_HTML = `
 <html><head>
@@ -1219,6 +1220,125 @@ describe("crawl-adapter: menu/price-list structural detection (Phase 4.8 evidenc
     assert.equal(facts.menu.length, 1);
     assert.equal(facts.menu[0].name, "Menu");
     assert.equal(facts.menu[0].items.length, 2);
+  });
+
+  // -------------------------------------------------------------------
+  // Phase 5.1 — real regression found during the Phase 5.0 Kitchener
+  // validation on a real, unrelated restaurant (J&B Family Restaurant):
+  // category-label detection had no structural requirement at all, so a
+  // short marketing tagline and a short promo-pricing blurb were both
+  // adopted as fake "categories" even though every real item on the same
+  // page (21 real dishes, real prices, real descriptions) was extracted
+  // correctly. Fixtures below are representative/generic, never copying
+  // J&B's own real text.
+  // -------------------------------------------------------------------
+
+  test("a real heading-tag category label (h2/h3) is detected — the strongest structural signal", () => {
+    const html = `
+      <html><body>
+        <h2>Entrées</h2>
+        <div>Braised Short Rib <span>$27.00</span></div>
+        <div>Pan-Seared Salmon <span>$24.00</span></div>
+        <h3>Desserts</h3>
+        <div>Crème Brûlée <span>$9.00</span></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.menu.length, 2);
+    assert.equal(facts.menu[0].name, "Entrées");
+    assert.equal(facts.menu[1].name, "Desserts");
+  });
+
+  test("a non-heading-tag category label with a title/heading-signaling class is still detected — janebond.ca's real, unchanged markup shape", () => {
+    const html = `
+      <html><body>
+        <div class="menu_section_title">Appetizers</div>
+        <div>Antojitos <span>$18.00</span></div>
+        <div>Vegan Caesar <span>$14.00</span></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.menu.length, 1);
+    assert.equal(facts.menu[0].name, "Appetizers");
+    assert.equal(facts.menu[0].items.length, 2);
+  });
+
+  test("a marketing tagline near the menu items is never adopted as a category — no heading tag, no title/heading class, generic shape (not J&B-specific wording)", () => {
+    const html = `
+      <html><body>
+        <p>Your neighborhood's favorite spot for great food</p>
+        <div>Antojitos <span>$18.00</span></div>
+        <div>Vegan Caesar <span>$14.00</span></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.menu.length, 1);
+    assert.equal(facts.menu[0].name, "Menu", "no structural signal on the tagline — falls back honestly instead of adopting it as a category");
+    assert.equal(facts.menu[0].items.length, 2);
+  });
+
+  test("a promo-pricing blurb near the menu items is never adopted as a category — short, non-price, but no structural signal", () => {
+    const html = `
+      <html><body>
+        <div>4 for $12.95 or 8 for $19.95</div>
+        <div>Chicken Wings <span>$12.95</span></div>
+        <div>Mozzarella Sticks <span>$9.95</span></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.menu.length, 1);
+    assert.equal(facts.menu[0].name, "Menu");
+    assert.equal(facts.menu[0].items.length, 2);
+    assert.equal(facts.menu[0].items[0].name, "Chicken Wings", "item-level extraction is completely unaffected by the category-label fix");
+    assert.equal(facts.menu[0].items[0].price, "$12.95");
+  });
+
+  test("real item-level extraction (name/price/description) is byte-identical before and after the category fix, even with a heading present", () => {
+    const html = `
+      <html><body>
+        <h2>Mains</h2>
+        <div class="menu_single_item">
+          <div class="item_name">Braised Short Rib</div><div class="item_price">27.00</div>
+          <div class="item_descr"><p>slow braised, red wine reduction</p></div>
+        </div>
+        <div class="menu_single_item">
+          <div class="item_name">Pan-Seared Salmon</div><div class="item_price">24.00</div>
+          <div class="item_descr"><p>lemon butter, seasonal veg</p></div>
+        </div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.menu[0].name, "Mains");
+    assert.deepEqual(facts.menu[0].items[0], {
+      name: "Braised Short Rib",
+      description: "slow braised, red wine reduction",
+      price: "27.00",
+      sourceUrl: "https://example.test/",
+      confidence: "high",
+    });
+    assert.equal(facts.menu[0].items[1].name, "Pan-Seared Salmon");
+  });
+
+  test("end-to-end: a business with no industry/business_category DB fields at all still classifies as 'restaurant' from real, structurally-detected menu category headings — the exact chain Phase 4.9/5.1 protects", () => {
+    const html = `
+      <html><body>
+        <h2>Appetizers</h2>
+        <div>Antojitos <span>$18.00</span></div>
+        <div>Vegan Caesar <span>$14.00</span></div>
+        <h2>Entrées</h2>
+        <div>Braised Short Rib <span>$27.00</span></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    const categoryNames = facts.menu.map((c) => c.name);
+    assert.deepEqual(categoryNames, ["Appetizers", "Entrées"]);
+    assert.equal(resolveIndustryBucket(null, null, categoryNames), "restaurant");
   });
 });
 

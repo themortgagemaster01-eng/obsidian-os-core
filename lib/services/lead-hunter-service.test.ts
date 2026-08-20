@@ -161,6 +161,58 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
     assert.equal(deps.scanRuns[0].discovered_count, null, "a failed run has no real final counts, never a fabricated 0");
   });
 
+  test("Phase 5.1: geocoding THROWING (not just returning null) is recorded as a real 'failed' run, never left stuck at 'running'", async () => {
+    const deps = createFakeDeps({});
+    deps.geocodeLocation = async () => {
+      throw new Error("Nominatim request timed out");
+    };
+    await assert.rejects(
+      () => runLeadHunterScan(deps, { organizationId: "org-1", location: "Kitchener", industryBuckets: ["restaurant"] }),
+      /Nominatim request timed out/
+    );
+    assert.equal(deps.scanRuns.length, 1);
+    assert.equal(deps.scanRuns[0].status, "failed");
+    assert.equal(deps.scanRuns[0].error_message, "Nominatim request timed out");
+  });
+
+  test("Phase 5.1 (the real bug found during the Kitchener validation): discovery throwing is recorded as a real 'failed' run, never left stuck at 'running' — generic over the failure, not HTTP-504-specific", async () => {
+    const deps = createFakeDeps({});
+    const overpass504 =
+      'Overpass API request failed (504): <html>...<strong>Error</strong>: runtime error: open64: 0 Success /osm3s_osm_base Dispatcher_Client::request_read_and_idx::timeout. The server is probably too busy to handle your request.</html>';
+    deps.discoverBusinesses = async () => {
+      throw new Error(overpass504);
+    };
+    await assert.rejects(
+      () => runLeadHunterScan(deps, { organizationId: "org-1", location: "Kitchener", industryBuckets: ["restaurant"] }),
+      /504/
+    );
+    assert.equal(deps.scanRuns.length, 1, "the row created before discovery must still exist and reach a terminal state");
+    assert.equal(deps.scanRuns[0].status, "failed", "must never be left at 'running' — this was the real orphaned-state bug");
+    assert.equal(deps.scanRuns[0].error_message, overpass504, "the real original error is preserved verbatim, never swallowed or replaced with a generic message");
+    assert.notEqual(deps.scanRuns[0].completed_at, null);
+  });
+
+  test("Phase 5.1: a failure partway through the per-candidate loop (a real crawl/DB error, not discovery or geocoding) also reaches a terminal 'failed' state — generic over WHERE the failure happens", async () => {
+    const deps = createFakeDeps({ discovered: [REAL_SHAPED_CANDIDATE] });
+    deps.companyRepository.findByOrgAndUrl = async () => {
+      throw new Error("connection reset by peer");
+    };
+    await assert.rejects(
+      () => runLeadHunterScan(deps, { organizationId: "org-1", location: "Kitchener", industryBuckets: ["restaurant"] }),
+      /connection reset by peer/
+    );
+    assert.equal(deps.scanRuns[0].status, "failed");
+    assert.equal(deps.scanRuns[0].error_message, "connection reset by peer");
+  });
+
+  test("Phase 5.1: a normal successful scan is completely unaffected by the new failure-handling wrapper", async () => {
+    const deps = createFakeDeps({ discovered: [REAL_SHAPED_CANDIDATE] });
+    const result = await runLeadHunterScan(deps, { organizationId: "org-1", location: "Kitchener", industryBuckets: ["restaurant"] });
+    assert.equal(result.qualifiedCount, 1);
+    assert.equal(deps.scanRuns[0].status, "complete");
+    assert.equal(deps.scanRuns[0].error_message, null);
+  });
+
   test("a candidate with no website is rejected, never silently dropped or crawled", async () => {
     const noWebsite: DiscoveredBusiness = { ...REAL_SHAPED_CANDIDATE, websiteUrl: null };
     const deps = createFakeDeps({ discovered: [noWebsite] });

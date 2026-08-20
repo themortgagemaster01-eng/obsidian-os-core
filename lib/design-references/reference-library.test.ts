@@ -101,6 +101,19 @@ describe("reference-library", () => {
     assert.equal(resolveIndustryBucket(null, null, ["Drop-In", "10-Class Pack", "Membership"]), "general");
   });
 
+  test("Phase 5.1: a non-food business calling its own real offerings a 'menu'/'service'/'package'/'special' is not accidentally classified as a restaurant", () => {
+    // The word "menu" is generic across industries ("service menu", "spa
+    // menu", "pricing menu" are all real, common phrasings) — RESTAURANT_
+    // MENU_CATEGORY_KEYWORDS deliberately does not include the bare word
+    // "menu" for exactly this reason. Real food/drink vocabulary
+    // ("appetizer", "cocktail", "dessert", etc.) still covers genuine
+    // restaurants without this false-positive surface.
+    assert.equal(resolveIndustryBucket(null, null, ["Service Menu", "Pricing"]), "general");
+    assert.equal(resolveIndustryBucket(null, null, ["Spa Menu", "Packages"]), "general");
+    assert.equal(resolveIndustryBucket(null, null, ["Our Service Packages", "Special Offers"]), "general");
+    assert.equal(resolveIndustryBucket(null, null, ["Class Packages", "Membership Specials"]), "general");
+  });
+
   test("resolveIndustryBucket handles empty/whitespace-only menu category names safely", () => {
     assert.equal(resolveIndustryBucket(null, null, []), "general");
     assert.equal(resolveIndustryBucket(null, null, ["  ", ""]), "general");

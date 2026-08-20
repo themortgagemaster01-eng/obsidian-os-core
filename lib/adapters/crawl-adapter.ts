@@ -1171,6 +1171,31 @@ function extractMenuItemNameAndDescription(
   return { name, description: description.length > 0 ? description : null };
 }
 
+/**
+ * Phase 5.1 fix: a category-label candidate must carry a real structural
+ * signal that it's a heading, not just be short, non-price text — the real
+ * regression this closes (confirmed live during the Phase 5.0 Kitchener
+ * validation, on a real, unrelated restaurant): a real site's own marketing
+ * tagline and a promo-pricing blurb were both short enough and non-price,
+ * so the old "any short leaf text" rule adopted them as fake menu
+ * categories, even though item-level extraction on the same page was
+ * entirely correct. Two structural signals, matching this file's own
+ * existing precedent elsewhere (the Practice-Areas mega-menu detection's
+ * own "CSS class/id must contain the category word" rule): a real heading
+ * tag (h1-h6), or a class/id whose own name says what it is
+ * ("menu_section_title" — janebond.ca's real, unchanged markup —
+ * "category-heading", etc.). Deliberately does NOT fall back to guessing
+ * from the text's own content/shape (no sentence-detection, no marketing-
+ * copy keyword list, no business-specific string) — per this function's own
+ * conservative contract, no structural signal means no category, never a
+ * guess; the item stays under MENU_FALLBACK_CATEGORY_NAME instead.
+ */
+function isStructuralMenuCategoryLabel($el: ReturnType<cheerio.CheerioAPI>): boolean {
+  if ($el.is("h1, h2, h3, h4, h5, h6")) return true;
+  const classAndId = `${$el.attr("class") ?? ""} ${$el.attr("id") ?? ""}`.toLowerCase();
+  return classAndId.includes("title") || classAndId.includes("heading");
+}
+
 interface RawMenuItem {
   containerNode: unknown;
   name: string;
@@ -1249,6 +1274,7 @@ function findMenuItemsByStructure($: cheerio.CheerioAPI, sourceUrl: string): Men
     const text = $el.text().trim();
     if (text.length === 0 || text.length > MENU_CATEGORY_LABEL_MAX_CHARS) continue;
     if (PRICE_TOKEN_PATTERN.test(text)) continue;
+    if (!isStructuralMenuCategoryLabel($el)) continue;
     currentCategory = text;
   }
 

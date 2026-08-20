@@ -277,7 +277,6 @@ const BUCKET_KEYWORDS: { bucket: IndustryBucket; keywords: string[] }[] = [
 const RESTAURANT_MENU_CATEGORY_KEYWORDS = [
   "food",
   "drink",
-  "menu",
   "appetizer",
   "starter",
   "entree",
