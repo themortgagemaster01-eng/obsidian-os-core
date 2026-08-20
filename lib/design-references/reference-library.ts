@@ -262,25 +262,74 @@ const BUCKET_KEYWORDS: { bucket: IndustryBucket; keywords: string[] }[] = [
 ];
 
 /**
+ * Real, food/drink-shaped menu-category labels (crawl-adapter.ts's
+ * findMenuItemsByStructure groups real items under a real label the source
+ * page itself published, e.g. "FOOD"/"DRINK"/"Appetizers"/"Cocktails" —
+ * MENU_FALLBACK_CATEGORY_NAME "Menu" when none was found). Deliberately
+ * separate from BUCKET_KEYWORDS: this list is only ever checked against
+ * those real category labels, never arbitrary page text, so it can afford
+ * to be broader/more generic ("food", "drink") than BUCKET_KEYWORDS' own
+ * restaurant terms without false-positiving on unrelated body copy. A
+ * fitness studio's real class-pass categories ("Drop-In", "10-Class Pack")
+ * or a spa's ("Massage", "Facial") never match this list — this is a signal
+ * about what KIND of real price list was found, not just that one exists.
+ */
+const RESTAURANT_MENU_CATEGORY_KEYWORDS = [
+  "food",
+  "drink",
+  "menu",
+  "appetizer",
+  "starter",
+  "entree",
+  "entrée",
+  "main course",
+  "dessert",
+  "beverage",
+  "cocktail",
+  "wine",
+  "beer",
+  "brunch",
+  "lunch",
+  "dinner",
+  "small plate",
+];
+
+/**
  * Classifies a company's industry/category text into a known bucket, or
  * "general" when neither field matches — the safe default, never a guessed
  * specific industry (see REFERENCE_LIBRARY's general-editorial-default
  * entry for why that matters).
+ *
+ * `menuCategoryNames` is an optional structural-evidence fallback (Phase
+ * 4.9 fix): `companies.industry`/`business_category` are nullable,
+ * unconstrained text columns nothing guarantees gets populated (confirmed
+ * empty for a real business, janebond.ca, during Phase 4.8 validation) —
+ * when both are empty/unmatched, a REAL structurally-detected menu whose
+ * own real category labels are food/drink-shaped (checked against
+ * RESTAURANT_MENU_CATEGORY_KEYWORDS above) is stronger, more specific
+ * mechanical evidence of a restaurant/food-service business than an absent
+ * or generic industry field — never a guess, since the labels themselves
+ * were real text the business published next to real prices. Generalizes to
+ * any business the crawler found a real menu for, not just one by name.
  */
 export function resolveIndustryBucket(
   industry: string | null,
-  businessCategory: string | null
+  businessCategory: string | null,
+  menuCategoryNames: string[] = []
 ): IndustryBucket {
   const haystacks = [industry, businessCategory]
     .filter((v): v is string => !!v && v.trim().length > 0)
     .map((v) => v.toLowerCase());
 
-  if (haystacks.length === 0) return "general";
-
   for (const { bucket, keywords } of BUCKET_KEYWORDS) {
     if (haystacks.some((text) => keywords.some((keyword) => text.includes(keyword)))) {
       return bucket;
     }
+  }
+
+  const menuHaystacks = menuCategoryNames.filter((n) => n.trim().length > 0).map((n) => n.toLowerCase());
+  if (menuHaystacks.some((name) => RESTAURANT_MENU_CATEGORY_KEYWORDS.some((keyword) => name.includes(keyword)))) {
+    return "restaurant";
   }
 
   return "general";

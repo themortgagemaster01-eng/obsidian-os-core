@@ -75,4 +75,34 @@ describe("reference-library", () => {
   test("resolveIndustryBucket checks businessCategory when industry doesn't match", () => {
     assert.equal(resolveIndustryBucket("Downtown Services LLC", "HVAC repair"), "homeService");
   });
+
+  test("resolveIndustryBucket falls back to real structural menu evidence when industry/category are empty", () => {
+    // janebond.ca (Phase 4.8/4.9): companies.industry and business_category
+    // were both null, but the crawler structurally found a real menu with
+    // real "FOOD"/"DRINK" category labels — that's stronger evidence than
+    // an absent text field, and should classify as "restaurant" without any
+    // business-name-specific branch.
+    assert.equal(resolveIndustryBucket(null, null, ["FOOD", "DRINK"]), "restaurant");
+    assert.equal(resolveIndustryBucket("  ", "", ["Appetizers", "Entrees", "Desserts"]), "restaurant");
+  });
+
+  test("resolveIndustryBucket ignores menu evidence when industry/category already matched", () => {
+    // Text-based classification still wins when it succeeds — the menu
+    // fallback only applies once text classification is inconclusive.
+    assert.equal(resolveIndustryBucket("Boutique Fitness Studio", null, ["FOOD", "DRINK"]), "fitness");
+  });
+
+  test("resolveIndustryBucket does not misclassify a non-food real price list as a restaurant", () => {
+    // A spa's or fitness studio's real rate card is the same *structural*
+    // shape crawl-adapter.ts's findMenuItemsByStructure detects, but its
+    // real category labels aren't food/drink-shaped — never guessed into
+    // "restaurant" just because *some* real menu-shaped evidence exists.
+    assert.equal(resolveIndustryBucket(null, null, ["Massage", "Facial", "Packages"]), "general");
+    assert.equal(resolveIndustryBucket(null, null, ["Drop-In", "10-Class Pack", "Membership"]), "general");
+  });
+
+  test("resolveIndustryBucket handles empty/whitespace-only menu category names safely", () => {
+    assert.equal(resolveIndustryBucket(null, null, []), "general");
+    assert.equal(resolveIndustryBucket(null, null, ["  ", ""]), "general");
+  });
 });

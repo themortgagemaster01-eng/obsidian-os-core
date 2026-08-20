@@ -11,6 +11,7 @@ import type {
   ContentSection,
   ReviewsSummary,
   GalleryImage,
+  MenuCategory,
   FormInfo,
   MapEmbed,
 } from "@/lib/adapters/types";
@@ -83,6 +84,7 @@ function emptyStructuredFacts() {
     testimonials: [] as ContentSection[],
     reviews: emptyReviews(),
     gallery: [] as GalleryImage[],
+    menu: [] as MenuCategory[],
     forms: [] as FormInfo[],
     maps: [] as MapEmbed[],
   };
@@ -609,16 +611,58 @@ function extractMaps($: cheerio.CheerioAPI): MapEmbed[] {
 
 const MAX_GALLERY_IMAGES = 20;
 
+/** Filename/URL fragments that reliably mark a decorative/UI image rather than real business photography — logos, icons, spacers. Deliberately narrow (a real dish/venue photo is never named this) rather than a broad guess. */
+const NON_CONTENT_IMAGE_PATTERN = /logo|favicon|sprite|spacer|placeholder|avatar|icon[-_]|[-_]icon/i;
+/** A template-engine placeholder never resolves to a real fetchable image ("{{image}}", "${src}") — this crawler is a plain fetch, so anything still containing template syntax was never actually rendered into a real URL. */
+const TEMPLATE_PLACEHOLDER_PATTERN = /[{}$]/;
+/** An explicit HTML width/height this small reliably marks an icon/UI glyph, never real content photography — generous enough that a legitimate thumbnail still clears it. Images with no size attribute at all (the common case for responsive real photography, sized via CSS) are never excluded by this check. */
+const MIN_CONTENT_IMAGE_DIMENSION_PX = 80;
+
+function isLikelyContentImage($img: ReturnType<cheerio.CheerioAPI>, src: string): boolean {
+  if (TEMPLATE_PLACEHOLDER_PATTERN.test(src)) return false;
+  if (NON_CONTENT_IMAGE_PATTERN.test(src)) return false;
+  if (NON_CONTENT_IMAGE_PATTERN.test($img.attr("alt") ?? "")) return false;
+  const widthAttr = Number($img.attr("width"));
+  const heightAttr = Number($img.attr("height"));
+  if (Number.isFinite(widthAttr) && widthAttr > 0 && widthAttr < MIN_CONTENT_IMAGE_DIMENSION_PX) return false;
+  if (Number.isFinite(heightAttr) && heightAttr > 0 && heightAttr < MIN_CONTENT_IMAGE_DIMENSION_PX) return false;
+  return true;
+}
+
+/**
+ * Real business photography, wherever it actually appears on the page — not
+ * only inside a container explicitly classed/labeled "gallery" (the prior
+ * behavior; confirmed too narrow on a real site during the Phase 4.8
+ * investigation: janebond.ca's one real photo sits directly in a page
+ * section with no "gallery" wrapper anywhere near it). Every real `<img>`
+ * src on the page (outside nav/header/footer chrome) is a candidate;
+ * isLikelyContentImage filters out logos/icons/template placeholders/tiny
+ * UI glyphs — a real dish/venue photo is never named "logo.png" or sized
+ * 24x24. `src` is resolved to an absolute URL against `sourceUrl` — a real,
+ * disclosed fix for a latent bug this broadening also surfaced: a relative
+ * src like "images/photo.jpg" would otherwise resolve against Obsidian OS's
+ * own domain once rendered on the new site, not the business's real one.
+ */
 function extractGallery($: cheerio.CheerioAPI, sourceUrl: string): GalleryImage[] {
   const seen = new Set<string>();
   const images: GalleryImage[] = [];
-  $('[class*="gallery" i] img, [id*="gallery" i] img').each((_, el) => {
-    const src = $(el).attr("src");
-    if (!src || seen.has(src)) return;
-    seen.add(src);
-    images.push({ src, alt: $(el).attr("alt") ?? null, sourceUrl });
+  $("img[src]").each((_, el) => {
+    if (images.length >= MAX_GALLERY_IMAGES) return;
+    const $img = $(el);
+    if ($img.closest("nav, header, footer, script, style").length > 0) return;
+    const rawSrc = $img.attr("src");
+    if (!rawSrc || !isLikelyContentImage($img, rawSrc)) return;
+    let resolvedSrc: string;
+    try {
+      resolvedSrc = new URL(rawSrc, sourceUrl).toString();
+    } catch {
+      return;
+    }
+    if (seen.has(resolvedSrc)) return;
+    seen.add(resolvedSrc);
+    images.push({ src: resolvedSrc, alt: $img.attr("alt") ?? null, sourceUrl });
   });
-  return images.slice(0, MAX_GALLERY_IMAGES);
+  return images;
 }
 
 const MAX_SECTIONS_PER_CATEGORY = 10;
@@ -1057,6 +1101,182 @@ function findServiceMenuStructure($: cheerio.CheerioAPI, sourceUrl: string): Con
 }
 
 // ===========================================================================
+// Menu/price-list structural detection (Phase 4.8 evidence-pipeline pass —
+// investigation on a real business, janebond.ca). A real menu item has a
+// recognizable SHAPE regardless of what CSS class (if any) a theme wraps it
+// in: a short name, a real price the business itself published right next
+// to it, often followed by a longer description. This is anchored on the
+// PRICE, not on any class/id name or navigation pattern — a bare price
+// token is a far more universal, far less false-positive-prone signal
+// across arbitrary real-world markup than any one theme's class naming.
+//
+// Confirmed real and necessary on janebond.ca: the crawl already fetched the
+// homepage containing the real menu (dish names, real prices, real
+// descriptions, no JavaScript required) — but findServiceMenuStructure above
+// only recognizes a nav-dropdown mega-menu (the "practice areas" shape), and
+// this business's real menu is a completely different, and more common for
+// an actual food/drink menu, shape: a same-page section of repeated
+// name+price(+description) blocks. Never keys off any one theme's class
+// name (no "menu_single_item"/"item_name"/"item_price" anywhere below) —
+// only the structural price anchor plus nearby real text, so this
+// generalizes to any business publishing a real price list in roughly this
+// shape (restaurant menus, service-rate lists, class-pass pricing, etc.).
+//
+// Deliberately does NOT attempt price RANGES ("$12–15") or multi-price rows
+// (small/large) — a disclosed limitation, not a silent gap: that shape is
+// rare enough, and ambiguous enough against other numeric ranges (hours,
+// phone extensions), that guessing at it risks a false match more than the
+// coverage is worth in this pass.
+// ===========================================================================
+
+/** "$18.00", "18.00", "$18" — a bare price token as a leaf element's own full text. Never matches a phone number, date, or plain percentage (those don't fit this narrow shape). */
+const PRICE_TOKEN_PATTERN = /^\$\s?\d{1,4}(?:\.\d{2})?$|^\d{1,4}\.\d{2}$/;
+/** A single price-shaped element elsewhere on an otherwise-unrelated page (a consultation fee, a "starting at" figure) is real but isn't a menu — a menu is a REPEATED pattern. */
+const MIN_MENU_ITEMS_FOR_REAL_MENU = 2;
+const MAX_MENU_CATEGORIES = 6;
+const MAX_ITEMS_PER_MENU_CATEGORY = 12;
+const MENU_ITEM_NAME_MAX_CHARS = 80;
+const MENU_ITEM_DESCRIPTION_MAX_CHARS = 300;
+/** A candidate category-label sibling must be this short to plausibly be a heading ("Appetizers", "Small Plates") rather than a stray sentence of body text. */
+const MENU_CATEGORY_LABEL_MAX_CHARS = 40;
+const MENU_FALLBACK_CATEGORY_NAME = "Menu";
+/** Elements this broad a selector considers as "a leaf might be a price, or a short heading" candidates — covers every common menu-markup shape (div-per-field, table row, list item) without scanning every element on the page (e.g. <a>, <i>, decorative wrappers). */
+const MENU_CANDIDATE_SELECTOR = "h1, h2, h3, h4, h5, h6, p, div, span, li, td";
+
+/**
+ * Reconstructs an item's real name + real description from its container's
+ * own direct contents (element children AND bare text nodes, in document
+ * order) — the same "each field its own child" and "bare text node beside a
+ * price" shapes real sites use interchangeably. The first non-empty,
+ * non-price chunk is the name; anything real after it is the description.
+ * Returns name: null when nothing usable was found — the caller's signal to
+ * try climbing one more ancestor level rather than inventing a name.
+ */
+function extractMenuItemNameAndDescription(
+  $: cheerio.CheerioAPI,
+  container: ReturnType<cheerio.CheerioAPI>,
+  priceText: string
+): { name: string | null; description: string | null } {
+  if (container.length === 0) return { name: null, description: null };
+  const chunks: string[] = [];
+  container.contents().each((_, node) => {
+    const text = $(node).text().trim().replace(/\s+/g, " ");
+    if (text.length === 0 || text === priceText || PRICE_TOKEN_PATTERN.test(text)) return;
+    chunks.push(text);
+  });
+  if (chunks.length === 0) return { name: null, description: null };
+  const [name, ...rest] = chunks;
+  if (name.length === 0) return { name: null, description: null };
+  const description = rest.join(" ").trim();
+  return { name, description: description.length > 0 ? description : null };
+}
+
+interface RawMenuItem {
+  containerNode: unknown;
+  name: string;
+  description: string | null;
+  price: string;
+  docIndex: number;
+}
+
+function findMenuItemsByStructure($: cheerio.CheerioAPI, sourceUrl: string): MenuCategory[] {
+  const candidateEls = $(MENU_CANDIDATE_SELECTOR).toArray();
+  const consumedNodes = new Set<unknown>();
+  const rawItems: RawMenuItem[] = [];
+  const seenItemKey = new Set<string>();
+
+  // Pass 1: resolve every real price-anchored item (name + optional
+  // description), independent of category — and mark every node inside its
+  // container as "consumed" so pass 2 can never mistake an item's own name
+  // (e.g. "Antojitos") for a category heading several items later.
+  for (let i = 0; i < candidateEls.length; i++) {
+    const el = candidateEls[i];
+    const $el = $(el);
+    if ($el.closest("nav, header, footer, script, style").length > 0) continue;
+    if ($el.children().length > 0) continue; // leaf only
+    const text = $el.text().trim();
+    if (!PRICE_TOKEN_PATTERN.test(text)) continue;
+
+    let container = $el.parent();
+    let info = extractMenuItemNameAndDescription($, container, text);
+    if (!info.name) {
+      // One documented fallback level — handles a price wrapped one level
+      // deeper than its name (e.g. price in its own inner <span>) without
+      // unbounded, unpredictable climbing.
+      container = container.parent();
+      info = extractMenuItemNameAndDescription($, container, text);
+    }
+    if (!info.name) continue;
+
+    const containerNode = container.get(0);
+    if (!containerNode || consumedNodes.has(containerNode)) continue;
+
+    const key = `${info.name}:${text}`;
+    if (seenItemKey.has(key)) continue;
+    seenItemKey.add(key);
+
+    container
+      .find("*")
+      .addBack()
+      .each((_, node) => {
+        consumedNodes.add(node);
+      });
+
+    rawItems.push({ containerNode, name: info.name, description: info.description, price: text, docIndex: i });
+  }
+
+  if (rawItems.length < MIN_MENU_ITEMS_FOR_REAL_MENU) return [];
+
+  // Pass 2: walk the same candidates in document order, tracking the most
+  // recent short, non-consumed, non-price leaf text as the "current
+  // category" — assigned to each item as we reach its own docIndex. A page
+  // with no real category headings at all just leaves every item under the
+  // honest MENU_FALLBACK_CATEGORY_NAME.
+  let currentCategory: string | null = null;
+  const categoryByDocIndex = new Map<number, string>();
+  let itemPointer = 0;
+  for (let i = 0; i < candidateEls.length && itemPointer < rawItems.length; i++) {
+    if (i === rawItems[itemPointer].docIndex) {
+      categoryByDocIndex.set(i, currentCategory ?? MENU_FALLBACK_CATEGORY_NAME);
+      itemPointer++;
+      continue;
+    }
+    const el = candidateEls[i];
+    if (consumedNodes.has(el)) continue;
+    const $el = $(el);
+    if ($el.children().length > 0) continue;
+    if ($el.closest("nav, header, footer, script, style").length > 0) continue;
+    const text = $el.text().trim();
+    if (text.length === 0 || text.length > MENU_CATEGORY_LABEL_MAX_CHARS) continue;
+    if (PRICE_TOKEN_PATTERN.test(text)) continue;
+    currentCategory = text;
+  }
+
+  const categories: MenuCategory[] = [];
+  const categoryIndexByName = new Map<string, number>();
+  for (const item of rawItems) {
+    const categoryName = categoryByDocIndex.get(item.docIndex) ?? MENU_FALLBACK_CATEGORY_NAME;
+    let idx = categoryIndexByName.get(categoryName);
+    if (idx === undefined) {
+      if (categories.length >= MAX_MENU_CATEGORIES) continue;
+      idx = categories.length;
+      categoryIndexByName.set(categoryName, idx);
+      categories.push({ name: categoryName, items: [] });
+    }
+    if (categories[idx].items.length >= MAX_ITEMS_PER_MENU_CATEGORY) continue;
+    categories[idx].items.push({
+      name: item.name.slice(0, MENU_ITEM_NAME_MAX_CHARS),
+      description: item.description ? item.description.slice(0, MENU_ITEM_DESCRIPTION_MAX_CHARS) : null,
+      price: item.price,
+      sourceUrl,
+      confidence: item.description ? "high" : "medium",
+    });
+  }
+
+  return categories.filter((c) => c.items.length > 0);
+}
+
+// ===========================================================================
 // FAQ content-shape gate (Evidence Depth investigation, Friedman Grimes):
 // "accordion" is a UI-widget keyword, not an FAQ-specific one — real sites
 // reuse the same collapsible-accordion component for non-FAQ purposes.
@@ -1169,6 +1389,7 @@ export function extractStructuredFacts($: cheerio.CheerioAPI, sourceUrl: string)
     testimonials,
     reviews: extractReviews(jsonLd),
     gallery: extractGallery($, sourceUrl),
+    menu: findMenuItemsByStructure($, sourceUrl),
     forms: extractForms($),
     maps: extractMaps($),
   };
@@ -1264,6 +1485,32 @@ function mergeGallery(perPage: GalleryImage[][]): GalleryImage[] {
   return merged;
 }
 
+/** Merges menu categories across pages by category name, deduping items within a category the same way mergeSections dedupes content sections — a category real on two different pages (e.g. a "Drinks" page and a homepage excerpt) collapses to one, never doubled. */
+function mergeMenu(perPage: MenuCategory[][]): MenuCategory[] {
+  const categories: MenuCategory[] = [];
+  const categoryIndexByName = new Map<string, number>();
+  const seenItemKey = new Set<string>();
+  for (const pageCategories of perPage) {
+    for (const category of pageCategories) {
+      let idx = categoryIndexByName.get(category.name);
+      if (idx === undefined) {
+        if (categories.length >= MAX_MENU_CATEGORIES) continue;
+        idx = categories.length;
+        categoryIndexByName.set(category.name, idx);
+        categories.push({ name: category.name, items: [] });
+      }
+      for (const item of category.items) {
+        if (categories[idx].items.length >= MAX_ITEMS_PER_MENU_CATEGORY) break;
+        const key = `${category.name}:${item.name}:${item.price ?? ""}`;
+        if (seenItemKey.has(key)) continue;
+        seenItemKey.add(key);
+        categories[idx].items.push(item);
+      }
+    }
+  }
+  return categories.filter((c) => c.items.length > 0);
+}
+
 /**
  * Merges structured facts extracted separately from the homepage and each
  * of the crawler's already-fetched sub-pages (`CrawlRawResult.pages`) into
@@ -1296,6 +1543,7 @@ export function mergeStructuredFacts(pages: StructuredFacts[]): StructuredFacts 
     testimonials: mergeSections(pages.map((p) => p.testimonials)),
     reviews: mergeReviews(pages.map((p) => p.reviews)),
     gallery: mergeGallery(pages.map((p) => p.gallery)),
+    menu: mergeMenu(pages.map((p) => p.menu)),
     // Homepage's own only — a sub-page's contact form or map embed isn't a
     // business fact worth aggregating the way services/testimonials are.
     forms: pages[0].forms,

@@ -18,6 +18,7 @@ import type {
   ContentSection,
   ReviewsSummary,
   GalleryImage,
+  MenuCategory,
 } from "@/lib/adapters/types";
 
 /** Honest empty default — no crawl, or a crawl that never produced structured facts (predates docs/ARCHITECTURE_SPECIFICATION_V1.md's expanded crawler, or the fetch failed). Never a guessed value standing in for a missing one. */
@@ -158,6 +159,15 @@ export interface NormalizedAnalysis {
    * exist (§8).
    */
   gallery?: GalleryImage[];
+  /**
+   * Real menu/price-list evidence (crawl-adapter.ts's findMenuItemsByStructure)
+   * — the business's own real dish/service names, real prices, and real
+   * descriptions, grouped into the real categories the source page itself
+   * published. Empty when the crawl found no structurally-recognizable
+   * price-list pattern — never invented to fill a restaurant's menu section
+   * (§8).
+   */
+  menu?: MenuCategory[];
 }
 
 function clampScore(value: number): number {
@@ -275,6 +285,7 @@ export function normalizedAnalysisFromRow(
     faqEvidence: crawl?.faq ?? [],
     reviews: crawl?.reviews,
     gallery: crawl?.gallery ?? [],
+    menu: crawl?.menu ?? [],
   };
 }
 
@@ -332,5 +343,6 @@ export function normalizedAnalysisFromRawResults(
     faqEvidence: raw.crawl.faq ?? [],
     reviews: raw.crawl.reviews,
     gallery: raw.crawl.gallery ?? [],
+    menu: raw.crawl.menu ?? [],
   };
 }

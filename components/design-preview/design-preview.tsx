@@ -279,12 +279,23 @@ export function DesignPreview({
   const contactSectionIndex = wireframe.sections.findIndex((s) => s.type === "contact");
   const contactIsBuried = contactSectionIndex > CONTACT_BURIED_MIN_SECTIONS_BEFORE;
   const contactAddress = contactNode?.slots.find((s) => s.name === "address");
-  const contactHours = contactNode?.slots.find((s) => s.name === "hours");
   const realContactAddress = contactAddress && isRealSlot(contactAddress) ? contactAddress.value! : null;
-  const realContactHours = contactHours && isRealSlot(contactHours) ? contactHours.value! : null;
+  // One real line per real day (design-generation-service.ts's
+  // buildHoursSlots) when the crawl captured structured day-by-day hours;
+  // falls back to the single flat "hours" slot for a business/older row that
+  // only ever had that. Real fix for the visual review's "hours renders as
+  // one unbroken run-on line" finding — a scannable list, not a wall of text.
+  const hoursLines = (contactNode?.slots ?? [])
+    .filter((s) => isRealSlot(s) && /^hours-day-\d+$/.test(s.name))
+    .sort((a, b) => Number(a.name.split("-")[2]) - Number(b.name.split("-")[2]))
+    .map((s) => s.value!);
+  if (hoursLines.length === 0) {
+    const flatHours = contactNode?.slots.find((s) => s.name === "hours");
+    if (flatHours && isRealSlot(flatHours)) hoursLines.push(flatHours.value!);
+  }
   const heroQuickFacts =
-    contactIsBuried && realContactPhone && realContactAddress && realContactHours
-      ? { phone: realContactPhone, phoneHref: realContactPhoneHref, address: realContactAddress, hours: realContactHours }
+    contactIsBuried && realContactPhone && realContactAddress && hoursLines.length > 0
+      ? { phone: realContactPhone, phoneHref: realContactPhoneHref, address: realContactAddress, hoursLines }
       : null;
 
   // Split out so the page footer can render as a true sibling landmark
@@ -352,6 +363,25 @@ export function DesignPreview({
     );
   };
 
+  // See the <style> element's own comment below for why this is built as a
+  // plain string (for dangerouslySetInnerHTML) rather than inline JSX text.
+  const mobileStyleCss = `
+        @keyframes op-fade-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+        [data-design-preview] a, [data-design-preview] button { font-family: inherit; }
+        [data-design-preview] a { color: inherit; text-decoration: none; }
+        @media (prefers-reduced-motion: reduce) {
+          [data-design-preview] [data-op-animated] { animation: none !important; opacity: 1 !important; transform: none !important; }
+        }
+        @media (max-width: ${MOBILE_BREAKPOINT_PX}px) {
+          [data-design-preview] { font-size: ${mobileBodyPx}px !important; }
+          [data-op-touch-target] { min-width: var(--op-tt-w); min-height: var(--op-tt-h); }
+          [data-op-nav-links] { display: none !important; }
+          [data-hero-hours-chip] { display: none !important; }
+          [data-hero-pattern="split-media-text"] { display: block !important; }
+          [data-hero-pattern="offset-overlap"] { margin-left: 0 !important; }
+        }
+      `;
+
   return (
     <div
       data-design-preview
@@ -363,22 +393,23 @@ export function DesignPreview({
         lineHeight: refinedDesign.typography.bodyLineHeight,
       }}
     >
-      {/* The only rendered CSS beyond inline styles: mobile overrides sourced directly from RefinedDesign.mobile, never a second hand-authored mobile spec, plus a blanket prefers-reduced-motion override (Premium Presentation Pass §12 — previously every fade-in animation played unconditionally). */}
-      <style>{`
-        @keyframes op-fade-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
-        [data-design-preview] a, [data-design-preview] button { font-family: inherit; }
-        [data-design-preview] a { color: inherit; text-decoration: none; }
-        @media (prefers-reduced-motion: reduce) {
-          [data-design-preview] [data-op-animated] { animation: none !important; opacity: 1 !important; transform: none !important; }
-        }
-        @media (max-width: ${MOBILE_BREAKPOINT_PX}px) {
-          [data-design-preview] { font-size: ${mobileBodyPx}px !important; }
-          [data-op-touch-target] { min-width: var(--op-tt-w); min-height: var(--op-tt-h); }
-          [data-op-nav-links] { display: none !important; }
-          [data-hero-pattern="split-media-text"] { display: block !important; }
-          [data-hero-pattern="offset-overlap"] { margin-left: 0 !important; }
-        }
-      `}</style>
+      {/* The only rendered CSS beyond inline styles: mobile overrides sourced directly from RefinedDesign.mobile, never a second hand-authored mobile spec, plus a blanket prefers-reduced-motion override (Premium Presentation Pass §12 — previously every fade-in animation played unconditionally).
+          dangerouslySetInnerHTML, not JSX text children: a real, reproducible
+          hydration-mismatch bug (visible as a persistent error toast
+          overlapping the hero on both desktop and mobile) traced to this
+          block specifically. <style> is an HTML "raw text" element — browsers
+          never HTML-entity-decode its content — but React's JSX-children text
+          path HTML-escapes ALL text uniformly, including the quote characters
+          in `[data-hero-pattern="split-media-text"]`, turning them into
+          `&quot;` server-side. The client then hydrates against the literal
+          (never-decoded) `&quot;` the browser actually parsed into the DOM,
+          while recomputing the same template literal with real `"`
+          characters — a genuine byte-for-byte server/client mismatch, not a
+          false positive. dangerouslySetInnerHTML writes the exact same raw
+          string via innerHTML on both server and client, so there is nothing
+          left to diverge — the fix removes the mismatch's actual cause
+          rather than hiding the error it produces. */}
+      <style dangerouslySetInnerHTML={{ __html: mobileStyleCss }} />
 
       <Nav
         businessName={businessName}
@@ -774,7 +805,7 @@ function SectionBody({
   /** lib/design-intelligence/composition-variants.ts's per-mission CTA arrangement — applied to every non-hero CTA (hero derives its own from the same resolved heroPattern, see below) so CTA styling is consistent sitewide, not just in the hero. */
   ctaVariant: "outline" | "filled" | "text-link";
   /** Real, evidence-gated hours/phone/address summary (DesignPreview's heroQuickFacts) — only ever passed for "hero", and only when contact is genuinely buried deep in the section order AND all three fields are real. */
-  quickFacts: { phone: string; phoneHref: string | null; address: string; hours: string } | null;
+  quickFacts: { phone: string; phoneHref: string | null; address: string; hoursLines: string[] } | null;
 }) {
   const section = node.section;
 
@@ -846,7 +877,17 @@ function SectionBody({
           <div
             style={{
               fontFamily: headingFontStack,
-              fontSize: `${Math.round(baseDisplayPx * lengthScale * (heroPattern === "oversized-typographic" ? 1.5 : 1.15))}px`,
+              // clamp(), not a fixed px value: the prior fixed size was
+              // identical on a 390px phone and a 1440px desktop, so a
+              // headline that read as a normal 2-3 line display headline on
+              // desktop rendered as 7 lines of oversized type consuming
+              // almost the entire mobile first screen — the real visual-
+              // review finding (headline pushed phone/hours/CTA below the
+              // fold on mobile). The MAX bound is exactly the same value
+              // this always computed before — desktop is unchanged; only
+              // narrow viewports now genuinely scale down, continuously
+              // rather than at one arbitrary breakpoint.
+              fontSize: `clamp(1.75rem, 6vw, ${Math.round(baseDisplayPx * lengthScale * (heroPattern === "oversized-typographic" ? 1.5 : 1.15))}px)`,
               fontWeight: displayRole ? toCssFontWeight(displayRole.weight) : 600,
               lineHeight: 1.08,
               letterSpacing: "-0.01em",
@@ -883,8 +924,24 @@ function SectionBody({
             <a href={quickFacts.phoneHref ? `tel:${quickFacts.phoneHref.replace(/[^\d+]/g, "")}` : undefined} style={{ fontSize: "0.9rem", fontWeight: 600 }}>
               {quickFacts.phone}
             </a>
-            <span style={{ fontSize: "0.85rem", opacity: MUTED_TEXT_OPACITY }}>{quickFacts.hours}</span>
             <span style={{ fontSize: "0.85rem", opacity: MUTED_TEXT_OPACITY }}>{quickFacts.address}</span>
+            {/* One real chip per real day (design-generation-service.ts's
+                buildHoursSlots) rather than one run-on sentence — each entry
+                reads on its own, and flex-wrap keeps the strip from ever
+                forcing a single unbroken line. Hidden below the mobile
+                breakpoint (data-hero-hours-chip, see the mobile <style>
+                rule) — a real regression this guards against, found in this
+                same visual-review pass: all 7 real day chips stacking to
+                their own lines on a narrow viewport pushed the CTA back
+                below the fold, undoing the headline-clamp fix above. Phone
+                and address (the two most essential facts) stay visible; the
+                full day-by-day breakdown is never lost — it's the dedicated
+                contact section's own job further down the page. */}
+            {quickFacts.hoursLines.map((line, i) => (
+              <span key={i} data-hero-hours-chip style={{ fontSize: "0.8rem", opacity: MUTED_TEXT_OPACITY, whiteSpace: "nowrap" }}>
+                {line}
+              </span>
+            ))}
           </div>
         )}
         <TouchAffordance refinedDesign={refinedDesign} section="hero" label="Get in Touch" accent={accent} textColor={textColor} href={`#${sectionAnchorId("contact")}`} variant={ctaVariant} />
@@ -1170,7 +1227,17 @@ function SectionBody({
       // so it earns proportionate visual weight rather than sitting in the
       // same small label/value row as every other field.
       const phone = realSlots.find((s) => s.name === "phone");
-      const rest = realSlots.filter((s) => s.name !== "phone" && s.name !== "phoneHref" && s.name !== "businessName");
+      // Real per-day hours (design-generation-service.ts's buildHoursSlots)
+      // pulled out for their own structured list, rather than falling into
+      // the generic label/value grid below as N separate "Hours Day 1"-
+      // labeled rows or (the pre-fix behavior) one run-on sentence.
+      const hoursDaySlots = realSlots
+        .filter((s) => /^hours-day-\d+$/.test(s.name))
+        .sort((a, b) => Number(a.name.split("-")[2]) - Number(b.name.split("-")[2]));
+      const flatHoursSlot = realSlots.find((s) => s.name === "hours");
+      const rest = realSlots.filter(
+        (s) => s.name !== "phone" && s.name !== "phoneHref" && s.name !== "businessName" && !hoursDaySlots.includes(s) && s !== flatHoursSlot
+      );
       const displayRole = findTypeRole(refinedDesign, "heading1");
       return (
         <div>
@@ -1183,7 +1250,7 @@ function SectionBody({
                 fontFamily: headingFontStack,
                 fontSize: displayRole ? `${displayRole.sizePx}px` : "2rem",
                 fontWeight: 600,
-                marginBottom: rest.length > 0 ? "1.5rem" : "0",
+                marginBottom: rest.length > 0 || hoursDaySlots.length > 0 || flatHoursSlot ? "1.5rem" : "0",
               }}
             >
               <SlotValue slot={phone} />
@@ -1199,6 +1266,22 @@ function SectionBody({
                   <SlotValue slot={slot} />
                 </div>
               ))}
+            </div>
+          )}
+          {(hoursDaySlots.length > 0 || flatHoursSlot) && (
+            <div style={{ marginBottom: "1rem" }}>
+              <p style={{ fontSize: "0.75rem", textTransform: "uppercase", opacity: MUTED_TEXT_OPACITY, marginBottom: "0.4rem" }}>Hours</p>
+              {hoursDaySlots.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                  {hoursDaySlots.map((slot) => (
+                    <span key={slot.name} style={{ fontSize: "0.9rem" }}>
+                      <SlotValue slot={slot} />
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <SlotValue slot={flatHoursSlot!} />
+              )}
             </div>
           )}
           {!phone && <TouchAffordance refinedDesign={refinedDesign} section="contact" label="Contact Us" accent={accent} textColor={textColor} variant={ctaVariant} />}

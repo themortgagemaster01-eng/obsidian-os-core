@@ -118,6 +118,32 @@ export interface GalleryImage {
   sourceUrl: string;
 }
 
+/**
+ * One real menu/price-list entry (crawl-adapter.ts's findMenuItemsByStructure)
+ * — a business's own real dish/service/item, its own real price when one was
+ * published next to it, and its own real description when one was published
+ * beneath it. `price` is kept as the verbatim string the site published
+ * ("18.00", "$18.00") — never reformatted/computed, never invented when
+ * absent. `confidence` is a real, mechanical corroboration signal (not a
+ * model's guess): "high" when name+price+description were all structurally
+ * present together, "medium" when only name+price were — never a case for
+ * dropping the item, since a real name+price pair is already real evidence,
+ * just thinner evidence than a full description gives.
+ */
+export interface MenuItem {
+  name: string;
+  description: string | null;
+  price: string | null;
+  sourceUrl: string;
+  confidence: "high" | "medium";
+}
+
+/** A real category label (e.g. "Appetizers") the source page itself published immediately before a run of real menu items — "Menu" (MENU_FALLBACK_CATEGORY_NAME, crawl-adapter.ts) when no such label was structurally found, never an invented category name. */
+export interface MenuCategory {
+  name: string;
+  items: MenuItem[];
+}
+
 export interface FormInfo {
   action: string | null;
   method: string | null;
@@ -156,6 +182,8 @@ export interface CrawlRawResult {
   testimonials: ContentSection[];
   reviews: ReviewsSummary;
   gallery: GalleryImage[];
+  /** Real menu/price-list evidence (crawl-adapter.ts's findMenuItemsByStructure) — empty when this business's site genuinely has none, or when what exists isn't in a structurally-recognizable menu-item shape. Never fabricated to fill a business's "menu" section (§8). */
+  menu: MenuCategory[];
   forms: FormInfo[];
   maps: MapEmbed[];
   fetchError?: string;

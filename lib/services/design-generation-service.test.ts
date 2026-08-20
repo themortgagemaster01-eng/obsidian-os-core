@@ -8,13 +8,14 @@ import {
   applyContentEmphasis,
   collectContentWarnings,
   resolveSignatureSection,
+  hasUnrenderedEvidenceSection,
   type SectionType,
 } from "@/lib/services/design-generation-service";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
-import type { ContactInfo } from "@/lib/adapters/types";
+import type { ContactInfo, MenuCategory, GalleryImage } from "@/lib/adapters/types";
 
 const NO_CONTACT_EVIDENCE: ContactInfo = { phones: [], emails: [], address: null, hours: null };
 
@@ -347,6 +348,37 @@ describe("design-generation-service: assembleComponents", () => {
     assert.equal(contact.slots.find((s) => s.name === "address")?.value, "1 Main St, Springfield");
     assert.equal(contact.slots.find((s) => s.name === "hours")?.source, "real");
     assert.equal(contact.slots.find((s) => s.name === "hours")?.value, "Mon-Fri 9am-5pm");
+  });
+
+  test("Phase 4.8 hours fix: real structured day-by-day hours produce one hours-day-N slot per real day, not a single run-on 'hours' slot", () => {
+    const evidence: ContactInfo = {
+      phones: [],
+      emails: [],
+      address: null,
+      hours: "Hours Tuesday 5 pm to 11 pm Wednesday 5 pm to 11 pm",
+      hoursByDay: [
+        { day: "Tuesday", hours: "5:00 PM – 11:00 PM" },
+        { day: "Wednesday", hours: "5:00 PM – 11:00 PM" },
+      ],
+    };
+    const wireframe = generateWireframe(briefFor("restaurant", "imagery-led"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, { businessName: "The Jane Bond", citedInsights: [], contactEvidence: evidence });
+    const contact = components.find((c) => c.section === "contact")!;
+
+    assert.equal(contact.slots.find((s) => s.name === "hours-day-1")?.value, "Tuesday: 5:00 PM – 11:00 PM");
+    assert.equal(contact.slots.find((s) => s.name === "hours-day-2")?.value, "Wednesday: 5:00 PM – 11:00 PM");
+    // The flat run-on string is never ALSO emitted once structured days
+    // exist — the renderer would otherwise show the same real hours twice.
+    assert.equal(contact.slots.some((s) => s.name === "hours"), false);
+  });
+
+  test("no hoursByDay (older row, or hours text with no day-name boundary): falls back to the single flat hours slot exactly as before", () => {
+    const evidence: ContactInfo = { phones: [], emails: [], address: null, hours: "9am-5pm daily" };
+    const wireframe = generateWireframe(briefFor("restaurant", "imagery-led"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, { businessName: "Acme Diner", citedInsights: [], contactEvidence: evidence });
+    const contact = components.find((c) => c.section === "contact")!;
+    assert.equal(contact.slots.find((s) => s.name === "hours")?.value, "9am-5pm daily");
+    assert.equal(contact.slots.some((s) => s.name === "hours-day-1"), false);
   });
 
   describe("design-generation-service: phone display formatting (CTO Benchmark Follow-Up directive §1/§2 — generic, not business-specific)", () => {
@@ -700,6 +732,50 @@ describe("design-generation-service: services section (Friedman Flagship Final C
   });
 });
 
+describe("design-generation-service: menu section (Phase 4.8 evidence-pipeline pass)", () => {
+  test("real menu evidence produces category-N and item-N-M slots, formatted as Name — Price — Description", () => {
+    const wireframe = generateWireframe(briefFor("restaurant", "imagery-led"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, {
+      businessName: "The Jane Bond",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      // Shape matches what findMenuItemsByStructure (crawl-adapter.ts)
+      // actually produces.
+      menu: [
+        {
+          name: "Appetizers",
+          items: [
+            { name: "Antojitos", price: "18.00", description: "grilled flour tortilla", sourceUrl: "https://janebond.test/", confidence: "high" },
+            { name: "Vegan Caesar", price: "14.00", description: null, sourceUrl: "https://janebond.test/", confidence: "medium" },
+          ],
+        },
+      ],
+    });
+    const menu = components.find((c) => c.section === "menu")!;
+    const category1 = menu.slots.find((s) => s.name === "category-1")!;
+    assert.equal(category1.value, "Appetizers");
+    const item1 = menu.slots.find((s) => s.name === "item-1-1")!;
+    assert.equal(item1.value, "Antojitos — 18.00 — grilled flour tortilla");
+    const item2 = menu.slots.find((s) => s.name === "item-1-2")!;
+    // No real description — the slot value never pads in a placeholder
+    // segment for the missing field (§8).
+    assert.equal(item2.value, "Vegan Caesar — 14.00");
+  });
+
+  test("no real menu evidence stays a single honest placeholder, never a fabricated menu", () => {
+    const wireframe = generateWireframe(briefFor("restaurant", "imagery-led"), { hasRealTestimonials: false });
+    const components = assembleComponents(wireframe, {
+      businessName: "Acme Diner",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+    });
+    const menu = components.find((c) => c.section === "menu")!;
+    assert.equal(menu.slots.length, 1);
+    assert.equal(menu.slots[0].source, "placeholder");
+    assert.equal(menu.slots[0].value, null);
+  });
+});
+
 describe("design-generation-service: team section (Evidence Depth pass — no longer folded into credibility)", () => {
   test("wireframe includes a dedicated \"team\" section only when hasRealTeam is true, placed before contact", () => {
     const withoutTeam = generateWireframe(briefFor("lawFirm", "credibility-led"), { hasRealTestimonials: false });
@@ -743,6 +819,84 @@ describe("design-generation-service: team section (Evidence Depth pass — no lo
     assert.equal(team.slots.length, 1);
     assert.equal(team.slots[0].source, "placeholder");
     assert.equal(team.slots[0].value, null);
+  });
+
+  // ---------------------------------------------------------------------
+  // Phase 4.9 — defense-in-depth evidence fallback. resolveIndustryBucket's
+  // own structural fallback narrows classification misses but can't
+  // eliminate them; these tests cover the second, independent safety net:
+  // real menu/gallery evidence a bucket's template doesn't already surface
+  // must still reach the wireframe, gated strictly on that evidence
+  // actually existing — never a bucket-specific special case.
+  // ---------------------------------------------------------------------
+
+  const REAL_MENU: MenuCategory[] = [
+    {
+      name: "Appetizers",
+      items: [
+        { name: "Test Dish", description: "A real description.", price: "10.00", sourceUrl: "https://acme.test/menu", confidence: "high" },
+      ],
+    },
+  ];
+  const REAL_GALLERY: GalleryImage[] = [{ src: "https://acme.test/photo.jpg", alt: null, sourceUrl: "https://acme.test" }];
+
+  test("general fallback: a business classified 'general' with real menu evidence still gets a menu section, placed before contact", () => {
+    const withoutMenu = generateWireframe(briefFor("general", "editorial", NO_CONTACT_EVIDENCE, { menu: [] }), { hasRealTestimonials: false });
+    assert.ok(!withoutMenu.sections.some((s) => s.type === "menu"), "no menu evidence should mean no menu section");
+
+    const withMenu = generateWireframe(briefFor("general", "editorial", NO_CONTACT_EVIDENCE, { menu: REAL_MENU }), { hasRealTestimonials: false });
+    const order = withMenu.sections.map((s) => s.type);
+    assert.ok(order.includes("menu"), "real menu evidence must not be silently discarded by a 'general' classification");
+    assert.ok(order.indexOf("menu") < order.indexOf("contact"));
+  });
+
+  test("gallery fallback: a business classified 'general' with real gallery evidence still gets a gallery section, placed before contact", () => {
+    const withoutGallery = generateWireframe(briefFor("general", "editorial", NO_CONTACT_EVIDENCE, { gallery: [] }), { hasRealTestimonials: false });
+    assert.ok(!withoutGallery.sections.some((s) => s.type === "gallery"));
+
+    const withGallery = generateWireframe(briefFor("general", "editorial", NO_CONTACT_EVIDENCE, { gallery: REAL_GALLERY }), {
+      hasRealTestimonials: false,
+    });
+    const order = withGallery.sections.map((s) => s.type);
+    assert.ok(order.includes("gallery"), "real gallery evidence must not be silently discarded by a 'general' classification");
+    assert.ok(order.indexOf("gallery") < order.indexOf("contact"));
+  });
+
+  test("the evidence fallback renders the same real content buildSlots already produces for a bucket that includes menu/gallery natively", () => {
+    // Same real evidence, same real buildSlots("menu"/"gallery", ...) path —
+    // the fallback only changes whether the section exists, never how its
+    // content gets built, so a 'general' business's real menu/gallery
+    // content is exactly as real as a 'restaurant' business's.
+    const wireframe = generateWireframe(briefFor("general", "editorial", NO_CONTACT_EVIDENCE, { menu: REAL_MENU, gallery: REAL_GALLERY }), {
+      hasRealTestimonials: false,
+    });
+    const components = assembleComponents(wireframe, {
+      businessName: "Acme Co",
+      citedInsights: [],
+      contactEvidence: NO_CONTACT_EVIDENCE,
+      menu: REAL_MENU,
+      gallery: REAL_GALLERY,
+    });
+    const menu = components.find((c) => c.section === "menu")!;
+    assert.ok(menu.slots.some((s) => s.name === "item-1-1" && s.value?.includes("Test Dish") && s.value?.includes("10.00")));
+    const gallery = components.find((c) => c.section === "gallery")!;
+    assert.ok(gallery.slots.some((s) => s.name === "image-1" && s.value === "https://acme.test/photo.jpg"));
+  });
+
+  test("the evidence fallback never duplicates menu/gallery for a bucket whose template already includes them", () => {
+    const wireframe = generateWireframe(briefFor("restaurant", "imagery-led", NO_CONTACT_EVIDENCE, { menu: REAL_MENU, gallery: REAL_GALLERY }), {
+      hasRealTestimonials: false,
+    });
+    const order = wireframe.sections.map((s) => s.type);
+    assert.equal(order.filter((t) => t === "menu").length, 1);
+    assert.equal(order.filter((t) => t === "gallery").length, 1);
+  });
+
+  test("hasUnrenderedEvidenceSection is false for empty evidence, evidence already in the order, or undefined evidence", () => {
+    assert.equal(hasUnrenderedEvidenceSection(["hero", "contact"], "menu", []), false);
+    assert.equal(hasUnrenderedEvidenceSection(["hero", "contact"], "menu", undefined), false);
+    assert.equal(hasUnrenderedEvidenceSection(["hero", "menu", "contact"], "menu", REAL_MENU), false);
+    assert.equal(hasUnrenderedEvidenceSection(["hero", "contact"], "menu", REAL_MENU), true);
   });
 });
 

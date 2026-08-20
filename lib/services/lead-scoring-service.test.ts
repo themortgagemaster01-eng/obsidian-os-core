@@ -35,6 +35,7 @@ function crawlFor(overrides: Partial<CrawlRawResult> = {}): CrawlRawResult {
     testimonials: [],
     reviews: { averageRating: null, count: null, source: null },
     gallery: [],
+    menu: [],
     forms: [],
     maps: [],
     ...overrides,

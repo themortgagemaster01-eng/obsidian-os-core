@@ -7,7 +7,7 @@ import { refineDesign, type RefinedDesign } from "@/lib/services/design-refineme
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
-import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage } from "@/lib/adapters/types";
+import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage, MenuCategory } from "@/lib/adapters/types";
 import { GENERIC_TESTIMONIAL_HEADING } from "@/lib/adapters/types";
 import { resolveHeroPattern } from "@/lib/design-intelligence/section-patterns";
 import { resolveCompositionVariant, type CompositionVariant } from "@/lib/design-intelligence/composition-variants";
@@ -138,6 +138,31 @@ function insertBeforeContact(order: SectionType[], section: SectionType): Sectio
 }
 
 /**
+ * Defense-in-depth evidence fallback (Phase 4.9): a bucket template is a
+ * classification-dependent guess at which sections a business needs —
+ * `resolveIndustryBucket`'s own structural-evidence fallback narrows how
+ * often that guess is wrong, but can't eliminate it (a business the
+ * classifier still lands on "general" or any other non-restaurant bucket
+ * can still have a real, structurally-detected menu or real photography).
+ * This is the same "add a section the base template doesn't include,
+ * gated strictly on real evidence" mechanism `hasRealTestimonials`/
+ * `hasRealTeam` already use above, generalized to `menu`/`gallery` — never
+ * a bucket-specific special case, never invoked when the template already
+ * has the section (restaurant's own template already includes both), and
+ * never invoked without real evidence (an empty `menu`/`gallery` array
+ * never adds anything — matching §8's "no section a business's own
+ * evidence doesn't support" discipline). Exported so tests can assert the
+ * gating directly, not just its effect on the final section order.
+ */
+export function hasUnrenderedEvidenceSection(
+  order: SectionType[],
+  section: "menu" | "gallery",
+  evidence: unknown[] | undefined
+): boolean {
+  return !order.includes(section) && !!evidence && evidence.length > 0;
+}
+
+/**
  * Sections Design Intelligence's contentEmphasis may reorder — deliberately
  * excludes hero/contact/footer, which keep their structural positions
  * regardless of emphasis (CTO directive's contentEmphasis vocabulary is
@@ -264,7 +289,11 @@ export function generateWireframe(brief: DesignBrief, options: GenerateWireframe
   const baseOrder = WIREFRAME_TEMPLATE_BY_BUCKET[brief.industryBucket];
   const withTestimonials = options.hasRealTestimonials ? insertBeforeContact(baseOrder, "testimonials") : baseOrder;
   const withTeam = options.hasRealTeam ? insertBeforeContact(withTestimonials, "team") : withTestimonials;
-  const sectionOrder = applyContentEmphasis(withTeam, brief.contentEmphasis);
+  const withMenu = hasUnrenderedEvidenceSection(withTeam, "menu", brief.menu) ? insertBeforeContact(withTeam, "menu") : withTeam;
+  const withGallery = hasUnrenderedEvidenceSection(withMenu, "gallery", brief.gallery)
+    ? insertBeforeContact(withMenu, "gallery")
+    : withMenu;
+  const sectionOrder = applyContentEmphasis(withGallery, brief.contentEmphasis);
 
   if (matchesGenericSaasTemplate(sectionOrder)) {
     throw new Error(
@@ -380,6 +409,8 @@ const MAX_SERVICE_SLOTS = 6;
 const MAX_CERTIFICATION_SLOTS = 3;
 const MAX_TEAM_SLOTS = 3;
 const MAX_GALLERY_SLOTS = 6;
+const MAX_MENU_CATEGORY_SLOTS = 4;
+const MAX_MENU_ITEM_SLOTS_PER_CATEGORY = 6;
 
 /** A real testimonial quote plus its real attribution, when the crawler found one structurally present next to the quote — attribution is null (never guessed) when none was found, matching crawl-adapter.ts's own GENERIC_TESTIMONIAL_HEADING fallback discipline. */
 export interface RealTestimonial {
@@ -429,6 +460,8 @@ export interface AssembleComponentsContext {
   reviews?: ReviewsSummary;
   /** DesignBrief.gallery passed through unchanged — real photos the business itself publishes (crawl-adapter.ts's extractGallery), never a diagnostic page screenshot. Fills the gallery section's real image slots and is the one evidence source resolveHeroPattern (lib/design-intelligence/section-patterns.ts) may pick a photo-backed hero pattern on; empty/absent means honestly no real photography exists (§8). */
   gallery?: GalleryImage[];
+  /** DesignBrief.menu passed through unchanged — real menu/price-list evidence the crawler found (crawl-adapter.ts's findMenuItemsByStructure): real dish/service names, real prices, real descriptions, grouped into the real categories the source page itself published. Fills the "menu" section's real slots when present; stays placeholder otherwise (§8). */
+  menu?: MenuCategory[];
   /** DesignBrief.industryBucket passed through unchanged — resolveHeroPattern's business-type -> visual strategy input (CTO Benchmark Follow-Up directive §4). Defaults to "general" when absent (a context built directly, bypassing generateWebsiteStructure) rather than throwing — hero pattern selection degrades to the safe default list, it never crashes Component Assembly over a missing classification. */
   industryBucket?: IndustryBucket;
 }
@@ -493,6 +526,27 @@ export function resolvePhoneForDisplay(contactEvidence: ContactInfo): { display:
   const normalized =
     digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits.startsWith("1") ? `+${digits}` : raw.trim().startsWith("+") ? raw.trim() : `+${digits}`;
   return { display: formatPhoneForDisplay(normalized), href: normalized };
+}
+
+// ===========================================================================
+// Hours formatting (Phase 4.8 visual-review pass): crawl-adapter.ts's
+// extractContact already produces real, structured day-by-day hours
+// (ContactInfo.hoursByDay, one real HoursEntry per real calendar day) — this
+// pipeline previously only ever surfaced the flat `hours` run-on string
+// (e.g. "Hours Tuesday 5 pm to 11 pm Wednesday 5 pm to 11 pm Thursday..."),
+// never the structured data sitting right next to it. Real regression found
+// during visual review of the Jane Bond mission's generated page: the same
+// unbroken wall of text rendered twice (hero quick-facts strip + contact
+// section), unscannable either place, despite the crawler already having
+// captured each day as its own real entry.
+// ===========================================================================
+
+/** One real slot per real calendar day ("hours-day-1".."hours-day-7", value "Tuesday: 5:00 PM – 11:00 PM") when the crawl captured structured day-by-day hours — the renderer (design-preview.tsx) can then show a real scannable list instead of one run-on sentence. Falls back to a single flat "hours" slot for a business whose real hours text had no day-name boundary to split on (hoursByDay empty) or for an older stored row predating hoursByDay — never a fabricated schedule, and never both forms at once (the renderer would otherwise show the same real hours twice). */
+function buildHoursSlots(contactEvidence: ContactInfo): ComponentSlot[] {
+  if (contactEvidence.hoursByDay && contactEvidence.hoursByDay.length > 0) {
+    return contactEvidence.hoursByDay.map((entry, i) => realSlot(`hours-day-${i + 1}`, `${entry.day}: ${entry.hours}`));
+  }
+  return [contactEvidence.hours ? realSlot("hours", contactEvidence.hours) : placeholderSlot("hours")];
 }
 
 // ===========================================================================
@@ -765,8 +819,32 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
       }
       return [placeholderSlot("offerings")];
     }
-    case "menu":
+    case "menu": {
+      // Real menu/price-list evidence (crawl-adapter.ts's
+      // findMenuItemsByStructure) — one "category-N" slot per real category
+      // name, followed by one "item-N-M" slot per real item within it,
+      // formatted as "Name — Price — Description" mirroring the same
+      // "heading — excerpt" concatenation convention team/faq already use
+      // through the generic divided-row renderer (components/design-preview/
+      // design-preview.tsx has no dedicated "menu" branch — this section
+      // deliberately reuses that existing generic renderer rather than
+      // adding a new one, per the Phase 4.8 directive to fix the evidence
+      // pipeline, not start another design-system pass). Stays
+      // placeholder-only when the crawl found no structurally-recognizable
+      // menu — never a fabricated dish list (§8).
+      if (context.menu && context.menu.length > 0) {
+        const slots: ComponentSlot[] = [];
+        context.menu.slice(0, MAX_MENU_CATEGORY_SLOTS).forEach((category, i) => {
+          slots.push(realSlot(`category-${i + 1}`, category.name));
+          category.items.slice(0, MAX_MENU_ITEM_SLOTS_PER_CATEGORY).forEach((item, j) => {
+            const parts = [item.name, item.price ?? null, item.description ?? null].filter((p): p is string => !!p);
+            slots.push(realSlot(`item-${i + 1}-${j + 1}`, parts.join(" — ")));
+          });
+        });
+        return slots;
+      }
       return [placeholderSlot("menuItems")];
+    }
     case "gallery": {
       // Real photos only (SECTION_PATTERN_REGISTRY.gallery's real-photo-grid
       // pattern) — an "image-N" slot per real photo plus its own "image-
@@ -853,9 +931,7 @@ function buildSlots(section: SectionType, context: AssembleComponentsContext): C
         context.contactEvidence.address
           ? realSlot("address", context.contactEvidence.address)
           : placeholderSlot("address"),
-        context.contactEvidence.hours
-          ? realSlot("hours", context.contactEvidence.hours)
-          : placeholderSlot("hours"),
+        ...buildHoursSlots(context.contactEvidence),
       ];
     }
     case "footer": {
@@ -1008,6 +1084,7 @@ export function generateWebsiteStructure(
     faqEvidence: brief.faqEvidence,
     reviews: brief.reviews,
     gallery: brief.gallery,
+    menu: brief.menu,
     industryBucket: brief.industryBucket,
   };
   const components = assembleComponents(wireframe, assembleContext);

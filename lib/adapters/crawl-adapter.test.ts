@@ -1122,3 +1122,167 @@ describe("crawl-adapter: keyword-scan banner/duplicate false positives (Evidence
     assert.deepEqual(facts.services, []);
   });
 });
+
+describe("crawl-adapter: menu/price-list structural detection (Phase 4.8 evidence-pipeline pass — real janebond.ca investigation)", () => {
+  test("splits a real div-per-field menu (janebond.ca's actual shape: no 'menu'/nav-dropdown markup anywhere) into categories with real name/price/description", () => {
+    const html = `
+      <html><body>
+        <section id="food">
+          <div class="section-title"><h2>Food</h2></div>
+          <div class="menu_section_title">Appetizers</div>
+          <div class="menu_single_item">
+            <div class="item_name">Antojitos</div><div class="item_price">18.00</div>
+            <div class="item_descr"><p>grilled flour tortilla rolled with cream cheese</p></div>
+          </div>
+          <div class="menu_single_item">
+            <div class="item_name">Vegan Caesar</div><div class="item_price">14.00</div>
+            <div class="item_descr"><p>creamy caesar dressing, house made croutons</p></div>
+          </div>
+          <div class="menu_section_title">Entrees</div>
+          <div class="menu_single_item">
+            <div class="item_name">Braised Short Rib</div><div class="item_price">27.00</div>
+            <div class="item_descr"><p>slow braised, red wine reduction</p></div>
+          </div>
+        </section>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://janebond.test/");
+    assert.equal(facts.menu.length, 2);
+    assert.equal(facts.menu[0].name, "Appetizers");
+    assert.equal(facts.menu[0].items.length, 2);
+    assert.deepEqual(facts.menu[0].items[0], {
+      name: "Antojitos",
+      description: "grilled flour tortilla rolled with cream cheese",
+      price: "18.00",
+      sourceUrl: "https://janebond.test/",
+      confidence: "high",
+    });
+    assert.equal(facts.menu[0].items[1].name, "Vegan Caesar");
+    assert.equal(facts.menu[1].name, "Entrees");
+    assert.equal(facts.menu[1].items[0].name, "Braised Short Rib");
+    // Never keys off "menu_single_item"/"item_name"/"item_price" — the real
+    // regression this guards: findServiceMenuStructure's nav-dropdown-only
+    // shape produces nothing at all for this real markup.
+    assert.deepEqual(facts.services, []);
+  });
+
+  test("a table-row or bare-text menu shape (no wrapping element per field) still produces a real name+price, description null, confidence medium", () => {
+    const html = `
+      <html><body>
+        <ul>
+          <li>House Lager <span>$7</span></li>
+          <li>IPA <span>$8</span></li>
+        </ul>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/drinks/");
+    assert.equal(facts.menu.length, 1);
+    assert.equal(facts.menu[0].items.length, 2);
+    assert.deepEqual(facts.menu[0].items[0], {
+      name: "House Lager",
+      description: null,
+      price: "$7",
+      sourceUrl: "https://example.test/drinks/",
+      confidence: "medium",
+    });
+  });
+
+  test("false positive guard: a single price-shaped mention on an otherwise unrelated page produces no menu at all — a real menu is a repeated pattern, not a one-off figure", () => {
+    const html = `<html><body><p>Initial consultation fee</p><div>$50.00</div></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.deepEqual(facts.menu, []);
+  });
+
+  test("false positive guard: price-shaped text inside nav/header is never treated as a menu item", () => {
+    const html = `
+      <html><body>
+        <nav><div>Table 12 <span>$0.00</span></div><div>Table 14 <span>$0.00</span></div></nav>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.deepEqual(facts.menu, []);
+  });
+
+  test("no real category heading present: items fall under the honest fallback category, never an invented name", () => {
+    const html = `
+      <html><body>
+        <div><div>Antojitos</div><div>$18.00</div></div>
+        <div><div>Vegan Caesar</div><div>$14.00</div></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.menu.length, 1);
+    assert.equal(facts.menu[0].name, "Menu");
+    assert.equal(facts.menu[0].items.length, 2);
+  });
+});
+
+describe("crawl-adapter: gallery image detection generalized beyond a 'gallery'-classed container (Phase 4.8, real janebond.ca investigation)", () => {
+  test("a real content photo with no 'gallery' class/id anywhere near it is now captured, and its relative src is resolved to an absolute URL", () => {
+    const html = `
+      <html><body>
+        <section id="home">
+          <div id="fullscreen-slider">
+            <div class="slider-item"><img src="images/jane_draught.jpg" alt="The Jane Bond"></div>
+          </div>
+        </section>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://www.janebond.test/");
+    assert.equal(facts.gallery.length, 1);
+    assert.equal(facts.gallery[0].src, "https://www.janebond.test/images/jane_draught.jpg");
+    assert.equal(facts.gallery[0].alt, "The Jane Bond");
+  });
+
+  test("excludes a real logo image (by filename and by alt text) and an unresolved template placeholder — never mistaken for real content photography", () => {
+    const html = `
+      <html><body>
+        <img id="jane" src="images/logo.png" alt="The Jane Bond Logo" />
+        <img class="brand" src="images/brand-icon.png" alt="Icon" />
+        <img class="gram" src="{{image}}" alt="Instagram Feed Photo" />
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://www.janebond.test/");
+    assert.deepEqual(facts.gallery, []);
+  });
+
+  test("excludes a tiny explicitly-sized icon by its HTML width/height attributes, but keeps a real photo with no size attributes at all", () => {
+    const html = `
+      <html><body>
+        <img src="/icons/search.png" width="16" height="16" alt="Search" />
+        <img src="/photos/dining-room.jpg" alt="Dining room" />
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.gallery.length, 1);
+    assert.match(facts.gallery[0].src, /dining-room\.jpg$/);
+  });
+
+  test("still finds images explicitly inside a 'gallery'-classed container too — a broadening, not a replacement of the prior behavior", () => {
+    const html = `<html><body><div class="photo-gallery"><img src="/img1.jpg" alt="Storefront" /></div></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.gallery.length, 1);
+    assert.match(facts.gallery[0].src, /img1\.jpg$/);
+  });
+
+  test("excludes images inside nav/header/footer chrome", () => {
+    const html = `
+      <html><body>
+        <header><img src="/header-banner.jpg" alt="Header banner" /></header>
+        <footer><img src="/footer-badge.jpg" alt="Footer badge" /></footer>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.deepEqual(facts.gallery, []);
+  });
+});

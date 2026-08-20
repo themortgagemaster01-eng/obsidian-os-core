@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Json } from "@/lib/supabase/database.types";
 import type { AnalysisCategory, NormalizedAnalysis } from "@/lib/services/analysis-types";
-import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage } from "@/lib/adapters/types";
+import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage, MenuCategory } from "@/lib/adapters/types";
 import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
 import { generateInsights, type Insight } from "@/lib/services/insight-service";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
@@ -105,6 +105,16 @@ export interface DesignBrief {
    * imagery (§8).
    */
   gallery?: GalleryImage[];
+  /**
+   * Passed through from NormalizedAnalysis.menu unchanged — real menu/
+   * price-list evidence the crawler found (crawl-adapter.ts's
+   * findMenuItemsByStructure): real dish/service names, real prices, real
+   * descriptions, grouped into the real categories the source page itself
+   * published. Absent or empty means honestly no structurally-recognizable
+   * price list exists for this business, never backfilled with invented
+   * menu items (§8).
+   */
+  menu?: MenuCategory[];
   targetAudience: string;
   positioning: string;
   direction: {
@@ -337,7 +347,11 @@ export async function runDesignBrief(
           "a brief that can't point to what it's addressing shouldn't generate anything (docs/SPRINT_4_DESIGN_REVIEW.md §10)."
       );
     }
-    const industryBucket = resolveIndustryBucket(company?.industry ?? null, company?.business_category ?? null);
+    const industryBucket = resolveIndustryBucket(
+      company?.industry ?? null,
+      company?.business_category ?? null,
+      (normalized.menu ?? []).map((category) => category.name)
+    );
     const candidateReferences = selectReferenceDirections(industryBucket);
     const weakestCategory = findWeakestMeasuredCategory(normalized);
 
@@ -391,6 +405,7 @@ export async function runDesignBrief(
       faqEvidence: normalized.faqEvidence,
       reviews: normalized.reviews,
       gallery: normalized.gallery,
+      menu: normalized.menu,
       targetAudience: creative.targetAudience,
       positioning: creative.positioning,
       direction: creative.direction,
