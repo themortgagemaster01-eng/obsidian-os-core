@@ -126,8 +126,18 @@ const BASE_VARIANT_BY_HERO_PATTERN: Record<HeroPatternId, Omit<CompositionVarian
   },
 };
 
-/** A grid of 1-2 cards reads as sparse/broken (the same "degrades honestly" discipline section-patterns.ts's module comment already names) — grid-cards is only reachable with enough real service/offering evidence to fill it out. */
-const MIN_SERVICES_FOR_GRID_CARDS = 3;
+/**
+ * A grid of 1-2 cards reads as sparse/broken (the same "degrades honestly"
+ * discipline section-patterns.ts's module comment already names) —
+ * grid-cards is only reachable with enough real service/offering evidence to
+ * fill it out.
+ *
+ * Exported so lib/design-intelligence/experience-planner.ts (Phase 6.1) can
+ * gate its own service-density-dependent experience modes (e.g.
+ * high-energy-retail) on this SAME real-offering-count bar rather than an
+ * independently chosen number.
+ */
+export const MIN_SERVICES_FOR_GRID_CARDS = 3;
 
 const RESTRAINED_TONE_KEYWORDS = ["restrained", "quiet", "understate", "minimal", "refined", "subtle", "calm", "unpretentious"];
 const BOLD_TONE_KEYWORDS = ["bold", "energetic", "vibrant", "loud", "punchy", "urgent", "playful", "high-energy"];

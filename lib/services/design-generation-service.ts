@@ -11,6 +11,8 @@ import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage, MenuCat
 import { GENERIC_TESTIMONIAL_HEADING } from "@/lib/adapters/types";
 import { resolveHeroPattern } from "@/lib/design-intelligence/section-patterns";
 import { resolveCompositionVariant, type CompositionVariant } from "@/lib/design-intelligence/composition-variants";
+import { resolveExperiencePlan } from "@/lib/design-intelligence/experience-planner";
+import type { ExperiencePlan } from "@/shared/design-intelligence/types";
 
 import {
   websiteDesignRepository,
@@ -95,6 +97,20 @@ export interface Wireframe {
    * resolveSignatureSection already applies to signatureElement.
    */
   compositionVariant?: CompositionVariant;
+  /**
+   * Phase 6.1's experience-planning decision (lib/design-intelligence/
+   * experience-planner.ts) — the experience mode and motion budget this
+   * mission's real evidence and already-resolved composition/hero-pattern
+   * decision support, plus a plain-English rationale. Optional for the same
+   * reason compositionVariant is: a wireframe hand-built in a test fixture,
+   * or a `website_designs.wireframe` row persisted before this field
+   * existed, still type-checks/renders. Inert planning data at this
+   * checkpoint — design-refinement-service.ts's refineMotion does not yet
+   * consume it; that wiring is a later, separate checkpoint (Phase 6's own
+   * "prove experience plans differ before advanced animation is added"
+   * instruction).
+   */
+  experiencePlan?: ExperiencePlan;
 }
 
 /**
@@ -316,11 +332,31 @@ export function generateWireframe(brief: DesignBrief, options: GenerateWireframe
     contentTone: options.contentTone,
   });
 
+  // Phase 6.1: built from the SAME evidence-density counts and the SAME
+  // already-resolved heroPattern just computed above — never a second,
+  // independent read of raw evidence that could contradict compositionVariant's
+  // own decision (the founder's explicit anti-drift instruction for this pass).
+  const experiencePlan = resolveExperiencePlan({
+    industryBucket: brief.industryBucket,
+    heroPattern: compositionVariant.heroPattern,
+    evidence: {
+      services: options.compositionEvidence?.services ?? 0,
+      certifications: options.compositionEvidence?.certifications ?? 0,
+      hasReviews: options.compositionEvidence?.hasReviews ?? false,
+      galleryCount: options.compositionEvidence?.galleryCount ?? 0,
+      hasRealTeam: !!options.hasRealTeam,
+    },
+    motionIntensity: brief.direction.motionIntensity,
+    brandPersonality: options.brandPersonality,
+    contentTone: options.contentTone,
+  });
+
   return {
     layoutFamily: brief.direction.layoutFamily,
     sections: sectionOrder.map((type) => ({ type, rationale: buildSectionRationale(type, brief) })),
     signatureElement: brief.signatureElement,
     compositionVariant,
+    experiencePlan,
   };
 }
 

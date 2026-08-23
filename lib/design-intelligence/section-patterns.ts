@@ -92,8 +92,8 @@ export const HERO_PATTERN_VOCABULARY = [
 ] as const;
 export type HeroPatternId = (typeof HERO_PATTERN_VOCABULARY)[number];
 
-/** centered-cinematic, split-media-text, and image-full-bleed (Cinematic, Local Story, Service/Product) all require REAL photography the business itself publishes (DesignBrief.gallery, crawl-adapter.ts's extractGallery) — never a Lighthouse/Screenshot-adapter page capture (the exact Friedman Flagship regression this pass's Step 1 fixed). editorial-typographic, oversized-typographic, and offset-overlap never depend on photography at all — the three patterns evidence-thin businesses can always honestly reach. */
-const PHOTO_DEPENDENT_HERO_PATTERNS = new Set<HeroPatternId>(["centered-cinematic", "split-media-text", "image-full-bleed"]);
+/** centered-cinematic, split-media-text, and image-full-bleed (Cinematic, Local Story, Service/Product) all require REAL photography the business itself publishes (DesignBrief.gallery, crawl-adapter.ts's extractGallery) — never a Lighthouse/Screenshot-adapter page capture (the exact Friedman Flagship regression this pass's Step 1 fixed). editorial-typographic, oversized-typographic, and offset-overlap never depend on photography at all — the three patterns evidence-thin businesses can always honestly reach. Exported so lib/design-intelligence/experience-planner.ts (Phase 6.1) can gate its own photo-dependent experience modes on the SAME real photography bar, rather than re-deriving a second one that could silently drift out of sync with the hero pattern already resolved for this mission. */
+export const PHOTO_DEPENDENT_HERO_PATTERNS = new Set<HeroPatternId>(["centered-cinematic", "split-media-text", "image-full-bleed"]);
 
 /**
  * Business-type -> visual strategy (CTO Benchmark Follow-Up directive §4),
@@ -137,8 +137,13 @@ const INDUSTRY_HERO_PREFERENCE: Record<IndustryBucket, HeroPatternId[]> = {
  * merely not excluding one (any real photography at all, even a single
  * image). Deliberately low enough that a genuinely photo-rich small
  * business (Jane Bond's own real captured gallery) clears it easily.
+ *
+ * Exported so lib/design-intelligence/experience-planner.ts (Phase 6.1) can
+ * gate its own photo-dependent experience modes on this SAME real-photo-
+ * library bar rather than an independently chosen number that could drift
+ * out of sync with the hero pattern's own threshold.
  */
-const MIN_GALLERY_FOR_PHOTO_HERO_PREFERENCE = 3;
+export const MIN_GALLERY_FOR_PHOTO_HERO_PREFERENCE = 3;
 
 /**
  * resolveHeroPattern — Pattern Selection's hero decision. Starts from
