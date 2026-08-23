@@ -24,7 +24,29 @@ import type {
   MobileRawResult,
   SeoRawResult,
   AccessibilityRawResult,
+  ScreenshotRawResult,
 } from "@/lib/adapters/types";
+
+/**
+ * Phase 5.4 fix: runScreenshotAdapter already returns a real, structured
+ * `fetchError` on failure (it catches its own errors so a real, honest
+ * partial failure — the rest of analysis genuinely did complete — never
+ * fails the whole analysis via this file's own Promise.all) but nothing
+ * ever read it: screenshot_url/above_fold_screenshot_url silently stayed
+ * null with zero trace anywhere, confirmed live on two real Phase 5.3
+ * businesses (J&B, Canadian Tire). Reuses the existing error_message
+ * column rather than a new one — null on a real screenshot success
+ * (unchanged from before this fix), a real reason on a real screenshot
+ * failure; `status` stays "complete" either way since the rest of the
+ * analysis is real and complete. Extracted as its own pure function since
+ * runAnalysis calls its adapters directly rather than through injected
+ * deps (lead-hunter-service.ts's own pattern) — refactoring that is a
+ * larger change than this fix calls for; this keeps the actual fix
+ * directly unit-testable without it.
+ */
+export function resolveAnalysisErrorMessage(screenshot: Pick<ScreenshotRawResult, "fetchError">): string | null {
+  return screenshot.fetchError ?? null;
+}
 
 type TypedClient = SupabaseClient<Database>;
 
@@ -277,6 +299,7 @@ export async function runAnalysis(
       technology_stack: technologyStack as unknown as Json,
       screenshot_url: screenshot.fullPageUrl,
       above_fold_screenshot_url: screenshot.aboveFoldUrl,
+      error_message: resolveAnalysisErrorMessage(screenshot),
     });
 
     await deps.eventBus.publish({

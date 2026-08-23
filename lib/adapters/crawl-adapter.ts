@@ -611,17 +611,52 @@ function extractMaps($: cheerio.CheerioAPI): MapEmbed[] {
 
 const MAX_GALLERY_IMAGES = 20;
 
-/** Filename/URL fragments that reliably mark a decorative/UI image rather than real business photography — logos, icons, spacers. Deliberately narrow (a real dish/venue photo is never named this) rather than a broad guess. */
-const NON_CONTENT_IMAGE_PATTERN = /logo|favicon|sprite|spacer|placeholder|avatar|icon[-_]|[-_]icon/i;
+/** Filename/URL fragments that reliably mark a decorative/UI image rather than real business photography — logos, icons, spacers. Deliberately narrow (a real dish/venue photo is never named this) rather than a broad guess. Phase 5.4: broadened "icon" from requiring an adjacent "-"/"_" (missing the extremely common "/icons/cart.svg" directory-name shape entirely) to a bare substring, plus real e-commerce/UI-control terms confirmed live on Canadian Tire's real gallery leak (cart/return/info/tag/dropdown/gift icons, not photography). */
+const NON_CONTENT_IMAGE_PATTERN =
+  /logo|favicon|sprite|spacer|placeholder|avatar|icon|glyph|cart|wishlist|chevron|badge|pixel|tracking/i;
 /** A template-engine placeholder never resolves to a real fetchable image ("{{image}}", "${src}") — this crawler is a plain fetch, so anything still containing template syntax was never actually rendered into a real URL. */
 const TEMPLATE_PLACEHOLDER_PATTERN = /[{}$]/;
+/** Real business photography is essentially never an SVG — SVG is a vector format used almost exclusively for logos, icons, and interface graphics, never photographs. A real, generic, business-agnostic signal (Phase 5.4: confirmed live — Canadian Tire's "gallery" leak was exactly this: cart/return/info/tag/gift interface icons, all real .svg files). */
+const SVG_IMAGE_PATTERN = /\.svg(\?|#|$)/i;
 /** An explicit HTML width/height this small reliably marks an icon/UI glyph, never real content photography — generous enough that a legitimate thumbnail still clears it. Images with no size attribute at all (the common case for responsive real photography, sized via CSS) are never excluded by this check. */
 const MIN_CONTENT_IMAGE_DIMENSION_PX = 80;
 
+/**
+ * Phase 5.5: a real, informative (non-blank) alt text that reads as a short,
+ * multi-clause promotional/CTA message — the actual, POSITIVE evidence an
+ * image has substantial marketing text baked into its pixels, confirmed
+ * live on Canadian Tire's real hero-collision image (alt: "Online ordering.
+ * Same-day pickup. Same-day delivery. Ship to home." — a real ad-banner PNG
+ * whose own baked-in text visually collided with the generated headline
+ * once it was selected as a photo-dependent hero background).
+ *
+ * Deliberately keyed on real alt-TEXT content, not filename guessing: this
+ * codebase's own "auto-ev-strategy" asset family has a same-page sibling
+ * banner (blank alt=" ") sitting right next to three genuine product
+ * photos sharing the exact same filename prefix ("...-lp-sec01-3feat-...")
+ * — a filename-only signal would have had to choose between under- and
+ * over-matching within one asset family. Blank/whitespace alt text is
+ * treated as UNKNOWN, never as evidence of anything — it must never be
+ * silently dropped from the gallery on a guess, since that blank-alt image
+ * is exactly the kind of real, legitimate axe-core accessibility finding
+ * (missing alt text on a real content image) this pipeline must keep
+ * reporting honestly, not paper over as a side effect of a different fix.
+ */
+const PROMOTIONAL_ALT_TEXT_PATTERN =
+  /same-day|\d+%\s*(back|off)|free shipping|shop now|buy now|limited time|starts here|ship to home|sale (starts|now|on)/i;
+
+function looksLikePromotionalBannerImage(alt: string | null | undefined): boolean {
+  const trimmed = (alt ?? "").trim();
+  if (trimmed.length === 0) return false;
+  return PROMOTIONAL_ALT_TEXT_PATTERN.test(trimmed);
+}
+
 function isLikelyContentImage($img: ReturnType<cheerio.CheerioAPI>, src: string): boolean {
   if (TEMPLATE_PLACEHOLDER_PATTERN.test(src)) return false;
+  if (SVG_IMAGE_PATTERN.test(src)) return false;
   if (NON_CONTENT_IMAGE_PATTERN.test(src)) return false;
   if (NON_CONTENT_IMAGE_PATTERN.test($img.attr("alt") ?? "")) return false;
+  if (looksLikePromotionalBannerImage($img.attr("alt"))) return false;
   const widthAttr = Number($img.attr("width"));
   const heightAttr = Number($img.attr("height"));
   if (Number.isFinite(widthAttr) && widthAttr > 0 && widthAttr < MIN_CONTENT_IMAGE_DIMENSION_PX) return false;
@@ -714,6 +749,68 @@ function footerCandidatePassesQualityBar($: cheerio.CheerioAPI, $el: ReturnType<
   return avgItemChars >= FOOTER_MIN_AVG_ITEM_CHARS;
 }
 
+// ===========================================================================
+// Scraped-chrome rejection (Phase 5.4, real regressions found re-validating
+// Phase 5.3's Canadian Tire and Play It Again Sports makeovers). Two real,
+// distinct leaks, both from page content that survives the existing
+// nav/header/footer/script/style strip because it structurally isn't any of
+// those landmarks:
+//   1. Canadian Tire: a GTM analytics snippet's <noscript><iframe>...
+//      fallback and "Skip to main content"/"Skip to navigation" accessibility
+//      links sit in <body>, outside any landmark. Cheerio treats <noscript>
+//      content as literal, un-parsed text (confirmed directly: a <noscript>
+//      wrapping a real <iframe> tag renders via .text() as the LITERAL
+//      "<iframe ...></iframe>" string, not an empty/parsed node) — this is
+//      the actual mechanism, not a guess.
+//   2. Play It Again Sports: a real e-commerce category page's own filter/
+//      sort sidebar ("Refine by No filters applied... Sort By: Newest Items
+//      A to Z") is genuine, normal DOM content, not chrome by markup — only
+//      recognizable by its own vocabulary.
+// looksLikeScrapedChrome is the second, content-level layer (extractMain-
+// PageContent below adds the first, DOM-level layer: stripping <noscript>/
+// <iframe>/skip-links outright). Deliberately phrase-based rather than a
+// single keyword, and deliberately generic — no business name anywhere in
+// this list, every phrase is a standard web-platform/e-commerce-UI term any
+// site could use, never a marketing-copy or tone judgment (a real business
+// tagline is never rejected by this).
+// ===========================================================================
+
+const SCRAPED_CHROME_PATTERN =
+  /skip to (main content|navigation|content)|googletagmanager|google-analytics|gtag\(|fbq\(|<iframe|<script|<noscript|no filters applied|sort by:?\s|filter(ed|ing)? by\b|refine by|hide filters|show filters|items? per page|add to (cart|wishlist|bag)|in stock|out of stock|price min|min price|max price|newest items|we use cookies|accept all cookies|manage cookie preferences|cookie policy/i;
+
+/** Real business copy is never dominated by this vocabulary — a genuine "Our Services" excerpt can mention "cart" or "cookies" in passing without matching this pattern's specific phrasings. */
+function looksLikeScrapedChrome(text: string): boolean {
+  return SCRAPED_CHROME_PATTERN.test(text);
+}
+
+/**
+ * Phase 5.5: a real Canadian Tire regression — cheerio's `.text()` recurses
+ * into EVERY descendant text node, including a nested `<script type=
+ * "application/ld+json">` sitting inside an otherwise-legitimate matched
+ * content container (a real, common real-world pattern: sites often embed
+ * an Offer/Product JSON-LD block INSIDE the same card as its visible copy,
+ * for SEO). Confirmed directly: cheerio's `.text()` behaves like DOM
+ * `.textContent`, which does NOT exclude script/style content the way a
+ * real browser's rendered/`.innerText` view would — nothing upstream of
+ * this call site was stripping it. `looksLikeSerializedData` is the
+ * second, content-shape layer (catches raw JSON that ends up in text for
+ * ANY reason, not just this one) — cleanTextExcludingScripts below is the
+ * first, structural layer for this exact container-with-nested-script
+ * shape specifically.
+ */
+function cleanTextExcludingScripts($: cheerio.CheerioAPI, $el: ReturnType<cheerio.CheerioAPI>): string {
+  const $clone = $el.clone();
+  $clone.find("script, style, noscript").remove();
+  return $clone.text();
+}
+
+/** A real JSON object/array shape — a quoted key immediately followed by a colon, inside braces/brackets. Business prose essentially never produces this literal punctuation shape; genuine Schema.org/JSON-LD text (or any other serialized-data string that ends up in extracted text for any reason) reliably does. */
+const SERIALIZED_DATA_PATTERN = /[{[]\s*"[a-zA-Z@][\w-]*"\s*:/;
+
+function looksLikeSerializedData(text: string): boolean {
+  return SERIALIZED_DATA_PATTERN.test(text);
+}
+
 /**
  * Best-effort structural detection for a content category: elements whose
  * class/id attribute contains one of the given keywords. This is a
@@ -744,9 +841,13 @@ function findSectionsByKeywords($: cheerio.CheerioAPI, keywords: string[], sourc
     if ($el.parents(selector).length > 0) return;
 
     const heading =
-      $el.find("h1, h2, h3, h4").first().text().trim().replace(/\s+/g, " ") || $el.attr("id") || keywords[0];
-    const excerpt = $el.text().trim().replace(/\s+/g, " ").slice(0, SECTION_EXCERPT_MAX_CHARS);
+      cleanTextExcludingScripts($, $el.find("h1, h2, h3, h4").first()).trim().replace(/\s+/g, " ") ||
+      $el.attr("id") ||
+      keywords[0];
+    const excerpt = cleanTextExcludingScripts($, $el).trim().replace(/\s+/g, " ").slice(0, SECTION_EXCERPT_MAX_CHARS);
     if (excerpt.length === 0) return;
+    if (looksLikeScrapedChrome(excerpt) || looksLikeScrapedChrome(heading)) return;
+    if (looksLikeSerializedData(excerpt) || looksLikeSerializedData(heading)) return;
     // A section whose excerpt is nothing but its own heading repeated is a
     // page-banner/title element, not real described content — confirmed real
     // false positive during the Evidence Depth investigation: a page-builder
@@ -892,9 +993,23 @@ export function prioritizeSampleUrls(links: { url: string; text: string }[], max
  * real, bounded excerpt of the page's own real text — never a generated
  * summary or invented content.
  */
+/**
+ * Phase 5.4: also strips <noscript> (a real Canadian Tire regression — a
+ * Google Tag Manager <noscript><iframe>...</iframe></noscript> fallback
+ * snippet sat directly in <body>, outside nav/header; cheerio parses
+ * <noscript>'s content as a single literal TEXT node rather than descending
+ * into it as markup, so its raw "<iframe ...></iframe>" string leaked
+ * verbatim into .text() output — confirmed directly against a minimal
+ * reproduction, not a guess), <iframe> itself (defense in depth for a live
+ * iframe with real fallback text content), and standard accessibility
+ * skip-links (`<a href="#...">Skip to main content</a>` — a generic,
+ * business-agnostic web-platform convention, always phrased "Skip to...",
+ * never a real business's own copy).
+ */
 function extractMainPageContent($: cheerio.CheerioAPI): string {
   const $body = $("body").clone();
-  $body.find("nav, header, footer, script, style").remove();
+  $body.find("nav, header, footer, script, style, noscript, iframe").remove();
+  $body.find("a[href^='#']").filter((_, el) => /^skip to /i.test($(el).text().trim())).remove();
   const main = $body.find("main, article").first();
   const text = (main.length > 0 ? main.text() : $body.text()).trim().replace(/\s+/g, " ");
   return text.slice(0, SECTION_EXCERPT_MAX_CHARS);
@@ -1156,19 +1271,33 @@ function extractMenuItemNameAndDescription(
   $: cheerio.CheerioAPI,
   container: ReturnType<cheerio.CheerioAPI>,
   priceText: string
-): { name: string | null; description: string | null } {
-  if (container.length === 0) return { name: null, description: null };
-  const chunks: string[] = [];
+): { name: string | null; description: string | null; nameTagName: string | null } {
+  if (container.length === 0) return { name: null, description: null, nameTagName: null };
+  const chunks: { text: string; tagName: string | null }[] = [];
   container.contents().each((_, node) => {
-    const text = $(node).text().trim().replace(/\s+/g, " ");
-    if (text.length === 0 || text === priceText || PRICE_TOKEN_PATTERN.test(text)) return;
-    chunks.push(text);
+    // Phase 5.5 defense-in-depth: a direct child that IS itself a <script>/
+    // <style>/<noscript> tag (e.g. a JSON-LD block sitting alongside a real
+    // item's name/price in the same small container) must never contribute
+    // a "name"/"description" chunk — matches findSectionsByKeywords' own
+    // fix for the same underlying cheerio behavior (.text() does not
+    // exclude script/style content the way a real browser's rendered view
+    // would).
+    if (node.type === "tag" && ["script", "style", "noscript"].includes(node.tagName ?? "")) return;
+    const text = cleanTextExcludingScripts($, $(node)).trim().replace(/\s+/g, " ");
+    if (text.length === 0 || text === priceText || PRICE_TOKEN_PATTERN.test(text) || looksLikeSerializedData(text)) return;
+    // A bare text node (no tagName) carries no reusable structural signal —
+    // findMenuItemsByStructure's claimedTagNames set (below) only needs to
+    // know when the NAME itself came from a real element, e.g. janebond.ca's
+    // <div class="item_name">, so a later candidate heading of that exact
+    // tag can be recognized as "this page's item-name tag," not a category.
+    const tagName = node.type === "tag" ? (node.tagName ?? null) : null;
+    chunks.push({ text, tagName });
   });
-  if (chunks.length === 0) return { name: null, description: null };
-  const [name, ...rest] = chunks;
-  if (name.length === 0) return { name: null, description: null };
-  const description = rest.join(" ").trim();
-  return { name, description: description.length > 0 ? description : null };
+  if (chunks.length === 0) return { name: null, description: null, nameTagName: null };
+  const [first, ...rest] = chunks;
+  if (first.text.length === 0) return { name: null, description: null, nameTagName: null };
+  const description = rest.map((c) => c.text).join(" ").trim();
+  return { name: first.text, description: description.length > 0 ? description : null, nameTagName: first.tagName };
 }
 
 /**
@@ -1184,14 +1313,31 @@ function extractMenuItemNameAndDescription(
  * own "CSS class/id must contain the category word" rule): a real heading
  * tag (h1-h6), or a class/id whose own name says what it is
  * ("menu_section_title" — janebond.ca's real, unchanged markup —
- * "category-heading", etc.). Deliberately does NOT fall back to guessing
- * from the text's own content/shape (no sentence-detection, no marketing-
- * copy keyword list, no business-specific string) — per this function's own
- * conservative contract, no structural signal means no category, never a
- * guess; the item stays under MENU_FALLBACK_CATEGORY_NAME instead.
+ * "category-heading", etc.).
+ *
+ * Phase 5.4 fix: the heading-tag signal alone is still insufficient —
+ * confirmed live re-validating this exact fix against jandbrestaurant.com's
+ * real markup, which turned out to use <h4> for BOTH the page's own tagline
+ * AND every real item's name, and <h5> for every real item's price. Real
+ * heading-tag usage isn't reserved for categories on every site; on this
+ * one it means "this page's item-name/price tag," not "category." The fix
+ * is the same generic, contextual signal findMenuItemsByStructure's pass 1
+ * already computed for free: `claimedTagNames` is the set of tag names pass
+ * 1 actually observed carrying a real item's name or price on THIS page.
+ * A heading-tag candidate is only trusted when its own tag is NOT already
+ * claimed that way — the class/id signal is unaffected (a real site
+ * essentially never reuses the exact same class for both a category label
+ * and an item name/price, since that would break their own styling).
+ * Still never falls back to guessing from the text's own content/shape (no
+ * sentence-detection, no marketing-copy keyword list, no business-specific
+ * string) — no structural signal (or a claimed one) means no category,
+ * never a guess; the item stays under MENU_FALLBACK_CATEGORY_NAME instead.
  */
-function isStructuralMenuCategoryLabel($el: ReturnType<cheerio.CheerioAPI>): boolean {
-  if ($el.is("h1, h2, h3, h4, h5, h6")) return true;
+function isStructuralMenuCategoryLabel($el: ReturnType<cheerio.CheerioAPI>, claimedTagNames: Set<string>): boolean {
+  if ($el.is("h1, h2, h3, h4, h5, h6")) {
+    const tagName = ($el.get(0) as { tagName?: string } | undefined)?.tagName?.toLowerCase();
+    return !!tagName && !claimedTagNames.has(tagName);
+  }
   const classAndId = `${$el.attr("class") ?? ""} ${$el.attr("id") ?? ""}`.toLowerCase();
   return classAndId.includes("title") || classAndId.includes("heading");
 }
@@ -1209,6 +1355,10 @@ function findMenuItemsByStructure($: cheerio.CheerioAPI, sourceUrl: string): Men
   const consumedNodes = new Set<unknown>();
   const rawItems: RawMenuItem[] = [];
   const seenItemKey = new Set<string>();
+  // Phase 5.4: every heading tag pass 1 observes carrying a real item's own
+  // name or price on this page — isStructuralMenuCategoryLabel's contextual
+  // disqualifier for pass 2 (see that function's own doc comment).
+  const claimedTagNames = new Set<string>();
 
   // Pass 1: resolve every real price-anchored item (name + optional
   // description), independent of category — and mark every node inside its
@@ -1247,6 +1397,10 @@ function findMenuItemsByStructure($: cheerio.CheerioAPI, sourceUrl: string): Men
         consumedNodes.add(node);
       });
 
+    const priceTagName = ($el.get(0) as { tagName?: string } | undefined)?.tagName?.toLowerCase();
+    if (priceTagName) claimedTagNames.add(priceTagName);
+    if (info.nameTagName) claimedTagNames.add(info.nameTagName);
+
     rawItems.push({ containerNode, name: info.name, description: info.description, price: text, docIndex: i });
   }
 
@@ -1274,7 +1428,8 @@ function findMenuItemsByStructure($: cheerio.CheerioAPI, sourceUrl: string): Men
     const text = $el.text().trim();
     if (text.length === 0 || text.length > MENU_CATEGORY_LABEL_MAX_CHARS) continue;
     if (PRICE_TOKEN_PATTERN.test(text)) continue;
-    if (!isStructuralMenuCategoryLabel($el)) continue;
+    if (!isStructuralMenuCategoryLabel($el, claimedTagNames)) continue;
+    if (looksLikeScrapedChrome(text)) continue;
     currentCategory = text;
   }
 
@@ -1395,6 +1550,13 @@ export function extractStructuredFacts($: cheerio.CheerioAPI, sourceUrl: string)
     if (bySections[category].length > 0) continue;
     const content = extractMainPageContent($);
     if (content.length === 0) continue;
+    // Phase 5.4: a real Play It Again Sports regression — a product-category
+    // page's own URL/title happened to contain "team" (a real Lacrosse
+    // sub-category, "Team and Special Order"), and its real e-commerce
+    // filter/sort sidebar ("Refine by No filters applied... Sort By:...")
+    // is genuine DOM content, not chrome by markup, so only recognizable by
+    // its own vocabulary — the same check findSectionsByKeywords applies.
+    if (looksLikeScrapedChrome(content) || looksLikeSerializedData(content)) continue;
     bySections[category] = [{ heading: pageTitle || category, excerpt: content, sourceUrl }];
   }
 

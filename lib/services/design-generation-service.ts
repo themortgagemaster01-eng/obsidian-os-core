@@ -262,6 +262,8 @@ export interface GenerateWireframeOptions {
     services?: number;
     certifications?: number;
     hasReviews?: boolean;
+    /** Real captured photo count — see CompositionEvidenceDensity.galleryCount (composition-variants.ts). */
+    galleryCount?: number;
   };
   /** Design Intelligence's own real brandPersonality/contentTone output (design-intelligence-service.ts's DesignMemory) — feeds resolveCompositionVariant's spacing-rhythm nudge, making these previously-recorded-but-unused fields genuinely load-bearing (CTO Design Intelligence Remediation directive's brand-fit gap). */
   brandPersonality?: string[];
@@ -308,6 +310,7 @@ export function generateWireframe(brief: DesignBrief, options: GenerateWireframe
       services: options.compositionEvidence?.services ?? 0,
       certifications: options.compositionEvidence?.certifications ?? 0,
       hasReviews: options.compositionEvidence?.hasReviews ?? false,
+      galleryCount: options.compositionEvidence?.galleryCount ?? 0,
     },
     brandPersonality: options.brandPersonality,
     contentTone: options.contentTone,
@@ -971,7 +974,9 @@ export function assembleComponents(
   // independent calls that could silently drift apart. Falls back to a fresh
   // resolveHeroPattern call only for a wireframe predating compositionVariant
   // (an older persisted row, or a hand-built test fixture).
-  const heroPattern = wireframe.compositionVariant?.heroPattern ?? resolveHeroPattern(context.industryBucket ?? "general", hasRealImagery);
+  const heroPattern =
+    wireframe.compositionVariant?.heroPattern ??
+    resolveHeroPattern(context.industryBucket ?? "general", hasRealImagery, context.gallery?.length ?? 0);
   return wireframe.sections.map(({ type }) => {
     const componentKind =
       type === "hero" ? HERO_KIND_BY_LAYOUT_FAMILY[wireframe.layoutFamily] : COMPONENT_KIND_BY_SECTION[type];
@@ -1067,6 +1072,7 @@ export function generateWebsiteStructure(
       services: brief.services?.length ?? 0,
       certifications: brief.certifications?.length ?? 0,
       hasReviews: !!brief.reviews && brief.reviews.count !== null,
+      galleryCount: brief.gallery?.length ?? 0,
     },
     brandPersonality: options.designMemory?.brandPersonality,
     contentTone: options.designMemory?.contentTone,

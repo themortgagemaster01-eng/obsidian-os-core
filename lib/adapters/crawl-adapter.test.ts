@@ -1406,3 +1406,295 @@ describe("crawl-adapter: gallery image detection generalized beyond a 'gallery'-
     assert.deepEqual(facts.gallery, []);
   });
 });
+
+// ===========================================================================
+// Phase 5.4 — real regressions found re-validating Phase 5.3's Canadian Tire
+// and Play It Again Sports makeovers against generic fixtures (never the
+// real businesses' own text — the fix must generalize, not special-case).
+// ===========================================================================
+
+describe("crawl-adapter: scraped source-chrome rejection (Phase 5.4, real Canadian Tire regression)", () => {
+  test("a GTM noscript/iframe snippet and skip-links do not become rendered 'services' content — real content on the same page is preserved", () => {
+    const html = `
+      <html><head><title>Services | Acme Co</title></head><body>
+        <a href="#content">Skip to main content</a>
+        <a href="#nav">Skip to navigation</a>
+        <noscript><iframe title="GTMFrame" src="https://www.googletagmanager.com/ns.html?id=GTM-XXXX" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+        <main><p>We offer real installation and repair services for your home, scheduled same week.</p></main>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://acme.test/services");
+    assert.equal(facts.services.length, 1);
+    assert.doesNotMatch(facts.services[0].excerpt, /iframe|googletagmanager|skip to/i);
+    assert.match(facts.services[0].excerpt, /real installation and repair services/);
+  });
+
+  test("a real e-commerce filter/sort sidebar does not become rendered 'services' content — genuine DOM content, not markup chrome, so only the vocabulary check catches it", () => {
+    const html = `
+      <html><head><title>Products | Acme Co</title></head><body>
+        <main>Selecting a filter will refresh the page with new results. Refine by No filters applied Browse by Product Brand, Condition &amp; more Hide Filters Show Filters Price Min/Max Price Filter Min Price Min Price Max Price Max Price Update Sort By: Newest Items A to Z Z to A</main>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://acme.test/products");
+    assert.deepEqual(facts.products, []);
+  });
+
+  test("real body content unrelated to e-commerce/tracking chrome is unaffected — the filter is not overly broad", () => {
+    const html = `
+      <html><head><title>Services | Acme Co</title></head><body>
+        <main><p>Acme Co has served the local community for over twenty years with honest, reliable plumbing and electrical work.</p></main>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://acme.test/services");
+    assert.equal(facts.services.length, 1);
+    assert.match(facts.services[0].excerpt, /served the local community/);
+  });
+});
+
+describe("crawl-adapter: Team evidence gating (Phase 5.4, real Play It Again Sports regression)", () => {
+  test("e-commerce filter/sort/category/price text is never adopted as Team evidence merely because the page URL/title contains 'team'", () => {
+    const html = `
+      <html><head><title>Lacrosse - Team and Special Order - Acme Sports</title></head><body>
+        <main>Selecting a filter will refresh the page with new results. Refine by No filters applied Browse by Product Brand, Condition &amp; more Hide Filters Show Filters Price Min/Max Price Filter Min Price Min Price Max Price Max Price Update Sort By: Newest Items A to Z Z to A</main>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://acme-sports.test/lacrosse/team-and-special-order");
+    assert.deepEqual(facts.team, [], "e-commerce filter/sort UI must never qualify as team evidence, real or fabricated");
+  });
+
+  test("genuine real prose on a real 'Our Team' page is still captured — the fix rejects e-commerce chrome specifically, not the honest URL/title fallback itself", () => {
+    const html = `
+      <html><head><title>Our Team | Acme Sports</title></head><body>
+        <main><p>Our staff have decades of combined experience buying, selling, and repairing used sporting equipment for the whole community.</p></main>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://acme-sports.test/our-team");
+    assert.equal(facts.team.length, 1);
+    assert.match(facts.team[0].excerpt, /decades of combined experience/);
+  });
+});
+
+describe("crawl-adapter: gallery UI-icon rejection (Phase 5.4, real Canadian Tire regression)", () => {
+  test("SVG interface icons (cart/tag/etc.) are rejected even with no filename keyword and no small explicit size attribute", () => {
+    const html = `
+      <html><body>
+        <img src="/assets/interface/cart.svg" alt="Cart" />
+        <img src="/assets/interface/price-tag.svg" alt="" />
+        <img src="/photos/store-front.jpg" alt="Store front" />
+        <img src="/photos/interior.jpg" alt="Interior" />
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.gallery.length, 2);
+    assert.ok(facts.gallery.every((g) => !g.src.endsWith(".svg")));
+    assert.ok(facts.gallery.some((g) => g.src.endsWith("store-front.jpg")));
+  });
+
+  test("a real photo isn't rejected just because 'cart'/'tag'-adjacent words appear elsewhere on the page — the filter targets the image's own src/alt, not page context", () => {
+    const html = `<html><body><img src="/photos/cottage-dining-room.jpg" alt="Dining room" /><img src="/photos/lakeside-view.jpg" alt="Lakeside view" /></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.gallery.length, 2);
+  });
+});
+
+describe("crawl-adapter: menu category detection — same tag used for item names/prices as for a candidate category (Phase 5.4, real jandbrestaurant.com regression)", () => {
+  test("no real category heading exists: a page using <h4> for every item name (plus once for a tagline) and <h5> for every price falls back honestly, never inventing categories from either tag", () => {
+    // Representative of jandbrestaurant.com's real, unchanged markup shape:
+    // <h4>Tagline</h4>, then every real item as <h4>Name</h4><h5>Price</h5>
+    // with NO real category heading anywhere on the page at all.
+    const html = `
+      <html><body>
+        <h4 class="text-center">The Best Kept Secret In Town</h4>
+        <div><h4>Lepinja sa kajmakom</h4><h5>$6.50</h5></div>
+        <div><h4>Fillet Of Sole Almondine</h4><h5>$6.00</h5></div>
+        <div><h4>Chicken Wings</h4><h5>6/$15.95 or 12/$19.95</h5></div>
+        <div><h4>Chicken Fingers</h4><h5>$15.95</h5></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.menu.length, 1, "no real category heading exists — everything must fall under the one honest fallback category");
+    assert.equal(facts.menu[0].name, "Menu");
+    // 3, not 4: "Chicken Wings" price cell is "6/$15.95 or 12/$19.95" — not a
+    // bare price token, so pass 1 (pre-existing, unrelated to this fix)
+    // never treats it as a real item at all; it's just honestly dropped,
+    // matching jandbrestaurant.com's own real behavior. Item-level
+    // extraction for the OTHER 3 real items is unaffected by this fix.
+    assert.equal(facts.menu[0].items.length, 3, "real item-level extraction is unaffected by the category fix");
+    assert.equal(facts.menu[0].items[0].name, "Lepinja sa kajmakom");
+    assert.equal(facts.menu[0].items[0].price, "$6.50");
+  });
+
+  test("a real category heading in the SAME tag as items/prices elsewhere is still rejected, but a DIFFERENT, unclaimed heading tag is still trusted", () => {
+    const html = `
+      <html><body>
+        <h2>Appetizers</h2>
+        <div><h4>Lepinja sa kajmakom</h4><h5>$6.50</h5></div>
+        <div><h4>Fillet Of Sole Almondine</h4><h5>$6.00</h5></div>
+        <h4>Not a real category, just a stray h4 tagline</h4>
+        <div><h4>Chicken Wings</h4><h5>6/$15.95 or 12/$19.95</h5></div>
+        <div><h4>Chicken Fingers</h4><h5>$15.95</h5></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    // h2 was never claimed by any item name/price on this page, so it's
+    // still trusted as a real category; h4 WAS claimed (every item name is
+    // h4), so the stray h4 tagline is correctly never promoted to a second
+    // category — everything after it stays under "Appetizers".
+    assert.equal(facts.menu.length, 1);
+    assert.equal(facts.menu[0].name, "Appetizers");
+    // 3, not 4 — see the previous test's comment: "Chicken Wings"' own price
+    // cell isn't a bare price token, so it's never a real item.
+    assert.equal(facts.menu[0].items.length, 3);
+  });
+
+  test("legitimate menu categories (janebond.ca's real, unchanged shape) still work end to end", () => {
+    const html = `
+      <html><body>
+        <div class="menu_section_title">Appetizers</div>
+        <div class="menu_single_item"><div class="item_name">Antojitos</div><div class="item_price">18.00</div></div>
+        <div class="menu_single_item"><div class="item_name">Vegan Caesar</div><div class="item_price">14.00</div></div>
+        <div class="menu_section_title">Entrees</div>
+        <div class="menu_single_item"><div class="item_name">Braised Short Rib</div><div class="item_price">27.00</div></div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.menu.length, 2);
+    assert.equal(facts.menu[0].name, "Appetizers");
+    assert.equal(facts.menu[1].name, "Entrees");
+  });
+});
+
+// ===========================================================================
+// Phase 5.5 — narrow remediation of the two real Canadian Tire regressions
+// found re-validating Phase 5.4: a JSON-LD block nested inside an otherwise-
+// legitimate content card, and a real promotional banner image (baked-in
+// marketing text) selected as a photo-dependent hero background. Fixtures
+// are representative/generic, never copying Canadian Tire's own real text.
+// ===========================================================================
+
+describe("crawl-adapter: JSON-LD / structured-data exclusion from rendered content (Phase 5.5, real Canadian Tire regression)", () => {
+  test("a JSON-LD <script> block nested inside an otherwise-legitimate matched services card never leaks into its excerpt or heading", () => {
+    const html = `
+      <html><body>
+        <div class="services-card">
+          <h3>Customer Support</h3>
+          <p>We will attempt to give you a refund or exchange on every item purchased.</p>
+          <script type="application/ld+json">{"image":"https://example.test/logo.svg","potentialAction":[{"name":"Shopping Cart","target":{"url":"https://example.test/cart"}}]}</script>
+        </div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.services.length, 1);
+    assert.equal(facts.services[0].heading, "Customer Support");
+    assert.doesNotMatch(facts.services[0].excerpt, /potentialAction|"image"|Shopping Cart/);
+    assert.match(facts.services[0].excerpt, /refund or exchange/);
+  });
+
+  test("raw JSON-like text that ends up in extracted content for any reason (not just inside a <script> tag) is rejected by content shape, not just DOM position", () => {
+    const html = `
+      <html><body>
+        <div class="services-card">
+          <h3>Store Info</h3>
+          <p>{"name":"Acme Co","openingHours":"Mo-Fr 09:00-18:00"}</p>
+        </div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.deepEqual(facts.services, [], "a services card whose only real content is JSON-shaped text has no real human-readable content to report");
+  });
+
+  test("real business copy that happens to mention curly braces or colons in ordinary prose is never rejected — the check targets JSON shape specifically, not punctuation", () => {
+    const html = `
+      <html><body>
+        <div class="services-card">
+          <h3>Hours</h3>
+          <p>Open daily: 9am to 6pm. Closed on statutory holidays.</p>
+        </div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.services.length, 1);
+    assert.match(facts.services[0].excerpt, /Open daily/);
+  });
+
+  test("a nested JSON-LD script does not corrupt real menu item extraction — item-level extraction is unaffected by this fix", () => {
+    const html = `
+      <html><body>
+        <div class="menu_single_item">
+          <div class="item_name">Braised Short Rib</div><div class="item_price">27.00</div>
+          <script type="application/ld+json">{"@type":"MenuItem","name":"Braised Short Rib"}</script>
+        </div>
+        <div class="menu_single_item">
+          <div class="item_name">Pan-Seared Salmon</div><div class="item_price">24.00</div>
+        </div>
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.menu[0].items.length, 2);
+    assert.equal(facts.menu[0].items[0].name, "Braised Short Rib");
+    assert.doesNotMatch(facts.menu[0].items[0].name, /@type|MenuItem/);
+  });
+});
+
+describe("crawl-adapter: promotional/banner imagery rejection (Phase 5.5, real Canadian Tire regression)", () => {
+  test("a real promotional banner image (informative alt text reading as a marketing message) is excluded from gallery evidence", () => {
+    const html = `
+      <html><body>
+        <img src="/promo/back-to-class-banner.png" alt="Back to school sale. Shop now. Same-day pickup available." />
+        <img src="/photos/storefront.jpg" alt="Storefront" />
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.gallery.length, 1);
+    assert.match(facts.gallery[0].src, /storefront\.jpg$/);
+  });
+
+  test("a real content image with BLANK alt text is never excluded on a guess — must not silently suppress a real missing-alt-text accessibility finding", () => {
+    const html = `
+      <html><body>
+        <img src="/photos/promo-strategy-banner.png" alt=" " />
+        <img src="/photos/other.jpg" alt="Product detail" />
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.gallery.length, 2, "blank alt text is UNKNOWN evidence, never treated as proof of promotional text — the image must stay in gallery so a real missing-alt QA finding isn't silently erased");
+  });
+
+  test("a legitimate product photo with a real, non-promotional alt description is never excluded, even from the same asset family as a real banner", () => {
+    const html = `
+      <html><body>
+        <img src="/category/auto-ev-strategy-lp-aspot-banner.png" alt="Free shipping. Shop now. Limited time offer." />
+        <img src="/category/auto-ev-strategy-lp-sec01-evtires.png" alt="EV Tires" />
+        <img src="/category/auto-ev-strategy-lp-sec01-batteries.png" alt="12-Volt Batteries" />
+      </body></html>
+    `;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.gallery.length, 2, "the two real product photos survive even though they share a filename family with the real banner");
+    assert.ok(facts.gallery.some((g) => g.alt === "EV Tires"));
+    assert.ok(facts.gallery.some((g) => g.alt === "12-Volt Batteries"));
+  });
+
+  test("an image with a small sign/label mentioned in alt text is not excluded — only a real multi-clause promotional message is", () => {
+    const html = `<html><body><img src="/photos/dining-room.jpg" alt="Dining room with a small 'Est. 1985' sign on the wall" /></body></html>`;
+    const $ = cheerio.load(html);
+    const facts = extractStructuredFacts($, "https://example.test/");
+    assert.equal(facts.gallery.length, 1, "mentioning a small sign/label in a real description is not the same as the image BEING a promotional banner");
+  });
+});

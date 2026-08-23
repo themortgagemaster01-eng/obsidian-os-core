@@ -169,6 +169,8 @@ export interface CompositionEvidenceDensity {
   certifications: number;
   /** True when a real, structured review count/rating was captured (DesignBrief.reviews). */
   hasReviews: boolean;
+  /** Real captured photo count (DesignBrief.gallery.length) — resolveHeroPattern's Phase 5.4 evidence-amount signal, threaded through here rather than only the bare hasRealImagery boolean so a real photo library can actively earn a photo-forward hero pattern, not just avoid being excluded from one. Defaults to 0 (no preference boost) at every existing call site that predates this field. */
+  galleryCount?: number;
 }
 
 export interface ResolveCompositionVariantInput {
@@ -190,7 +192,7 @@ export interface ResolveCompositionVariantInput {
  * variant, matching resolveHeroPattern's own "always a real answer" contract.
  */
 export function resolveCompositionVariant(input: ResolveCompositionVariantInput): CompositionVariant {
-  const heroPattern = resolveHeroPattern(input.industryBucket, input.hasRealImagery);
+  const heroPattern = resolveHeroPattern(input.industryBucket, input.hasRealImagery, input.evidence.galleryCount ?? 0);
   const base = BASE_VARIANT_BY_HERO_PATTERN[heroPattern];
 
   const servicesPattern: ServicesPattern =

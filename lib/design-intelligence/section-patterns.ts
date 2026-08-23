@@ -131,18 +131,57 @@ const INDUSTRY_HERO_PREFERENCE: Record<IndustryBucket, HeroPatternId[]> = {
 };
 
 /**
+ * A gallery this size is a real photo library, not one incidental photo —
+ * the bar for resolveHeroPattern to actively PREFER a photo-dependent
+ * pattern (below), distinct from PHOTO_DEPENDENT_HERO_PATTERNS' own bar for
+ * merely not excluding one (any real photography at all, even a single
+ * image). Deliberately low enough that a genuinely photo-rich small
+ * business (Jane Bond's own real captured gallery) clears it easily.
+ */
+const MIN_GALLERY_FOR_PHOTO_HERO_PREFERENCE = 3;
+
+/**
  * resolveHeroPattern — Pattern Selection's hero decision. Starts from
  * INDUSTRY_HERO_PREFERENCE[industryBucket] (falling back to "general" for
- * an unrecognized bucket, never throwing) and returns the first candidate
- * that doesn't require photography this business doesn't have. Every
- * preference list's last resort is reachable without photography (each
- * list is constructed so its final entries include at least one non-photo-
- * dependent pattern, and the function's own final fallback below is
- * editorial-typographic regardless), so this always returns a real,
- * renderable pattern — never partial/undefined.
+ * an unrecognized bucket, never throwing).
+ *
+ * Phase 5.4 fix: previously this returned the FIRST candidate that didn't
+ * require photography the business lacks — which meant a top-ranked
+ * non-photo-dependent pattern (editorial-typographic, ranked first for both
+ * "restaurant" and "general") always won regardless of how much real
+ * photography actually existed. Confirmed live: three real, different
+ * Phase 5.3 businesses (a restaurant with a real 20-photo gallery, two
+ * "general"-bucket retailers, also with real 20-photo galleries) all
+ * converged on the identical hero pattern, undermining the "meaningfully
+ * different makeovers" goal despite genuinely different real evidence.
+ *
+ * Now: when `galleryCount` clears MIN_GALLERY_FOR_PHOTO_HERO_PREFERENCE,
+ * this business's own highest-ranked PHOTO-DEPENDENT pattern (from its own
+ * unchanged, per-bucket preference list — never a pattern the CTO's table
+ * didn't already rank for this bucket) is preferred over a non-photo
+ * pattern ranked above it. Below that bar, or with no real photography at
+ * all, behavior is unchanged: the first candidate real evidence can
+ * actually support. Purely a function of (industryBucket, hasRealImagery,
+ * galleryCount) — fully deterministic, no randomization, and every
+ * preference list's non-photo last resort stays reachable exactly as
+ * before, so this still always returns a real, renderable pattern.
  */
-export function resolveHeroPattern(industryBucket: IndustryBucket, hasRealImagery: boolean): HeroPatternId {
+export function resolveHeroPattern(
+  industryBucket: IndustryBucket,
+  hasRealImagery: boolean,
+  galleryCount = 0
+): HeroPatternId {
   const preferences = INDUSTRY_HERO_PREFERENCE[industryBucket] ?? INDUSTRY_HERO_PREFERENCE.general;
+
+  // hasRealImagery is still checked here too, not just galleryCount — a
+  // caller passing an inconsistent (false, 20) pair (real callers never do,
+  // but this must not silently trust the count alone) never gets a photo
+  // pattern it has no real evidence for.
+  if (hasRealImagery && galleryCount >= MIN_GALLERY_FOR_PHOTO_HERO_PREFERENCE) {
+    const photoPreferred = preferences.find((candidate) => PHOTO_DEPENDENT_HERO_PATTERNS.has(candidate));
+    if (photoPreferred) return photoPreferred;
+  }
+
   for (const candidate of preferences) {
     if (PHOTO_DEPENDENT_HERO_PATTERNS.has(candidate) && !hasRealImagery) continue;
     return candidate;

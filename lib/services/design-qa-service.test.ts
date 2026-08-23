@@ -473,6 +473,41 @@ describe("design-qa-service: qaGenericTemplate", () => {
     assert.ok(result.findings.some((f) => /emoji-as-icon/.test(f)));
   });
 
+  // Phase 5.4: a real Canadian Tire regression — real, legitimately-used
+  // copy "Get 20% BACK in CT Money®*" tripped this check as if it contained
+  // an emoji, because \p{Extended_Pictographic} alone also matches ®/™/©.
+  test("does NOT flag ® as an emoji — real trademark typography in real business copy", () => {
+    const input = buildValidInput();
+    const withRegisteredMark: QaStructuredInput = {
+      ...input,
+      components: input.components.map((c) => ({
+        ...c,
+        slots: c.slots.map((s): ComponentSlot =>
+          s.name === "businessName" ? { ...s, value: "Get 20% BACK in CT Money®*" } : s
+        ),
+      })),
+    };
+    const result = qaGenericTemplate(withRegisteredMark);
+    assert.equal(result.verdict, "PASS");
+    assert.ok(!result.findings.some((f) => /emoji-as-icon/.test(f)));
+  });
+
+  test("does NOT flag ™ or © as emoji either, but still flags a real emoji sitting right next to them", () => {
+    const input = buildValidInput();
+    const withMixedSymbols: QaStructuredInput = {
+      ...input,
+      components: input.components.map((c) => ({
+        ...c,
+        slots: c.slots.map((s): ComponentSlot =>
+          s.name === "businessName" ? { ...s, value: `${s.value}™ © 2026 🎉` } : s
+        ),
+      })),
+    };
+    const result = qaGenericTemplate(withMixedSymbols);
+    assert.equal(result.verdict, "WARN", "the real 🎉 emoji alongside ™/© must still be caught");
+    assert.ok(result.findings.some((f) => /emoji-as-icon/.test(f)));
+  });
+
   test("FAILs when positioning/heroThesis/signatureElement contains a banned generic marketing phrase", () => {
     const input = buildValidInput();
     const withGenericCopy: QaStructuredInput = {

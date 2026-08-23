@@ -295,7 +295,7 @@ async function runScanAgainstDiscovered(
     const confidenceResult = computeConfidenceScore(crawl);
     const opportunityResult = computeLeadOpportunityScore(crawl);
     const makeoverPotentialResult = computeMakeoverPotential(websiteScoreResult, opportunityResult, confidenceResult);
-    const heroPattern = resolveHeroPattern(industryBucket, crawl.gallery.length > 0);
+    const heroPattern = resolveHeroPattern(industryBucket, crawl.gallery.length > 0, crawl.gallery.length);
 
     qualifiedCount += 1;
     const lead = await upsertLead(deps, input.organizationId, {

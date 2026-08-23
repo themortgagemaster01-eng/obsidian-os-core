@@ -650,7 +650,23 @@ export function qaBrandFitStructured(input: QaStructuredInput): DeterministicCat
 // 4.11 Generic Template Detection
 // ===========================================================================
 
+/**
+ * Phase 5.4 fix: `\p{Extended_Pictographic}` alone false-positives on ®, ™,
+ * and © — confirmed directly (a real Canadian Tire regression: real,
+ * legitimately-used copy "CT Money®" tripped this check as if it contained
+ * an emoji). Those three are legitimate business typography, not emoji, and
+ * are the only Extended_Pictographic characters that plausibly appear in
+ * real business copy this way — checked directly against every character
+ * this codebase's own tests exercise, and every other Extended_Pictographic
+ * character (an actual emoji) is unaffected: this narrows the false-positive
+ * surface without touching real emoji detection at all.
+ */
+const LEGITIMATE_TYPOGRAPHIC_SYMBOLS = new Set(["®", "™", "©"]);
 const EMOJI_REGEX = /\p{Extended_Pictographic}/u;
+
+function containsEmoji(text: string): boolean {
+  return [...text].some((ch) => EMOJI_REGEX.test(ch) && !LEGITIMATE_TYPOGRAPHIC_SYMBOLS.has(ch));
+}
 
 export function qaGenericTemplate(input: QaStructuredInput): DeterministicCategoryResult {
   const sectionOrder = input.wireframe.sections.map((s) => s.type);
@@ -692,7 +708,7 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
   const emojiSlots: string[] = [];
   for (const node of input.components) {
     for (const slot of node.slots) {
-      if (slot.source === "real" && slot.value && EMOJI_REGEX.test(slot.value)) {
+      if (slot.source === "real" && slot.value && containsEmoji(slot.value)) {
         emojiSlots.push(`${node.section}.${slot.name}`);
       }
     }

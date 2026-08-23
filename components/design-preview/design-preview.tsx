@@ -365,8 +365,25 @@ export function DesignPreview({
 
   // See the <style> element's own comment below for why this is built as a
   // plain string (for dangerouslySetInnerHTML) rather than inline JSX text.
+  // Phase 5.4: real 375px horizontal-overflow regression, confirmed live on
+  // Canadian Tire's makeover (runRenderedPreviewAdapter's real
+  // document.documentElement.scrollWidth > window.innerWidth measurement).
+  // No image/text sizing rules existed anywhere in this component before —
+  // a real content image wider than its container, or a long unbroken
+  // string (a URL, a run-on word from scraped evidence), can force the
+  // whole document wider than the viewport. Two generic, always-on rules
+  // fix the root cause (never business-specific): real photography scales
+  // to its container, long text wraps instead of forcing width. `overflow-
+  // x: hidden` on the root container is additional, deliberate defense in
+  // depth — `overflow: hidden` clips a wider descendant at THIS element's
+  // own boundary, so it stops contributing to document.documentElement's
+  // scrollWidth even if some future section ever reintroduces an
+  // unconstrained-width element this pass didn't anticipate.
   const mobileStyleCss = `
         @keyframes op-fade-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+        [data-design-preview] { overflow-x: hidden; }
+        [data-design-preview] img { max-width: 100%; height: auto; }
+        [data-design-preview] * { overflow-wrap: break-word; word-break: break-word; }
         [data-design-preview] a, [data-design-preview] button { font-family: inherit; }
         [data-design-preview] a { color: inherit; text-decoration: none; }
         @media (prefers-reduced-motion: reduce) {
@@ -612,15 +629,19 @@ function SectionShell({
       aria-label={sectionAriaLabel(section)}
       style={{
         backgroundColor: background,
-        // A fixed 0.6-opacity black scrim under the real photo, not a
-        // guessed value: hero text always renders in FALLBACK.onDark
-        // (near-white) regardless of the photo's own colors, and a scrim
-        // this dark keeps that pairing readable against any real
-        // photograph — the same "reuse an already-safe pairing rather than
-        // introduce a new, unvalidated one" discipline as the CTA borders
-        // in TouchAffordance above.
+        // A left-to-right black scrim under the real photo, not a flat
+        // wash: hero text always renders in FALLBACK.onDark (near-white)
+        // and always sits left-anchored within the section (see the hero
+        // content container below — flex-start, no justifyContent
+        // override), so the scrim only needs to stay opaque enough to
+        // guarantee that pairing's contrast under the actual text column;
+        // past that column it fades out so the real photograph reads
+        // bright and undimmed. The dark zone (0-42%) and the darkest stop
+        // (0.72) are both slightly wider/stronger than the old flat 0.6 to
+        // keep the same safety margin now that it's localized rather than
+        // applied everywhere.
         backgroundImage: backgroundImageUrl && (heroPattern === "image-full-bleed" || heroPattern === "centered-cinematic")
-          ? `linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url("${backgroundImageUrl}")`
+          ? `linear-gradient(to right, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.72) 42%, rgba(0,0,0,0.45) 62%, rgba(0,0,0,0.18) 85%, rgba(0,0,0,0.12) 100%), url("${backgroundImageUrl}")`
           : isSignature && !isHero
             ? `linear-gradient(${background}, ${background}), linear-gradient(${accent}14, ${accent}14)`
             : undefined,
