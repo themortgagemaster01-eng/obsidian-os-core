@@ -219,6 +219,97 @@ describe("design-qa-service: qaMotion", () => {
     const result = qaMotion(input);
     assert.equal(result.verdict, "PASS");
   });
+
+  test("PASS for a real, rich-evidence cinematic-storytelling restaurant (Phase 6.2: elevated motion budget passes cleanly)", () => {
+    const brief = briefFor({ motionIntensity: "energetic" });
+    const wireframe = generateWireframe(brief, {
+      hasRealTestimonials: false,
+      hasRealImagery: true,
+      compositionEvidence: { galleryCount: 8, services: 4, hasReviews: true },
+    });
+    assert.equal(wireframe.experiencePlan?.mode, "cinematic-storytelling");
+    assert.equal(wireframe.experiencePlan?.motionBudget, "cinematic");
+    const refinedDesign = refineDesign({ wireframe }, brief, SAMPLE_DESIGN_MEMORY);
+    const input = buildValidInput({ wireframe, refinedDesign, designBrief: brief });
+    const result = qaMotion(input);
+    assert.equal(result.verdict, "PASS");
+  });
+
+  test('Phase 6.2: PASS for the default sparse fixture, whose motion budget resolves to "none" — re-verifies the inverted zero-motion coverage check, not just the pre-6.2 always-present-motion check', () => {
+    const input = buildValidInput();
+    assert.equal(input.refinedDesign.motion.motionBudget, "none");
+    assert.deepEqual(input.refinedDesign.motion.motions, []);
+    const result = qaMotion(input);
+    assert.equal(result.verdict, "PASS");
+    assert.ok(result.evidence.some((e) => /motion budget is "none"/.test(e.detail)));
+  });
+
+  test('Phase 6.2: FAILs when a motion entry is present but this mission\'s Experience Plan motion budget is "none"', () => {
+    const input = buildValidInput();
+    assert.equal(input.refinedDesign.motion.motionBudget, "none");
+    const contaminated: QaStructuredInput = {
+      ...input,
+      refinedDesign: {
+        ...input.refinedDesign,
+        motion: {
+          ...input.refinedDesign.motion,
+          motions: [
+            {
+              section: "hero",
+              durationMs: 250,
+              easing: "ease-out",
+              purpose: "test",
+              revealStyle: "fade",
+              translateYPx: 8,
+              delayMs: 0,
+            },
+          ],
+        },
+      },
+    };
+    const result = qaMotion(contaminated);
+    assert.equal(result.verdict, "FAIL");
+    assert.ok(result.findings.some((f) => /motion budget is "none"/.test(f)));
+  });
+
+  test("Phase 6.2: FAILs when hover-intensity entries exist for a mode that isn't high-energy-retail", () => {
+    const input = buildValidInput();
+    const contaminated: QaStructuredInput = {
+      ...input,
+      refinedDesign: {
+        ...input.refinedDesign,
+        motion: {
+          ...input.refinedDesign.motion,
+          experienceMode: "trust-authority",
+          motionBudget: "subtle",
+          hover: [{ section: "hero", scale: 1.05, purpose: "test" }],
+        },
+      },
+    };
+    const result = qaMotion(contaminated);
+    assert.equal(result.verdict, "FAIL");
+    assert.ok(result.findings.some((f) => /reserved for that mode/.test(f)));
+  });
+
+  test("Phase 6.2: PASS for a real high-energy-retail generated design carrying real hover-intensity entries", () => {
+    const brief = briefFor({ motionIntensity: "energetic" }, { industryBucket: "homeService" });
+    const wireframe = generateWireframe(brief, {
+      hasRealTestimonials: false,
+      hasRealImagery: true,
+      compositionEvidence: { galleryCount: 6, services: 5 },
+    });
+    assert.equal(wireframe.experiencePlan?.mode, "high-energy-retail");
+    const components = assembleComponents(wireframe, {
+      businessName: brief.businessName,
+      citedInsights: brief.citedInsights,
+      contactEvidence: brief.contactEvidence,
+    });
+    const refinedDesign = refineDesign({ wireframe }, brief, SAMPLE_DESIGN_MEMORY);
+    assert.ok(refinedDesign.motion.hover.length > 0);
+    const input = buildValidInput({ wireframe, components, refinedDesign, designBrief: brief });
+    const result = qaMotion(input);
+    assert.equal(result.verdict, "PASS");
+  });
 });
 
 describe("design-qa-service: qaMobileStructured", () => {

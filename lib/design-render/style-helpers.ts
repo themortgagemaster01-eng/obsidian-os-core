@@ -1,6 +1,7 @@
 import type { SectionType } from "@/lib/services/design-generation-service";
 import type {
   RefinedDesign,
+  SectionHoverValue,
   SectionMotionValue,
   SectionSpacingValue,
   TypeRoleValue,
@@ -25,12 +26,20 @@ export function findSectionSpacing(
   return refinedDesign.spacing.sectionSpacing.find((s) => s.section === section);
 }
 
-/** NO_MOTION_SECTIONS (design-refinement-service.ts) — currently just "footer" — legitimately has no entry here; undefined means "no motion for this section," not a data error. */
+/** NO_MOTION_SECTIONS (design-refinement-service.ts) — currently just "footer" — legitimately has no entry here; undefined means "no motion for this section," not a data error. Also legitimately empty for every section when this mission's Experience Plan motion budget (Phase 6.1/6.2) is "none" — that is the correct, honest output for that business, not a gap. */
 export function findSectionMotion(
   refinedDesign: RefinedDesign,
   section: SectionType
 ): SectionMotionValue | undefined {
   return refinedDesign.motion.motions.find((m) => m.section === section);
+}
+
+/** Phase 6.2's hover-intensity lookup — undefined for the overwhelming majority of sections/missions (only ever populated under high-energy-retail at a motion budget above "none"); the renderer treats undefined identically to "no hover treatment for this section," never a default. */
+export function findSectionHover(
+  refinedDesign: RefinedDesign,
+  section: SectionType
+): SectionHoverValue | undefined {
+  return refinedDesign.motion.hover.find((h) => h.section === section);
 }
 
 export function findTypeRole(refinedDesign: RefinedDesign, role: TypeRole): TypeRoleValue | undefined {

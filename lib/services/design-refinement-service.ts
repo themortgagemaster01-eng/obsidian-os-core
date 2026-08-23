@@ -23,6 +23,8 @@ import {
   validateTouchTarget,
   type TouchTarget,
 } from "@/lib/design-intelligence/mobile-rules";
+import { PHOTO_DEPENDENT_HERO_PATTERNS } from "@/lib/design-intelligence/section-patterns";
+import type { ExperienceMode, ExperiencePlan, MotionBudget } from "@/shared/design-intelligence/types";
 
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
@@ -268,11 +270,58 @@ export function refineLayout(wireframe: Wireframe): LayoutRefinement {
 
 export interface SectionMotionValue extends MotionChoice {
   section: SectionType;
+  /**
+   * Phase 6.2 (Experience Runtime): how this section's entrance renders.
+   * "fade" — the pre-6.2 op-fade-in treatment, every mode's baseline and the
+   * only value the legacy (no ExperiencePlan) path ever produces. "fade-
+   * scale" — a distinct, more deliberate reveal (Phase 6's "image reveal"
+   * primitive) reserved for real-photography-bearing sections (hero, only
+   * when its own resolved hero pattern is photo-backed — never assumed;
+   * gallery, which is only ever in a wireframe backed by real captured
+   * photos to begin with — generateWireframe's own evidence gate) under
+   * cinematic-storytelling. Optional so a motion entry from a wireframe
+   * predating this field still type-checks; the renderer treats a missing
+   * value identically to "fade".
+   */
+  revealStyle?: "fade" | "fade-scale";
+  /** How far this section's entrance travels, in px — 0 would be a pure opacity fade (never actually 0 today; every real profile below uses a real distance). Scales with the resolved motion budget. Optional; undefined means the renderer's own pre-6.2 fixed 12px value. */
+  translateYPx?: number;
+  /** Incremental per-section entrance delay in ms (Phase 6.2's "stagger behavior" primitive) — a cascading, not-simultaneous reveal. 0 for "subtle"/the legacy path (every section still enters together, exactly as before). Optional; undefined means 0. */
+  delayMs?: number;
+}
+
+/**
+ * Phase 6.2's "hover intensity" primitive — a real, disclosed hover
+ * treatment for an interactive, touch-target-bearing section, never silent
+ * decoration (mirrors MotionChoice.purpose's own required-purpose
+ * discipline). Only ever populated under high-energy-retail at a motion
+ * budget above "none" (see refineMotionFromExperiencePlan) — every other
+ * mode/budget combination produces no entry at all for a given section,
+ * which the renderer/QA treat identically to "no hover treatment," the same
+ * way NO_MOTION_SECTIONS' own absence is already meaningful.
+ */
+export interface SectionHoverValue {
+  section: SectionType;
+  /** CSS transform scale on hover — always > 1; an inert (1) treatment is simply omitted rather than included as a no-op entry. */
+  scale: number;
+  purpose: string;
 }
 
 export interface MotionRefinement {
   intensity: "restrained" | "energetic";
+  /**
+   * Phase 6.2: the Experience Plan's own resolved mode/budget
+   * (lib/design-intelligence/experience-planner.ts), carried through
+   * unchanged so the renderer and QA can key off the SAME resolved values
+   * rather than re-deriving them. Undefined for a wireframe predating
+   * Phase 6.1's experiencePlan field, in which case this whole pass falls
+   * back to the pre-6.2 restrained/energetic-only behavior, unchanged.
+   */
+  experienceMode?: ExperienceMode;
+  motionBudget?: MotionBudget;
   motions: SectionMotionValue[];
+  /** Phase 6.2's hover-intensity entries. Always a real array (never undefined) — empty unless the resolved mode/budget combination calls for one, so a caller never has to guard against a missing array, only an empty one. */
+  hover: SectionHoverValue[];
   violations: string[];
 }
 
@@ -282,15 +331,28 @@ export const NO_MOTION_SECTIONS: SectionType[] = ["footer"];
 const RESTRAINED_DURATION_MS = Math.round((MOTION_DURATION_BAND_MS.min + MOTION_DURATION_BAND_MS.max) / 2);
 /** Outside the default band on purpose — only ever used with deliberateDeviation: true, the disclosed-deviation mechanism §6 requires. */
 const ENERGETIC_DURATION_MS = MOTION_DURATION_BAND_MS.max + 50;
+/** Phase 6.2's top tier — clearly, deliberately outside the default band (§6), reserved for the "cinematic" motion budget's own strongest permitted entrance. */
+const CINEMATIC_DURATION_MS = MOTION_DURATION_BAND_MS.max + 350;
+
+function entrancePurpose(type: SectionType): string {
+  return type === "hero"
+    ? "Initial content reveal on page load, confirming the page has finished loading — not decoration (§6)."
+    : "Entrance as this section scrolls into view, confirming new content is now in focus — not decoration (§6).";
+}
 
 /**
- * refineMotion — assigns one motion per animated section: an entrance as it
- * scrolls into view, or (for the hero, always first) a load-time reveal.
- * `motionIntensity` comes from the Design Brief's own direction (Design
- * Intelligence's creative call, §6's "deliberate Design Brief decision, not
- * an unconstrained default") — this pass applies it, it doesn't decide it.
+ * refineMotion — the pre-Phase-6.1 fallback path when wireframe carries no
+ * ExperiencePlan (an older persisted row from before lib/design-
+ * intelligence/experience-planner.ts existed, or a hand-built test/API
+ * fixture predating it). Byte-identical behavior to the original
+ * single-path implementation: one motion per animated section, one
+ * `motionIntensity`-driven duration for all of them, no stagger, no reveal-
+ * style variation, no hover intensity — `motionIntensity` comes from the
+ * Design Brief's own direction (Design Intelligence's creative call, §6's
+ * "deliberate Design Brief decision, not an unconstrained default"), this
+ * pass applies it, it doesn't decide it.
  */
-export function refineMotion(wireframe: Wireframe, motionIntensity: "restrained" | "energetic"): MotionRefinement {
+function refineMotionLegacy(wireframe: Wireframe, motionIntensity: "restrained" | "energetic"): MotionRefinement {
   const violations: string[] = [];
   const durationMs = motionIntensity === "energetic" ? ENERGETIC_DURATION_MS : RESTRAINED_DURATION_MS;
   const deliberateDeviation = motionIntensity === "energetic";
@@ -298,23 +360,153 @@ export function refineMotion(wireframe: Wireframe, motionIntensity: "restrained"
   const motions: SectionMotionValue[] = wireframe.sections
     .filter(({ type }) => !NO_MOTION_SECTIONS.includes(type))
     .map(({ type }) => {
-      const purpose =
-        type === "hero"
-          ? "Initial content reveal on page load, confirming the page has finished loading — not decoration (§6)."
-          : "Entrance as this section scrolls into view, confirming new content is now in focus — not decoration (§6).";
-
       const choice: SectionMotionValue = {
         section: type,
         durationMs,
         easing: "ease-out",
-        purpose,
+        purpose: entrancePurpose(type),
         deliberateDeviation,
+        revealStyle: "fade",
+        translateYPx: 12,
+        delayMs: 0,
       };
       violations.push(...validateMotionChoice(choice).map((e) => `[${type}] ${e}`));
       return choice;
     });
 
-  return { intensity: motionIntensity, motions, violations };
+  return { intensity: motionIntensity, motions, hover: [], violations };
+}
+
+interface MotionBudgetProfile {
+  durationMs: number;
+  translateYPx: number;
+  staggerStepMs: number;
+  deliberateDeviation: boolean;
+}
+
+/**
+ * Per-budget entrance profile (Phase 6.2's "transition pacing" +
+ * "stagger behavior" primitives) — "none" is intentionally absent: it never
+ * reaches this table (refineMotionFromExperiencePlan returns empty motions
+ * before consulting it). "subtle" stays inside the default duration band
+ * with zero stagger — visually indistinguishable in TIMING from the legacy
+ * "restrained" path, which is deliberate (professional-services/trust-
+ * authority businesses should feel calm, not merely "less energetic than
+ * some other number"). "enhanced" and "cinematic" both require a disclosed
+ * deviation, same as the legacy "energetic" path already did.
+ */
+const MOTION_PROFILE_BY_BUDGET: Record<Exclude<MotionBudget, "none">, MotionBudgetProfile> = {
+  subtle: { durationMs: RESTRAINED_DURATION_MS, translateYPx: 8, staggerStepMs: 0, deliberateDeviation: false },
+  enhanced: { durationMs: ENERGETIC_DURATION_MS, translateYPx: 14, staggerStepMs: 40, deliberateDeviation: true },
+  cinematic: { durationMs: CINEMATIC_DURATION_MS, translateYPx: 28, staggerStepMs: 90, deliberateDeviation: true },
+};
+
+/** Hover-intensity scale by budget — only ever consulted under high-energy-retail (see refineMotionFromExperiencePlan); every other mode never reads this table at all. */
+const HOVER_SCALE_BY_BUDGET: Record<Exclude<MotionBudget, "none">, number> = {
+  subtle: 1.02,
+  enhanced: 1.04,
+  cinematic: 1.06,
+};
+
+/**
+ * refineMotionFromExperiencePlan — Phase 6.2's real execution layer. Reads
+ * ONLY the already-resolved ExperiencePlan (lib/design-intelligence/
+ * experience-planner.ts) and the already-resolved compositionVariant's own
+ * heroPattern — never re-derives evidence independently, per the founder's
+ * explicit Phase 6.2 anti-drift instruction ("Do not create a parallel
+ * system that can contradict the Experience Plan"). motionBudget functions
+ * as a hard ceiling: "none" produces zero motion entries and zero hover
+ * entries, full stop — never a decorative animation just because the
+ * runtime exists.
+ */
+function refineMotionFromExperiencePlan(
+  wireframe: Wireframe,
+  plan: ExperiencePlan,
+  motionIntensity: "restrained" | "energetic"
+): MotionRefinement {
+  const violations: string[] = [];
+
+  // Defense in depth (never trust an upstream value blindly, the same
+  // discipline resolveHeroPattern's own hasRealImagery+galleryCount
+  // re-check already holds to): resolveMotionBudget's own intensity
+  // ceiling already guarantees "enhanced"/"cinematic" is unreachable unless
+  // motionIntensity is "energetic" for any REAL pipeline-produced plan —
+  // this branch should be unreachable in practice, but a hand-built or
+  // otherwise inconsistent ExperiencePlan is defensively downgraded rather
+  // than trusted, and the downgrade is a real, visible violation, not a
+  // silent correction.
+  const requestedBudget = plan.motionBudget;
+  const budgetRequiresEnergetic = requestedBudget === "enhanced" || requestedBudget === "cinematic";
+  if (budgetRequiresEnergetic && motionIntensity !== "energetic") {
+    violations.push(
+      `Experience Plan's motion budget ("${requestedBudget}") requires motionIntensity "energetic", but "${motionIntensity}" was passed — downgraded to "subtle" defensively rather than trusting an inconsistent input (unreachable via the real pipeline; resolveMotionBudget's own intensity ceiling already guarantees this pairing).`
+    );
+  }
+  const budget: MotionBudget = budgetRequiresEnergetic && motionIntensity !== "energetic" ? "subtle" : requestedBudget;
+
+  if (budget === "none") {
+    return { intensity: motionIntensity, experienceMode: plan.mode, motionBudget: budget, motions: [], hover: [], violations };
+  }
+
+  const profile = MOTION_PROFILE_BY_BUDGET[budget];
+  const animatable = wireframe.sections.map((s) => s.type).filter((t) => !NO_MOTION_SECTIONS.includes(t));
+  const heroIsPhotoBacked = !!wireframe.compositionVariant && PHOTO_DEPENDENT_HERO_PATTERNS.has(wireframe.compositionVariant.heroPattern);
+
+  const motions: SectionMotionValue[] = animatable.map((type, index) => {
+    // Only ever "fade-scale" for a section this business's own real
+    // evidence backs photographically — hero only when its own resolved
+    // hero pattern required real photography to be chosen at all, gallery
+    // only because generateWireframe never includes it without real
+    // captured photos. Never invented for a section with no photography
+    // evidence behind it, regardless of how rich the motion budget is.
+    const isPhotographyBearing = (type === "hero" && heroIsPhotoBacked) || type === "gallery";
+    const revealStyle: "fade" | "fade-scale" = plan.mode === "cinematic-storytelling" && isPhotographyBearing ? "fade-scale" : "fade";
+
+    const choice: SectionMotionValue = {
+      section: type,
+      durationMs: profile.durationMs,
+      easing: "ease-out",
+      purpose: entrancePurpose(type),
+      deliberateDeviation: profile.deliberateDeviation,
+      revealStyle,
+      translateYPx: profile.translateYPx,
+      delayMs: profile.staggerStepMs * index,
+    };
+    violations.push(...validateMotionChoice(choice).map((e) => `[${type}] ${e}`));
+    return choice;
+  });
+
+  // Hover intensity is deliberately mode-gated, not budget-gated alone
+  // (Phase 6.2's explicit "good: if experience mode === X and budget
+  // permits" instruction) — a snappier hover response is specifically
+  // high-energy-retail's own register; a cinematic-storytelling or
+  // trust-authority business never gets one just because its budget is
+  // high, since a hover lift is a retail-specific signal, not a generic
+  // reward for evidence richness.
+  const hover: SectionHoverValue[] =
+    plan.mode === "high-energy-retail"
+      ? INTERACTIVE_SECTIONS.filter((section) => animatable.includes(section)).map((section) => ({
+          section,
+          scale: HOVER_SCALE_BY_BUDGET[budget],
+          purpose:
+            "Stronger hover feedback matching this business's high-energy-retail experience — confirms an interactive element responds to the visitor, not decoration.",
+        }))
+      : [];
+
+  return { intensity: motionIntensity, experienceMode: plan.mode, motionBudget: budget, motions, hover, violations };
+}
+
+/**
+ * refineMotion — Phase 6.2's real entry point. Delegates to
+ * refineMotionFromExperiencePlan when the wireframe carries a real,
+ * already-resolved ExperiencePlan (every wireframe generateWireframe
+ * produces from Phase 6.1 forward), or to refineMotionLegacy (the original,
+ * unchanged behavior) for a wireframe that predates it.
+ */
+export function refineMotion(wireframe: Wireframe, motionIntensity: "restrained" | "energetic"): MotionRefinement {
+  return wireframe.experiencePlan
+    ? refineMotionFromExperiencePlan(wireframe, wireframe.experiencePlan, motionIntensity)
+    : refineMotionLegacy(wireframe, motionIntensity);
 }
 
 // ===========================================================================

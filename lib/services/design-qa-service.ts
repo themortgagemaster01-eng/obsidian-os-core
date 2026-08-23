@@ -406,7 +406,7 @@ export function qaLayout(input: QaStructuredInput): DeterministicCategoryResult 
 // ===========================================================================
 
 export function qaMotion(input: QaStructuredInput): DeterministicCategoryResult {
-  const { motions, intensity } = input.refinedDesign.motion;
+  const { motions, intensity, motionBudget, hover, experienceMode } = input.refinedDesign.motion;
   const violations: string[] = [];
 
   for (const m of motions) {
@@ -423,11 +423,40 @@ export function qaMotion(input: QaStructuredInput): DeterministicCategoryResult 
 
   const animatable = input.wireframe.sections.map((s) => s.type).filter((t) => !NO_MOTION_SECTIONS.includes(t));
   const animatedSet = new Set(motions.map((m) => m.section));
-  for (const t of animatable) {
-    if (!animatedSet.has(t)) violations.push(`Section "${t}" should carry a motion entry but none was found.`);
+
+  // Phase 6.2: a motionBudget of "none" (lib/design-intelligence/
+  // experience-planner.ts) means zero decorative motion is the CORRECT,
+  // honest output for this business's Experience Plan — coverage is
+  // re-verified in the opposite direction (every section must be motion-
+  // free) rather than the pre-6.2 assumption that every animatable section
+  // always carries an entry. `motionBudget` is undefined for a wireframe
+  // predating Phase 6.1, in which case this falls through to the original,
+  // unchanged coverage check below — no weakening for any existing mission.
+  if (motionBudget === "none") {
+    for (const t of animatable) {
+      if (animatedSet.has(t)) {
+        violations.push(`Section "${t}" carries a motion entry, but this mission's Experience Plan motion budget is "none" — zero decorative motion is required.`);
+      }
+    }
+  } else {
+    for (const t of animatable) {
+      if (!animatedSet.has(t)) violations.push(`Section "${t}" should carry a motion entry but none was found.`);
+    }
   }
   for (const t of NO_MOTION_SECTIONS) {
     if (animatedSet.has(t)) violations.push(`Section "${t}" is a no-motion section but carries a motion entry.`);
+  }
+
+  // Phase 6.2: hover-intensity entries are only ever legitimate under
+  // high-energy-retail — re-verified independently of refineMotion's own
+  // gate, the same "never trust the upstream pass's own output" discipline
+  // this file already applies to every other category.
+  const hoverEntries = hover ?? [];
+  if (hoverEntries.length > 0 && experienceMode !== "high-energy-retail") {
+    violations.push(`${hoverEntries.length} hover-intensity entry(ies) present, but this mission's Experience Plan mode is "${experienceMode ?? "unresolved"}", not "high-energy-retail" — hover intensity is reserved for that mode (§6.2).`);
+  }
+  if (hoverEntries.length > 0 && motionBudget === "none") {
+    violations.push('Hover-intensity entries present alongside a "none" motion budget — motionBudget is a hard ceiling on ALL decorative motion, including hover (§6.2).');
   }
 
   const ev = [
@@ -436,7 +465,16 @@ export function qaMotion(input: QaStructuredInput): DeterministicCategoryResult 
       `Independently re-validated ${motions.length} motion entries against duration band, allowed easing, and required purpose.`
     ),
     evidence("deliberateDeviation traceability", anyDeviation ? "At least one section deviates from the default band; checked traceability to the brief's motionIntensity." : "No section deviates from the default band."),
-    evidence("motion coverage", `${animatable.length} animatable section(s), ${NO_MOTION_SECTIONS.length} no-motion section(s) — re-verified coverage independently of refineMotion's own output.`),
+    evidence(
+      "motion coverage",
+      motionBudget === "none"
+        ? `Experience Plan motion budget is "none" — re-verified that all ${animatable.length} animatable section(s) carry zero motion entries.`
+        : `${animatable.length} animatable section(s), ${NO_MOTION_SECTIONS.length} no-motion section(s) — re-verified coverage independently of refineMotion's own output.`
+    ),
+    evidence(
+      "hover-intensity mode gating",
+      `${hoverEntries.length} hover-intensity entry(ies); re-verified traceability to experienceMode ("${experienceMode ?? "none resolved"}") and motionBudget ("${motionBudget ?? "none resolved"}").`
+    ),
   ];
 
   return deterministicResult(violations, ev, { evidenceSource: "structured", failIf: violations.length > 0 });

@@ -187,37 +187,196 @@ describe("design-refinement-service: refineLayout", () => {
   });
 });
 
-describe("design-refinement-service: refineMotion", () => {
+/**
+ * Phase 6.2 fixture builder — mirrors experience-planner.test.ts's own
+ * fixture recipes (services/certifications/hasReviews/galleryCount/
+ * hasRealTeam, industryBucket, motionIntensity) so refineMotion's real
+ * behavior across all four motion-budget tiers can be exercised
+ * deterministically, the same way Phase 6.1 proved its own four business
+ * profiles. Deliberately a LOCAL helper (not a change to the shared
+ * briefFor/wireframeFor above, which several other passing describe blocks
+ * in this file already depend on) — zero risk to any test outside this
+ * describe block.
+ */
+function experienceWireframeFor(
+  industryBucket: DesignBrief["industryBucket"],
+  motionIntensity: "restrained" | "energetic",
+  options: {
+    hasRealImagery?: boolean;
+    hasRealTeam?: boolean;
+    compositionEvidence?: { services?: number; certifications?: number; hasReviews?: boolean; galleryCount?: number };
+  } = {}
+): Wireframe {
+  const brief: DesignBrief = { ...briefFor({ motionIntensity }), industryBucket };
+  return generateWireframe(brief, {
+    hasRealTestimonials: false,
+    hasRealTeam: options.hasRealTeam,
+    hasRealImagery: options.hasRealImagery,
+    compositionEvidence: options.compositionEvidence,
+  });
+}
+
+describe("design-refinement-service: refineMotion — legacy path (wireframe predates ExperiencePlan)", () => {
+  /** Strips experiencePlan off a real generated wireframe — reproduces exactly the shape a `website_designs.wireframe` row persisted before Phase 6.1 would have, without hand-rolling a second wireframe shape. */
+  function legacyWireframe(): Wireframe {
+    const { experiencePlan: _experiencePlan, ...rest } = wireframeFor();
+    return rest;
+  }
+
   test("every animated section passes validateMotionChoice with no violations at restrained intensity", () => {
-    const wireframe = wireframeFor();
-    const result = refineMotion(wireframe, "restrained");
+    const result = refineMotion(legacyWireframe(), "restrained");
     assert.deepEqual(result.violations, []);
+    assert.ok(result.motions.length > 0, "the legacy path must still produce real motion entries, unlike the ExperiencePlan-driven path's honest 'none' budget");
     for (const motion of result.motions) {
       assert.ok(motion.durationMs >= MOTION_DURATION_BAND_MS.min && motion.durationMs <= MOTION_DURATION_BAND_MS.max);
       assert.ok(!BANNED_EASING_KEYWORDS.some((k) => motion.easing.includes(k)));
       assert.ok(motion.purpose.trim().length > 0);
+      assert.equal(motion.revealStyle, "fade");
+      assert.equal(motion.translateYPx, 12);
+      assert.equal(motion.delayMs, 0);
     }
   });
 
   test("footer never receives a motion assignment", () => {
-    const wireframe = wireframeFor();
-    const result = refineMotion(wireframe, "restrained");
+    const result = refineMotion(legacyWireframe(), "restrained");
     assert.ok(!result.motions.some((m) => m.section === "footer"));
   });
 
   test("energetic intensity exceeds the default band but discloses a deliberate deviation, producing no violations", () => {
-    const wireframe = wireframeFor();
-    const result = refineMotion(wireframe, "energetic");
+    const result = refineMotion(legacyWireframe(), "energetic");
+    assert.ok(result.motions.length > 0);
     assert.ok(result.motions.every((m) => m.durationMs > MOTION_DURATION_BAND_MS.max));
     assert.ok(result.motions.every((m) => m.deliberateDeviation === true));
     assert.deepEqual(result.violations, []);
+    assert.deepEqual(result.hover, []);
   });
 
   test("hero's motion purpose describes a load-time reveal, not a scroll entrance", () => {
-    const wireframe = wireframeFor();
-    const result = refineMotion(wireframe, "restrained");
+    const result = refineMotion(legacyWireframe(), "restrained");
     const hero = result.motions.find((m) => m.section === "hero")!;
     assert.match(hero.purpose, /page load/);
+  });
+});
+
+describe("design-refinement-service: refineMotion — Phase 6.2 Experience Runtime (motion budget as hard ceiling)", () => {
+  test('motion budget "none" (sparse local business) produces zero motion entries and zero hover entries — not merely "less" motion', () => {
+    const wireframe = experienceWireframeFor("general", "restrained");
+    assert.equal(wireframe.experiencePlan?.motionBudget, "none");
+    const result = refineMotion(wireframe, "restrained");
+    assert.deepEqual(result.motions, []);
+    assert.deepEqual(result.hover, []);
+    assert.deepEqual(result.violations, []);
+    assert.equal(result.motionBudget, "none");
+  });
+
+  test('motion budget "subtle" (professional services / trust-authority) stays within the default duration band, with zero stagger and zero hover', () => {
+    const wireframe = experienceWireframeFor("lawFirm", "restrained", { hasRealTeam: true });
+    assert.equal(wireframe.experiencePlan?.mode, "trust-authority");
+    assert.equal(wireframe.experiencePlan?.motionBudget, "subtle");
+    const result = refineMotion(wireframe, "restrained");
+    assert.ok(result.motions.length > 0);
+    for (const motion of result.motions) {
+      assert.ok(motion.durationMs >= MOTION_DURATION_BAND_MS.min && motion.durationMs <= MOTION_DURATION_BAND_MS.max);
+      assert.equal(motion.deliberateDeviation, false);
+      assert.equal(motion.delayMs, 0);
+      assert.equal(motion.revealStyle, "fade");
+    }
+    assert.deepEqual(result.hover, []);
+    assert.deepEqual(result.violations, []);
+  });
+
+  test('trust-authority stays capped at "subtle" render behavior even when this business\'s own evidence is rich enough to justify more — the mode ceiling governs, not evidence richness', () => {
+    const wireframe = experienceWireframeFor("lawFirm", "energetic", {
+      hasRealTeam: true,
+      compositionEvidence: { certifications: 3, hasReviews: true, services: 5 },
+    });
+    assert.equal(wireframe.experiencePlan?.mode, "trust-authority");
+    assert.equal(wireframe.experiencePlan?.motionBudget, "subtle");
+    const result = refineMotion(wireframe, "energetic");
+    assert.ok(result.motions.every((m) => m.durationMs <= MOTION_DURATION_BAND_MS.max));
+    assert.ok(result.motions.every((m) => m.deliberateDeviation === false));
+    assert.deepEqual(result.hover, [], "trust-authority never gets hover intensity, regardless of budget");
+  });
+
+  test('motion budget "enhanced" (high-energy-retail) exceeds the default band, staggers section entrances, and adds hover intensity to interactive sections only', () => {
+    const wireframe = experienceWireframeFor("homeService", "energetic", {
+      hasRealImagery: true,
+      compositionEvidence: { galleryCount: 6, services: 5 },
+    });
+    assert.equal(wireframe.experiencePlan?.mode, "high-energy-retail");
+    assert.equal(wireframe.experiencePlan?.motionBudget, "enhanced");
+    const result = refineMotion(wireframe, "energetic");
+    assert.deepEqual(result.violations, []);
+    assert.ok(result.motions.every((m) => m.durationMs > MOTION_DURATION_BAND_MS.max));
+    assert.ok(result.motions.every((m) => m.deliberateDeviation === true));
+    // Stagger: strictly increasing delay in section order, first section at 0.
+    const delays = result.motions.map((m) => m.delayMs);
+    assert.equal(delays[0], 0);
+    for (let i = 1; i < delays.length; i++) assert.ok(delays[i]! > delays[i - 1]!);
+    // Hover only for sections that are both interactive AND actually rendered.
+    assert.ok(result.hover.length > 0);
+    for (const h of result.hover) {
+      assert.ok(h.scale > 1);
+      assert.ok(h.purpose.trim().length > 0);
+    }
+    const heroHover = result.hover.find((h) => h.section === "hero");
+    assert.ok(heroHover, "hero carries the primary CTA and should get hover intensity under high-energy-retail");
+  });
+
+  test('motion budget "cinematic" (photography-rich restaurant) uses the strongest permitted duration/stagger, and reserves "fade-scale" for photography-backed sections only', () => {
+    const wireframe = experienceWireframeFor("restaurant", "energetic", {
+      hasRealImagery: true,
+      compositionEvidence: { galleryCount: 8, services: 4, hasReviews: true },
+    });
+    assert.equal(wireframe.experiencePlan?.mode, "cinematic-storytelling");
+    assert.equal(wireframe.experiencePlan?.motionBudget, "cinematic");
+    const result = refineMotion(wireframe, "energetic");
+    assert.deepEqual(result.violations, []);
+
+    const hero = result.motions.find((m) => m.section === "hero")!;
+    const gallery = result.motions.find((m) => m.section === "gallery")!;
+    assert.equal(hero.revealStyle, "fade-scale");
+    assert.equal(gallery.revealStyle, "fade-scale");
+
+    // No other real section (menu/credibility/contact) invents a photography-led treatment it has no evidence for.
+    for (const m of result.motions) {
+      if (m.section !== "hero" && m.section !== "gallery") assert.equal(m.revealStyle, "fade");
+    }
+
+    // high-energy-retail-only hover intensity must never leak into a different mode.
+    assert.deepEqual(result.hover, []);
+  });
+
+  test("cinematic budget produces a strictly longer duration and larger stagger step than enhanced, which is strictly longer/larger than subtle", () => {
+    const subtle = refineMotion(experienceWireframeFor("lawFirm", "restrained", { hasRealTeam: true }), "restrained");
+    const enhanced = refineMotion(
+      experienceWireframeFor("homeService", "energetic", { hasRealImagery: true, compositionEvidence: { galleryCount: 6, services: 5 } }),
+      "energetic"
+    );
+    const cinematic = refineMotion(
+      experienceWireframeFor("restaurant", "energetic", { hasRealImagery: true, compositionEvidence: { galleryCount: 8, services: 4, hasReviews: true } }),
+      "energetic"
+    );
+    assert.ok(subtle.motions[0]!.durationMs < enhanced.motions[0]!.durationMs);
+    assert.ok(enhanced.motions[0]!.durationMs < cinematic.motions[0]!.durationMs);
+    assert.ok(subtle.motions[0]!.translateYPx! < enhanced.motions[0]!.translateYPx!);
+    assert.ok(enhanced.motions[0]!.translateYPx! < cinematic.motions[0]!.translateYPx!);
+  });
+
+  test("defensively downgrades to subtle, with a real violation, when an inconsistent ExperiencePlan claims an elevated budget without a matching disclosed motionIntensity", () => {
+    const wireframe = experienceWireframeFor("restaurant", "energetic", {
+      hasRealImagery: true,
+      compositionEvidence: { galleryCount: 8, services: 4, hasReviews: true },
+    });
+    assert.equal(wireframe.experiencePlan?.motionBudget, "cinematic");
+    // A real pipeline call always passes the SAME motionIntensity the brief
+    // used to build this wireframe's own experiencePlan — this test
+    // deliberately passes a different, inconsistent one to prove the
+    // defensive downgrade, not a scenario the real pipeline can reach.
+    const result = refineMotion(wireframe, "restrained");
+    assert.equal(result.motionBudget, "subtle");
+    assert.ok(result.motions.every((m) => m.durationMs <= MOTION_DURATION_BAND_MS.max));
+    assert.ok(result.violations.some((v) => /downgraded to "subtle"/.test(v)));
   });
 });
 

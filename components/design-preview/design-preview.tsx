@@ -8,6 +8,7 @@ import type { CompositionVariant } from "@/lib/design-intelligence/composition-v
 import {
   findSectionSpacing,
   findSectionMotion,
+  findSectionHover,
   findTypeRole,
   findTouchTarget,
   remToPx,
@@ -380,7 +381,8 @@ export function DesignPreview({
   // scrollWidth even if some future section ever reintroduces an
   // unconstrained-width element this pass didn't anticipate.
   const mobileStyleCss = `
-        @keyframes op-fade-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+        @keyframes op-fade-in { from { opacity: 0; transform: translateY(var(--op-ty, 12px)); } to { opacity: 1; transform: none; } }
+        @keyframes op-fade-scale-in { from { opacity: 0; transform: translateY(var(--op-ty, 12px)) scale(1.03); } to { opacity: 1; transform: none; } }
         [data-design-preview] { overflow-x: hidden; }
         [data-design-preview] img { max-width: 100%; height: auto; }
         [data-design-preview] * { overflow-wrap: break-word; word-break: break-word; }
@@ -389,6 +391,37 @@ export function DesignPreview({
         @media (prefers-reduced-motion: reduce) {
           [data-design-preview] [data-op-animated] { animation: none !important; opacity: 1 !important; transform: none !important; }
         }
+        /* Phase 6.2 hover-intensity primitive (high-energy-retail only,
+           lib/services/design-refinement-service.ts's SectionHoverValue) —
+           scoped entirely inside prefers-reduced-motion:no-preference so a
+           visitor requesting reduced motion never sees it at all, rather
+           than relying on an !important override at interaction time. */
+        @media (prefers-reduced-motion: no-preference) {
+          [data-design-preview] [data-op-hover-scale] { transition: transform 150ms ease; }
+          [data-design-preview] [data-op-hover-scale]:hover { transform: scale(var(--op-hover-scale, 1)); }
+        }
+        /* Phase 6.2 polish: image-full-bleed and centered-cinematic are the
+           two hero patterns SectionShell's own scrim (the left-to-right
+           dark-to-clear gradient behind the hero photo) applies to. The
+           scrim's dark zone is fixed in PERCENT of the section's full
+           width, while the hero text column's width was a fixed 42rem
+           regardless of viewport — at typical desktop widths (~1280-1440px)
+           42rem legitimately reaches past where the scrim has already
+           faded most of the way out, so a headline long enough to wrap to
+           its column's full width can bleed into the zone meant to let the
+           photo show through unobstructed (the real Phase 6.2 visual-review
+           finding). Capping the column at 40% of the viewport — comfortably
+           inside the scrim's own dark zone at every desktop width this app
+           targets — fixes the underlying geometry rather than darkening the
+           scrim further (which would fight the whole point of a photo-led
+           hero); works identically for real photography, not just this
+           fixture. Scoped ABOVE the mobile breakpoint only: on a narrow
+           viewport the hero has no side column to protect (full-bleed at
+           every width) and 40vw would be far too narrow for readable text.
+        */
+        @media (min-width: ${MOBILE_BREAKPOINT_PX + 1}px) {
+          [data-hero-pattern="image-full-bleed"], [data-hero-pattern="centered-cinematic"] { max-width: min(42rem, 40vw) !important; }
+        }
         @media (max-width: ${MOBILE_BREAKPOINT_PX}px) {
           [data-design-preview] { font-size: ${mobileBodyPx}px !important; }
           [data-op-touch-target] { min-width: var(--op-tt-w); min-height: var(--op-tt-h); }
@@ -396,6 +429,16 @@ export function DesignPreview({
           [data-hero-hours-chip] { display: none !important; }
           [data-hero-pattern="split-media-text"] { display: block !important; }
           [data-hero-pattern="offset-overlap"] { margin-left: 0 !important; }
+          /* Deliberate two-row nav on narrow viewports (Phase 6.2 polish —
+             the real regression: business name + phone + a cta-prominent
+             Contact button crowding one row, wrapping mid-word, a phone
+             number breaking mid-digit). The business name gets its own
+             full-width row; the phone + CTA cluster gets a second row,
+             spread to the full width — a real responsive hierarchy, not
+             just shrinking every item until it technically fits. */
+          [data-op-nav-row] { flex-wrap: wrap; row-gap: 0.65rem; }
+          [data-op-nav-brand] { flex: 1 1 100%; }
+          [data-op-nav-actions] { flex: 1 1 100%; justify-content: space-between; }
         }
       `;
 
@@ -516,6 +559,7 @@ function Nav({
       }}
     >
       <div
+        data-op-nav-row
         style={{
           maxWidth: "72rem",
           margin: "0 auto",
@@ -526,6 +570,7 @@ function Nav({
         }}
       >
         <a
+          data-op-nav-brand
           href={`#${sectionAnchorId("hero")}`}
           style={{
             fontFamily: headingFontStack,
@@ -536,7 +581,15 @@ function Nav({
         >
           {businessName}
         </a>
-        <nav style={{ display: "flex", alignItems: "center", gap: "1.75rem" }}>
+        {/* data-op-nav-actions: the phone utility + (when cta-prominent) the
+            Contact button — grouped under one data attribute so the mobile
+            layout below can give this cluster its own full-width row,
+            deliberately separated from the business name, rather than
+            letting three unrelated-width items compete for one 375px row
+            (the real regression this fixes: business name/phone/CTA
+            crowding and wrapping mid-word, a phone number breaking
+            mid-digit under the sitewide overflow-wrap:break-word rule). */}
+        <nav data-op-nav-actions style={{ display: "flex", alignItems: "center", gap: "1.75rem" }}>
           {links.length > 0 && (
             <div data-op-nav-links style={{ display: "flex", gap: "1.75rem" }}>
               {links.map((type) => (
@@ -547,7 +600,14 @@ function Nav({
             </div>
           )}
           {realContactPhone && (
-            <a href={`tel:${(realContactPhoneHref ?? realContactPhone).replace(/[^\d+]/g, "")}`} style={{ fontSize: "0.85rem", fontWeight: 600, color: accent }}>
+            <a
+              href={`tel:${(realContactPhoneHref ?? realContactPhone).replace(/[^\d+]/g, "")}`}
+              // A phone number is one atomic unit, never a candidate for the
+              // sitewide overflow-wrap:break-word rule (meant for long
+              // scraped text/URLs) — without this, a tight flex row breaks
+              // it mid-digit, e.g. "(519" / ")" / "555" / "-123" / "4".
+              style={{ fontSize: "0.85rem", fontWeight: 600, color: accent, whiteSpace: "nowrap", flexShrink: 0 }}
+            >
               {realContactPhone}
             </a>
           )}
@@ -620,6 +680,16 @@ function SectionShell({
   // real semantic element, not a labeled-but-generic one everywhere.
   const Tag = section === "footer" ? "footer" : "section";
 
+  // Phase 6.2 (Experience Runtime): revealStyle picks which of the two
+  // keyframes below plays; translateYPx/delayMs are read straight off
+  // RefinedDesign.motion — this component never computes a motion value of
+  // its own, it only renders the one refineMotion already resolved. `?? `
+  // defaults (12px, "fade", 0ms) reproduce the exact pre-6.2 fixed CSS
+  // values, so a wireframe predating Phase 6.1's ExperiencePlan (no
+  // revealStyle/translateYPx/delayMs on its motion entries) renders
+  // byte-identically to before.
+  const animationName = motion?.revealStyle === "fade-scale" ? "op-fade-scale-in" : "op-fade-in";
+
   return (
     <Tag
       id={sectionAnchorId(section)}
@@ -640,8 +710,24 @@ function SectionShell({
         // (0.72) are both slightly wider/stronger than the old flat 0.6 to
         // keep the same safety margin now that it's localized rather than
         // applied everywhere.
+        //
+        // Phase 6.2 polish: the far-right stops were raised from 0.18/0.12
+        // to 0.30/0.26 (still a normal, modest photo-hero darkening — not
+        // the "excessively dark overlay" the founder's polish-pass
+        // instruction warned against; photography still reads clearly
+        // through it) after a real visual-review finding: on a narrow
+        // (mobile) viewport the hero text column isn't narrowed the way the
+        // desktop-only maxWidth cap below narrows it — mobile deliberately
+        // keeps using the available width for readability (see the
+        // headline's own clamp()-based sizing comment) — so headline text
+        // there can legitimately reach the same far-right zone a busy real
+        // photo's own bright/detailed area could sit in. Raising the FLOOR
+        // (not the whole gradient) keeps the desktop-visible photo just as
+        // bright while giving every viewport width a real contrast safety
+        // margin, rather than depending on the text column staying out of
+        // that zone at every possible width.
         backgroundImage: backgroundImageUrl && (heroPattern === "image-full-bleed" || heroPattern === "centered-cinematic")
-          ? `linear-gradient(to right, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.72) 42%, rgba(0,0,0,0.45) 62%, rgba(0,0,0,0.18) 85%, rgba(0,0,0,0.12) 100%), url("${backgroundImageUrl}")`
+          ? `linear-gradient(to right, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.72) 42%, rgba(0,0,0,0.58) 62%, rgba(0,0,0,0.48) 85%, rgba(0,0,0,0.45) 100%), url("${backgroundImageUrl}")`
           : isSignature && !isHero
             ? `linear-gradient(${background}, ${background}), linear-gradient(${accent}14, ${accent}14)`
             : undefined,
@@ -653,8 +739,11 @@ function SectionShell({
         display: isHero ? "flex" : undefined,
         alignItems: isHero ? "center" : undefined,
         borderTop: isHero ? "none" : isSignature ? `3px solid ${accent}` : "1px solid rgba(0,0,0,0.08)",
-        animation: motion ? `op-fade-in ${motion.durationMs}ms ${motion.easing} both` : undefined,
-      }}
+        animation: motion
+          ? `${animationName} ${motion.durationMs}ms ${motion.easing} ${motion.delayMs ?? 0}ms both`
+          : undefined,
+        "--op-ty": motion ? `${motion.translateYPx ?? 12}px` : undefined,
+      } as React.CSSProperties}
     >
       <div style={{ maxWidth: `${contentWidthRem}rem`, margin: "0 auto", width: "100%" }}>{children}</div>
     </Tag>
@@ -746,6 +835,13 @@ function TouchAffordance({
 }) {
   const target = findTouchTarget(refinedDesign, section);
   if (!target) return null;
+  // Phase 6.2's hover-intensity primitive — undefined for every section
+  // except under high-energy-retail at a motion budget above "none" (see
+  // refineMotionFromExperiencePlan, lib/services/design-refinement-
+  // service.ts). data-op-hover-scale is only ever added when a real entry
+  // exists, so an affordance with no hover treatment renders with no hover
+  // wiring at all, not a no-op scale(1).
+  const hover = findSectionHover(refinedDesign, section);
   const Tag = href ? "a" : "span";
   const variantStyle: React.CSSProperties =
     variant === "filled"
@@ -756,7 +852,9 @@ function TouchAffordance({
   return (
     <Tag
       data-op-touch-target
+      {...(hover ? { "data-op-hover-scale": "" } : {})}
       href={href}
+      title={hover ? hover.purpose : undefined}
       style={
         {
           display: "inline-flex",
@@ -771,8 +869,15 @@ function TouchAffordance({
           fontSize: "0.85em",
           letterSpacing: "0.03em",
           textTransform: "uppercase",
+          // A CTA label is one short, atomic phrase — never a candidate for
+          // the sitewide overflow-wrap:break-word rule; flexShrink:0 keeps a
+          // flex-row placement (Nav's cta-prominent button) from being
+          // squeezed narrower than its own minWidth/padding can honor.
+          whiteSpace: "nowrap",
+          flexShrink: 0,
           "--op-tt-w": `${target.widthPx}px`,
           "--op-tt-h": `${target.heightPx}px`,
+          ...(hover ? { "--op-hover-scale": hover.scale } : {}),
           ...variantStyle,
         } as React.CSSProperties
       }

@@ -39,7 +39,18 @@ function briefFor(): DesignBrief {
 
 describe("style-helpers", () => {
   const brief = briefFor();
-  const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
+  // Phase 6.2: real review evidence is enough to lift this fixture's
+  // Experience Plan motion budget to "subtle" (never "none") — this
+  // describe block's own findSectionMotion/findTouchTarget tests below are
+  // about lookup correctness (present for an animated section, absent for
+  // footer), not about which budget tier a business lands on, so the
+  // fixture is deliberately given just enough real evidence to keep that
+  // distinction meaningful rather than every motion lookup legitimately
+  // returning undefined for a zero-evidence "none"-budget business.
+  const wireframe = generateWireframe(brief, {
+    hasRealTestimonials: false,
+    compositionEvidence: { hasReviews: true },
+  });
   const refined = refineDesign({ wireframe }, brief, null);
 
   test("findSectionSpacing returns a real entry for every section actually in the wireframe", () => {
