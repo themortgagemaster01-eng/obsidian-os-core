@@ -11,8 +11,10 @@ import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage, MenuCat
 import { GENERIC_TESTIMONIAL_HEADING } from "@/lib/adapters/types";
 import { resolveHeroPattern } from "@/lib/design-intelligence/section-patterns";
 import { resolveCompositionVariant, type CompositionVariant } from "@/lib/design-intelligence/composition-variants";
-import { resolveExperiencePlan } from "@/lib/design-intelligence/experience-planner";
+import { resolveExperiencePlan, type ResolveExperiencePlanInput } from "@/lib/design-intelligence/experience-planner";
 import type { ExperiencePlan } from "@/shared/design-intelligence/types";
+import type { HumanExperiencePreference } from "@/shared/design-intelligence/types";
+import type { HeroPatternId } from "@/lib/design-intelligence/section-patterns";
 
 import {
   websiteDesignRepository,
@@ -287,6 +289,43 @@ export interface GenerateWireframeOptions {
 }
 
 /**
+ * buildExperiencePlanInputs — the exact evidence-density construction
+ * generateWireframe uses to call resolveExperiencePlan, extracted as its own
+ * pure function (Phase 6.4) so lib/services/experience-refinement-service.ts
+ * can re-derive an IDENTICAL ResolveExperiencePlanInput later — from the same
+ * brief, the same already-resolved heroPattern, the same GenerateWireframeOptions
+ * shape — rather than re-reading raw evidence independently. This is the
+ * anti-drift guarantee the founder's Phase 6.4 directive requires: a
+ * refinement's baseline recomputation must be provably the same input
+ * construction the original generation used, not a second implementation
+ * that could silently diverge over time. `humanPreference` is optional and
+ * absent for every normal generation-time call; only experience-refinement-
+ * service.ts ever passes it.
+ */
+export function buildExperiencePlanInputs(
+  brief: DesignBrief,
+  heroPattern: HeroPatternId,
+  options: GenerateWireframeOptions,
+  humanPreference?: HumanExperiencePreference
+): ResolveExperiencePlanInput {
+  return {
+    industryBucket: brief.industryBucket,
+    heroPattern,
+    evidence: {
+      services: options.compositionEvidence?.services ?? 0,
+      certifications: options.compositionEvidence?.certifications ?? 0,
+      hasReviews: options.compositionEvidence?.hasReviews ?? false,
+      galleryCount: options.compositionEvidence?.galleryCount ?? 0,
+      hasRealTeam: !!options.hasRealTeam,
+    },
+    motionIntensity: brief.direction.motionIntensity,
+    brandPersonality: options.brandPersonality,
+    contentTone: options.contentTone,
+    humanPreference,
+  };
+}
+
+/**
  * generateWireframe — the Wireframe pass. Pure function: DesignBrief +
  * options in, Wireframe out. Deterministic and template-driven rather than
  * invented per call, matching this codebase's existing precedent (insight-
@@ -336,20 +375,9 @@ export function generateWireframe(brief: DesignBrief, options: GenerateWireframe
   // already-resolved heroPattern just computed above — never a second,
   // independent read of raw evidence that could contradict compositionVariant's
   // own decision (the founder's explicit anti-drift instruction for this pass).
-  const experiencePlan = resolveExperiencePlan({
-    industryBucket: brief.industryBucket,
-    heroPattern: compositionVariant.heroPattern,
-    evidence: {
-      services: options.compositionEvidence?.services ?? 0,
-      certifications: options.compositionEvidence?.certifications ?? 0,
-      hasReviews: options.compositionEvidence?.hasReviews ?? false,
-      galleryCount: options.compositionEvidence?.galleryCount ?? 0,
-      hasRealTeam: !!options.hasRealTeam,
-    },
-    motionIntensity: brief.direction.motionIntensity,
-    brandPersonality: options.brandPersonality,
-    contentTone: options.contentTone,
-  });
+  const experiencePlan = resolveExperiencePlan(
+    buildExperiencePlanInputs(brief, compositionVariant.heroPattern, options)
+  );
 
   return {
     layoutFamily: brief.direction.layoutFamily,

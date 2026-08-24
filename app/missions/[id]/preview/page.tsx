@@ -6,12 +6,20 @@ import { createClient } from "@/lib/supabase/server";
 import { missionRepository } from "@/lib/repositories/mission-repository";
 import { websiteDesignRepository } from "@/lib/repositories/website-design-repository";
 import { designBriefRepository } from "@/lib/repositories/design-brief-repository";
+import { experienceRefinementRepository } from "@/lib/repositories/experience-refinement-repository";
 import type { Wireframe, ComponentNode } from "@/lib/services/design-generation-service";
-import type { RefinedDesign } from "@/lib/services/design-refinement-service";
+import { refineDesign, type RefinedDesign } from "@/lib/services/design-refinement-service";
+import { resolveRefinement } from "@/lib/services/experience-refinement-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import { DesignPreview } from "@/components/design-preview/design-preview";
+import { ExperienceRefinementPanel, type ReapplyPrompt } from "@/components/mission-detail/experience-refinement-panel";
 import { Badge } from "@/components/ui/badge";
+import {
+  NEUTRAL_EXPERIENCE_PREFERENCE,
+  type ExperiencePlan,
+  type HumanExperiencePreference,
+} from "@/shared/design-intelligence/types";
 
 interface PageParams {
   params: { id: string };
@@ -84,19 +92,23 @@ export default async function DesignPreviewPage({ params, searchParams }: PagePa
         </div>
       </header>
 
-      <PreviewBody design={design} brief={brief} businessName={mission.business_name} />
+      <PreviewBody design={design} brief={brief} businessName={mission.business_name} missionId={mission.id} supabase={supabase} />
     </main>
   );
 }
 
-function PreviewBody({
+async function PreviewBody({
   design,
   brief,
   businessName,
+  missionId,
+  supabase,
 }: {
   design: NonNullable<Awaited<ReturnType<typeof websiteDesignRepository.findById>>>;
   brief: Awaited<ReturnType<typeof designBriefRepository.findById>>;
   businessName: string;
+  missionId: string;
+  supabase: ReturnType<typeof createClient>;
 }) {
   if (design.status !== "complete" || !design.wireframe || !design.components || !design.refined_design) {
     return (
@@ -111,8 +123,49 @@ function PreviewBody({
 
   const wireframe = design.wireframe as unknown as Wireframe;
   const components = design.components as unknown as ComponentNode[];
-  const refinedDesign = design.refined_design as unknown as RefinedDesign;
   const designMemory = (brief?.design_memory as unknown as DesignMemory | null) ?? null;
+
+  // Phase 6.4 — the AI baseline plan (§1's prerequisite) plus this design
+  // run's latest founder refinement, if any. NEUTRAL_EXPERIENCE_PREFERENCE is
+  // used only to drive resolveRefinement's required parameter — its own
+  // `.baseline` field is ALWAYS computed without any preference applied, so
+  // this is genuinely the AI's own recommendation, not a disguised refinement.
+  let baselinePlan: ExperiencePlan | null = null;
+  let currentRefinement = null as Awaited<ReturnType<typeof experienceRefinementRepository.findLatestByWebsiteDesign>>;
+  let reapplyPrompt: ReapplyPrompt | null = null;
+
+  if (wireframe.compositionVariant && brief?.status === "complete" && brief.brief) {
+    const designBriefValue = brief.brief as unknown as DesignBrief;
+    baselinePlan = resolveRefinement(
+      designBriefValue,
+      designMemory,
+      wireframe.compositionVariant.heroPattern,
+      NEUTRAL_EXPERIENCE_PREFERENCE
+    ).baseline;
+
+    currentRefinement = await experienceRefinementRepository.findLatestByWebsiteDesign(supabase, design.id);
+    const latestMissionRefinement = await experienceRefinementRepository.findLatestByMission(supabase, missionId);
+    if (latestMissionRefinement && latestMissionRefinement.website_design_id !== design.id) {
+      reapplyPrompt = {
+        preference: latestMissionRefinement.preference as unknown as HumanExperiencePreference,
+        fromWebsiteDesignId: latestMissionRefinement.website_design_id,
+      };
+    }
+  }
+
+  // When a refinement exists, the RENDERED page must reflect the founder's
+  // resolved preference, not the unrefined generation-time plan — recomputed
+  // via the SAME refineDesign() call generateWebsiteStructure already uses,
+  // fed the resolved_plan in place of the wireframe's original experiencePlan
+  // (design-generation-service.ts's own anti-drift construction, never a
+  // second independent renderer).
+  const refinedDesign: RefinedDesign = currentRefinement
+    ? refineDesign(
+        { wireframe: { ...wireframe, experiencePlan: currentRefinement.resolved_plan as unknown as ExperiencePlan } },
+        (brief!.brief as unknown as DesignBrief),
+        designMemory
+      )
+    : (design.refined_design as unknown as RefinedDesign);
 
   // heroImageUrl is real only when the Pattern Selection stage (lib/design-
   // intelligence/section-patterns.ts's resolveHeroPattern, run inside
@@ -135,6 +188,16 @@ function PreviewBody({
 
   return (
     <div className="border-t border-border">
+      {baselinePlan && (
+        <div className="container max-w-5xl py-6">
+          <ExperienceRefinementPanel
+            missionId={missionId}
+            initialBaselinePlan={baselinePlan}
+            initialCurrentRefinement={currentRefinement}
+            initialReapplyPrompt={reapplyPrompt}
+          />
+        </div>
+      )}
       <DesignPreview
         businessName={businessName}
         wireframe={wireframe}

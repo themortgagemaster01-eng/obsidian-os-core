@@ -887,6 +887,70 @@ export interface Database {
           }
         ];
       };
+      experience_refinements: {
+        Row: {
+          id: string;
+          mission_id: string;
+          website_design_id: string;
+          organization_id: string;
+          preference: Json;
+          baseline_plan: Json;
+          resolved_plan: Json;
+          explanation: string;
+          was_constrained: boolean;
+          created_by: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          mission_id: string;
+          website_design_id: string;
+          organization_id: string;
+          preference: Json;
+          baseline_plan: Json;
+          resolved_plan: Json;
+          explanation: string;
+          was_constrained?: boolean;
+          created_by: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          mission_id?: string;
+          website_design_id?: string;
+          organization_id?: string;
+          preference?: Json;
+          baseline_plan?: Json;
+          resolved_plan?: Json;
+          explanation?: string;
+          was_constrained?: boolean;
+          created_by?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "experience_refinements_mission_id_fkey";
+            columns: ["mission_id"];
+            isOneToOne: false;
+            referencedRelation: "missions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "experience_refinements_website_design_id_fkey";
+            columns: ["website_design_id"];
+            isOneToOne: false;
+            referencedRelation: "website_designs";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "experience_refinements_organization_id_fkey";
+            columns: ["organization_id"];
+            isOneToOne: false;
+            referencedRelation: "organizations";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

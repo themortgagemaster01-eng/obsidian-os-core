@@ -1,5 +1,6 @@
 import type { MissionState } from "@/lib/workflow/mission-state";
 import type { DecisionType } from "@/lib/repositories/decision-repository";
+import type { ExperiencePlan, HumanExperiencePreference } from "@/shared/design-intelligence/types";
 
 /**
  * The formal event bus's event catalog. Every event type here is both the
@@ -39,6 +40,7 @@ export type DomainEventType =
   | "DesignQaFailed"
   | "PreviewScreenshotCaptured"
   | "PreviewScreenshotFailed"
+  | "ExperienceRefined"
   | "ProposalReady"
   | "EmailDraftReady"
   | "MissionApproved"
@@ -169,6 +171,26 @@ export interface PreviewScreenshotFailedPayload {
   errorMessage: string;
 }
 
+/**
+ * Phase 6.4 (Human-in-the-Loop Experience Refinement). Published by
+ * lib/services/experience-refinement-service.ts every time a founder submits
+ * a bounded Experience Tone / Motion Intensity preference — including the
+ * neutral "Reset to AI Recommendation" preference, which is itself a real,
+ * loggable choice, not a no-op. Carries the same three distinct values the
+ * insert-only experience_refinements row does (§5 of the founder's
+ * directive): the AI baseline this refinement started from, the human's raw
+ * preference input, and what the existing constraint resolution actually
+ * produced — never just the final result alone, so the event stream by
+ * itself is enough to reconstruct "what did the AI recommend, what did the
+ * founder ask for, what did the system actually allow" without a DB lookup.
+ */
+export interface ExperienceRefinedPayload {
+  refinedBy: string;
+  preference: HumanExperiencePreference;
+  baselinePlan: ExperiencePlan;
+  resolvedPlan: ExperiencePlan;
+}
+
 export interface ProposalReadyPayload {
   proposalId?: string;
   price?: number;
@@ -226,6 +248,7 @@ export type DomainEvent = DomainEventBase &
     | { type: "DesignQaFailed"; payload: DesignQaFailedPayload }
     | { type: "PreviewScreenshotCaptured"; payload: PreviewScreenshotCapturedPayload }
     | { type: "PreviewScreenshotFailed"; payload: PreviewScreenshotFailedPayload }
+    | { type: "ExperienceRefined"; payload: ExperienceRefinedPayload }
     | { type: "ProposalReady"; payload: ProposalReadyPayload }
     | { type: "EmailDraftReady"; payload: EmailDraftReadyPayload }
     | { type: "MissionApproved"; payload: MissionApprovedPayload }

@@ -116,3 +116,40 @@ export interface ExperiencePlan {
    */
   rationale: string;
 }
+
+// ===========================================================================
+// Phase 6.4 — Human-in-the-Loop Experience Refinement. A bounded preference
+// vocabulary a founder can express AFTER seeing the AI's resolved
+// ExperiencePlan, never a mode override and never a raw numeric dial. Two
+// independent axes, each with an explicit neutral value (never "no field
+// present" — a neutral selection is itself a real, chosen state: "I looked
+// at this and want the AI's own recommendation," distinct from "I haven't
+// looked yet"). Resolution (lib/design-intelligence/experience-planner.ts's
+// resolveMotionBudget) treats both axes as bounded nudges on the SAME
+// existing mode/evidence/intensity ceiling composition — never a second,
+// independent decision path. Matches the founder's own framing exactly:
+// "AI recommendation -> human preference input -> existing constraint
+// resolution -> final resolved experience plan."
+// ===========================================================================
+
+/** "Experience Tone" — the founder-facing axis closest to motionIntensity/brandPersonality's own existing register. calmer/more-energetic only ever nudge the resolved motion budget within what the mode/evidence/intensity ceiling composition already allows; "more-energetic" can never push a business past its own evidence-backed ceiling. */
+export const ENERGY_PREFERENCE_VOCABULARY = ["calmer", "keep", "more-energetic"] as const;
+export type EnergyPreference = (typeof ENERGY_PREFERENCE_VOCABULARY)[number];
+
+/** "Motion Intensity" — the founder-facing axis closest to the motion budget itself. Same bounded-nudge contract as EnergyPreference; the two axes are independent (a founder could ask for calmer tone AND more motion) and compose onto the same resolved rank, each within the same hard ceiling. */
+export const MOTION_PREFERENCE_VOCABULARY = ["less", "recommended", "more"] as const;
+export type MotionPreference = (typeof MOTION_PREFERENCE_VOCABULARY)[number];
+
+/**
+ * A founder's bounded preference, always both axes present (the UI is two
+ * required button groups, not optional freeform fields) — "keep"/
+ * "recommended" on both axes is itself a meaningful, loggable choice ("I
+ * reviewed this and it's right as-is"), not the absence of one.
+ */
+export interface HumanExperiencePreference {
+  energy: EnergyPreference;
+  motion: MotionPreference;
+}
+
+/** The neutral preference — resolves to exactly the AI baseline, byte-for-byte. Used both as the UI's own default selection and as the explicit "Reset to AI Recommendation" action's payload, so a reset is a real, insert-only history entry (§6.4's insert-only requirement) rather than a special-cased delete/null. */
+export const NEUTRAL_EXPERIENCE_PREFERENCE: HumanExperiencePreference = { energy: "keep", motion: "recommended" };

@@ -59,6 +59,12 @@ function describeEvent(event: DomainEvent): string {
       return "Real preview screenshot captured (desktop + mobile)";
     case "PreviewScreenshotFailed":
       return `Preview screenshot capture failed: ${event.payload.errorMessage}`;
+    case "ExperienceRefined":
+      return `Experience refined by ${event.payload.refinedBy} (tone: ${event.payload.preference.energy}, motion: ${event.payload.preference.motion})${
+        event.payload.baselinePlan.motionBudget !== event.payload.resolvedPlan.motionBudget
+          ? ` — motion budget ${event.payload.baselinePlan.motionBudget} -> ${event.payload.resolvedPlan.motionBudget}`
+          : ""
+      }`;
     case "ProposalReady":
       return "Proposal ready";
     case "EmailDraftReady":

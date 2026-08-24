@@ -5,8 +5,10 @@ import {
   resolveExperienceMode,
   resolveMotionBudget,
   resolveExperiencePlan,
+  computeMotionBudgetCeiling,
   type ExperiencePlanEvidenceDensity,
 } from "@/lib/design-intelligence/experience-planner";
+import { NEUTRAL_EXPERIENCE_PREFERENCE, type HumanExperiencePreference } from "@/shared/design-intelligence/types";
 
 const NO_EVIDENCE: ExperiencePlanEvidenceDensity = {
   services: 0,
@@ -254,5 +256,207 @@ describe("experience-planner: resolveExperiencePlan — validation targets", () 
       assert.ok(plan.motionBudget);
       assert.ok(plan.rationale.length > 0);
     }
+  });
+});
+
+// ===========================================================================
+// Phase 6.4 — Human-in-the-Loop Experience Refinement. Reuses the SAME four
+// contrasting fixture recipes above (never invented new evidence shapes) so
+// these tests prove the human-preference nudge behaves correctly against the
+// same real profiles already validated for mode/motion-budget resolution.
+// ===========================================================================
+
+describe("experience-planner: computeMotionBudgetCeiling", () => {
+  test("returns the minimum of mode/evidence/intensity ceilings, with no personality or human nudge applied", () => {
+    const rich: ExperiencePlanEvidenceDensity = {
+      services: 5,
+      certifications: 3,
+      hasReviews: true,
+      galleryCount: 10,
+      hasRealTeam: true,
+    };
+    // trust-authority's own register ceiling ("subtle") governs even though evidence/intensity would allow more.
+    assert.equal(computeMotionBudgetCeiling("trust-authority", rich, "energetic"), "subtle");
+    // Thin evidence caps a rich-register mode down to "none".
+    assert.equal(computeMotionBudgetCeiling("cinematic-storytelling", NO_EVIDENCE, "energetic"), "none");
+    // A restrained disclosed intensity caps a rich-register, rich-evidence combination at "subtle".
+    assert.equal(computeMotionBudgetCeiling("cinematic-storytelling", rich, "restrained"), "subtle");
+  });
+
+  test("matches resolveMotionBudget's own result when no personality or human preference is supplied", () => {
+    const moderate: ExperiencePlanEvidenceDensity = {
+      services: 3,
+      certifications: 1,
+      hasReviews: false,
+      galleryCount: 0,
+      hasRealTeam: false,
+    };
+    const ceiling = computeMotionBudgetCeiling("warm-local-business", moderate, "energetic");
+    const budget = resolveMotionBudget("warm-local-business", moderate, "energetic");
+    assert.equal(budget, ceiling);
+  });
+});
+
+describe("experience-planner: resolveMotionBudget with humanPreference — bounded nudge, never a bypass", () => {
+  const lawFirmEvidence: ExperiencePlanEvidenceDensity = {
+    services: 2,
+    certifications: 2,
+    hasReviews: true,
+    galleryCount: 0,
+    hasRealTeam: true,
+  };
+  const sparseEvidence: ExperiencePlanEvidenceDensity = {
+    services: 1,
+    certifications: 0,
+    hasReviews: false,
+    galleryCount: 0,
+    hasRealTeam: false,
+  };
+  const richEvidence: ExperiencePlanEvidenceDensity = {
+    services: 4,
+    certifications: 0,
+    hasReviews: true,
+    galleryCount: 8,
+    hasRealTeam: false,
+  };
+
+  test("a trust-authority law firm cannot be pushed past its 'subtle' mode ceiling, even requesting more on both axes simultaneously", () => {
+    const bothMore: HumanExperiencePreference = { energy: "more-energetic", motion: "more" };
+    const budget = resolveMotionBudget("trust-authority", lawFirmEvidence, "restrained", undefined, undefined, bothMore);
+    assert.equal(budget, "subtle");
+    assert.equal(computeMotionBudgetCeiling("trust-authority", lawFirmEvidence, "restrained"), "subtle");
+  });
+
+  test("repeating a 'more' request does not accumulate past the ceiling — resolving twice in a row from the same baseline yields the same capped result", () => {
+    const more: HumanExperiencePreference = { energy: "more-energetic", motion: "more" };
+    const first = resolveMotionBudget("trust-authority", lawFirmEvidence, "restrained", undefined, undefined, more);
+    const second = resolveMotionBudget("trust-authority", lawFirmEvidence, "restrained", undefined, undefined, more);
+    assert.equal(first, "subtle");
+    assert.equal(second, "subtle");
+  });
+
+  test("a sparse business capped at 'none' by evidence alone cannot be moved off 'none' by any preference combination", () => {
+    const combinations: HumanExperiencePreference[] = [
+      { energy: "more-energetic", motion: "more" },
+      { energy: "more-energetic", motion: "recommended" },
+      { energy: "keep", motion: "more" },
+      { energy: "calmer", motion: "more" },
+    ];
+    for (const preference of combinations) {
+      const budget = resolveMotionBudget("editorial-storytelling", sparseEvidence, "restrained", undefined, undefined, preference);
+      assert.equal(budget, "none", `preference ${JSON.stringify(preference)} must not move a "none"-ceiling business off "none"`);
+    }
+  });
+
+  test("'calmer'/'less' can always pull the budget down to the floor, unconditionally reachable regardless of mode/evidence richness", () => {
+    const bothLess: HumanExperiencePreference = { energy: "calmer", motion: "less" };
+    // Starts at "cinematic" (the top of the range) — two independent down-nudges should land at "subtle" (cinematic -> enhanced -> subtle is 2 steps; energy and motion are independent axes stacking).
+    const budget = resolveMotionBudget("cinematic-storytelling", richEvidence, "energetic", undefined, undefined, bothLess);
+    assert.equal(budget, "subtle");
+  });
+
+  test("the neutral preference (keep/recommended) resolves to exactly the same budget as no preference at all", () => {
+    const withoutPreference = resolveMotionBudget("warm-local-business", richEvidence, "energetic");
+    const withNeutralPreference = resolveMotionBudget(
+      "warm-local-business",
+      richEvidence,
+      "energetic",
+      undefined,
+      undefined,
+      NEUTRAL_EXPERIENCE_PREFERENCE
+    );
+    assert.equal(withNeutralPreference, withoutPreference);
+  });
+
+  test("energy and motion axes are independent and compose onto the same rank", () => {
+    const energyOnly = resolveMotionBudget("warm-local-business", richEvidence, "restrained", undefined, undefined, {
+      energy: "calmer",
+      motion: "recommended",
+    });
+    const motionOnly = resolveMotionBudget("warm-local-business", richEvidence, "restrained", undefined, undefined, {
+      energy: "keep",
+      motion: "less",
+    });
+    const both = resolveMotionBudget("warm-local-business", richEvidence, "restrained", undefined, undefined, {
+      energy: "calmer",
+      motion: "less",
+    });
+    // Both axes requesting "down" should pull the rank down further than either alone (or reach the same floor).
+    const rankOf: Record<string, number> = { none: 0, subtle: 1, enhanced: 2, cinematic: 3 };
+    assert.ok(rankOf[both] <= rankOf[energyOnly]);
+    assert.ok(rankOf[both] <= rankOf[motionOnly]);
+  });
+});
+
+describe("experience-planner: resolveExperiencePlan with humanPreference — mode is never influenced", () => {
+  test("mode stays identical regardless of any human preference — only motionBudget and rationale may change", () => {
+    const baseInput = {
+      industryBucket: "lawFirm" as const,
+      heroPattern: "editorial-typographic" as const,
+      evidence: { services: 2, certifications: 2, hasReviews: true, galleryCount: 0, hasRealTeam: true },
+      motionIntensity: "restrained" as const,
+    };
+    const baseline = resolveExperiencePlan(baseInput);
+    const withMorePreference = resolveExperiencePlan({
+      ...baseInput,
+      humanPreference: { energy: "more-energetic", motion: "more" },
+    });
+    const withLessPreference = resolveExperiencePlan({
+      ...baseInput,
+      humanPreference: { energy: "calmer", motion: "less" },
+    });
+    assert.equal(withMorePreference.mode, baseline.mode);
+    assert.equal(withLessPreference.mode, baseline.mode);
+  });
+
+  test("rationale honestly reports a capped 'more' request without pretending it was fully granted", () => {
+    const plan = resolveExperiencePlan({
+      industryBucket: "lawFirm",
+      heroPattern: "editorial-typographic",
+      evidence: { services: 2, certifications: 2, hasReviews: true, galleryCount: 0, hasRealTeam: true },
+      motionIntensity: "restrained",
+      humanPreference: { energy: "more-energetic", motion: "more" },
+    });
+    assert.equal(plan.motionBudget, "subtle");
+    assert.ok(
+      /could not go further|real ceiling/.test(plan.rationale),
+      `rationale should honestly describe the request as capped, got: ${plan.rationale}`
+    );
+  });
+
+  test("rationale reports a fully-honored 'less' request as an adjustment, not a denial", () => {
+    const plan = resolveExperiencePlan({
+      industryBucket: "restaurant",
+      heroPattern: "centered-cinematic",
+      evidence: { services: 4, certifications: 0, hasReviews: true, galleryCount: 8, hasRealTeam: false },
+      motionIntensity: "energetic",
+      humanPreference: { energy: "calmer", motion: "recommended" },
+    });
+    assert.equal(plan.mode, "cinematic-storytelling");
+    assert.notEqual(plan.motionBudget, "cinematic");
+    assert.ok(plan.rationale.includes("Adjusted per a founder's stated preference"));
+  });
+
+  test("rationale reports the neutral preference as 'no change requested'", () => {
+    const plan = resolveExperiencePlan({
+      industryBucket: "restaurant",
+      heroPattern: "centered-cinematic",
+      evidence: { services: 4, certifications: 0, hasReviews: true, galleryCount: 8, hasRealTeam: false },
+      motionIntensity: "energetic",
+      humanPreference: NEUTRAL_EXPERIENCE_PREFERENCE,
+    });
+    assert.ok(plan.rationale.includes("No change requested"));
+  });
+
+  test("absent humanPreference produces byte-identical output to the pre-Phase-6.4 call shape (no regression for normal generation-time calls)", () => {
+    const input = {
+      industryBucket: "homeService" as const,
+      heroPattern: "image-full-bleed" as const,
+      evidence: { services: 5, certifications: 0, hasReviews: false, galleryCount: 6, hasRealTeam: false },
+      motionIntensity: "energetic" as const,
+    };
+    const withoutField = resolveExperiencePlan(input);
+    const withUndefinedField = resolveExperiencePlan({ ...input, humanPreference: undefined });
+    assert.deepEqual(withoutField, withUndefinedField);
   });
 });

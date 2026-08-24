@@ -12,6 +12,7 @@ import {
   type ExperienceMode,
   type MotionBudget,
   type ExperiencePlan,
+  type HumanExperiencePreference,
 } from "@/shared/design-intelligence/types";
 
 /**
@@ -248,38 +249,73 @@ function motionBudgetByRank(rank: number): MotionBudget {
 }
 
 /**
- * resolveMotionBudget — the minimum of three independent ceilings (the
- * chosen mode's own register, how much real evidence backs an elevated
- * experience, and Design Intelligence's own disclosed motionIntensity),
- * then narrowed one further step when Design Memory's own real
- * brandPersonality/contentTone reads as deliberately restrained — reusing
+ * computeMotionBudgetCeiling — the hard, evidence-and-category-derived
+ * limit on motion, BEFORE any nudge (brand-personality tone or Phase 6.4's
+ * human preference) is applied. Extracted as its own named, exported
+ * function so lib/services/experience-refinement-service.ts can compute the
+ * SAME real ceiling a refinement request is bounded by — never a second,
+ * independently-derived limit that could drift from what resolveMotionBudget
+ * itself actually enforces. This is the minimum of three independent
+ * ceilings: the chosen mode's own register (a law firm's trust-authority
+ * mode caps at "subtle" no matter how energetic the evidence, per §6.4's own
+ * non-negotiable), how much real evidence backs an elevated experience, and
+ * Design Intelligence's own disclosed motionIntensity.
+ */
+export function computeMotionBudgetCeiling(
+  mode: ExperienceMode,
+  evidence: ExperiencePlanEvidenceDensity,
+  motionIntensity: "restrained" | "energetic"
+): MotionBudget {
+  const modeCeiling = MOTION_BUDGET_CEILING_BY_MODE[mode];
+  const evidenceCeiling = evidenceMotionCeiling(evidence);
+  const intensityCeiling = MOTION_BUDGET_CEILING_BY_INTENSITY[motionIntensity];
+  const rank = Math.min(MOTION_BUDGET_RANK[modeCeiling], MOTION_BUDGET_RANK[evidenceCeiling], MOTION_BUDGET_RANK[intensityCeiling]);
+  return motionBudgetByRank(rank);
+}
+
+/**
+ * resolveMotionBudget — starts from computeMotionBudgetCeiling's hard limit,
+ * then narrows it one further step when Design Memory's own real
+ * brandPersonality/contentTone reads as deliberately restrained (reusing
  * composition-variants.ts's personalityPaddingBias rather than a second
- * keyword classifier (never redefined here; the exact same real per-
- * business signal is now genuinely load-bearing on two independent axes,
- * spacing rhythm and motion budget, rather than duplicated logic that could
- * drift apart). A "bold"-read personality never raises the budget past what
- * mode/evidence/intensity already allow — never license to add motion the
- * evidence itself doesn't support.
+ * keyword classifier — never redefined here), then applies Phase 6.4's
+ * human preference as one more bounded nudge on the SAME resolved rank —
+ * never a parallel decision path, never a widening of the ceiling itself.
+ *
+ * The human-preference nudge is deliberately asymmetric, per the founder's
+ * own non-negotiable: "calmer"/"less" can always pull the rank further
+ * down (restraint never needs the evidence's permission — the floor is
+ * "none", always reachable), while "more-energetic"/"more" can only ever
+ * raise the rank back UP TO computeMotionBudgetCeiling's own hard limit —
+ * never past it, regardless of how many times "more" is requested or
+ * combined with a bold-read personality. A trust-authority law firm capped
+ * at "subtle" stays at "subtle" even if a founder selects "More Energetic"
+ * AND "More Motion" simultaneously; a "none"-budget sparse business (whose
+ * ceiling is already rank 0 from evidence alone) cannot be moved off
+ * "none" by any preference combination — Math.min(ceilingRank, ...) makes
+ * this a structural guarantee, not a check that could be forgotten.
  */
 export function resolveMotionBudget(
   mode: ExperienceMode,
   evidence: ExperiencePlanEvidenceDensity,
   motionIntensity: "restrained" | "energetic",
   brandPersonality?: string[],
-  contentTone?: string
+  contentTone?: string,
+  humanPreference?: HumanExperiencePreference
 ): MotionBudget {
-  const modeCeiling = MOTION_BUDGET_CEILING_BY_MODE[mode];
-  const evidenceCeiling = evidenceMotionCeiling(evidence);
-  const intensityCeiling = MOTION_BUDGET_CEILING_BY_INTENSITY[motionIntensity];
+  const ceilingRank = MOTION_BUDGET_RANK[computeMotionBudgetCeiling(mode, evidence, motionIntensity)];
 
-  let rank = Math.min(
-    MOTION_BUDGET_RANK[modeCeiling],
-    MOTION_BUDGET_RANK[evidenceCeiling],
-    MOTION_BUDGET_RANK[intensityCeiling]
-  );
+  let rank = ceilingRank;
 
   const restrainedTone = personalityPaddingBias(brandPersonality, contentTone) > 0;
   if (restrainedTone) rank = Math.max(0, rank - 1);
+
+  if (humanPreference) {
+    if (humanPreference.energy === "calmer") rank = Math.max(0, rank - 1);
+    if (humanPreference.energy === "more-energetic") rank = Math.min(ceilingRank, rank + 1);
+    if (humanPreference.motion === "less") rank = Math.max(0, rank - 1);
+    if (humanPreference.motion === "more") rank = Math.min(ceilingRank, rank + 1);
+  }
 
   return motionBudgetByRank(rank);
 }
@@ -304,18 +340,55 @@ function describeEvidence(evidence: ExperiencePlanEvidenceDensity): string {
   return parts.length > 0 ? parts.join(", ") : "no evidence beyond the base crawl";
 }
 
+/**
+ * Phase 6.4: appends a plain-English account of the human preference's
+ * effect, when one was supplied — always accurate to what actually
+ * happened (compares the ceiling to the resolved budget directly, rather
+ * than trying to infer "was this honored" from the preference alone), so
+ * the rationale can never imply a request was granted when the ceiling
+ * actually held it back. Absent humanPreference (the normal generation-time
+ * call, before any founder has reviewed anything), this contributes nothing
+ * — the rationale reads exactly as it did before Phase 6.4.
+ */
+function describeHumanPreferenceOutcome(
+  humanPreference: HumanExperiencePreference | undefined,
+  ceiling: MotionBudget,
+  resolvedBudget: MotionBudget
+): string {
+  if (!humanPreference) return "";
+  const requestedMore = humanPreference.energy === "more-energetic" || humanPreference.motion === "more";
+  const requestedLess = humanPreference.energy === "calmer" || humanPreference.motion === "less";
+  const requestedNeither = !requestedMore && !requestedLess;
+
+  if (requestedNeither) {
+    return " No change requested — this stays the AI's own recommendation.";
+  }
+  // resolveMotionBudget's own clamping guarantees resolvedBudget can never
+  // exceed the ceiling, so this branch (requestedMore AND resolved === the
+  // hard ceiling) covers both "reached the ceiling" and "already at the
+  // ceiling, nothing more to give" honestly, without claiming a request was
+  // denied when it may in fact have been fully honored up to that real limit.
+  if (requestedMore && resolvedBudget === ceiling) {
+    return ` A founder asked for more energy/motion; this business's real evidence and category cap motion at "${ceiling}" — the resolved experience reached that real ceiling and could not go further.`;
+  }
+  return ` Adjusted per a founder's stated preference, still within this business's real evidence-backed ceiling of "${ceiling}".`;
+}
+
 function buildRationale(
   mode: ExperienceMode,
   motionBudget: MotionBudget,
   industryBucket: IndustryBucket,
   heroPattern: HeroPatternId,
   evidence: ExperiencePlanEvidenceDensity,
-  motionIntensity: "restrained" | "energetic"
+  motionIntensity: "restrained" | "energetic",
+  humanPreference?: HumanExperiencePreference
 ): string {
   const evidenceSummary = describeEvidence(evidence);
+  const ceiling = computeMotionBudgetCeiling(mode, evidence, motionIntensity);
   return (
     `"${industryBucket}" business resolved to the "${mode}" experience from its already-resolved "${heroPattern}" hero pattern and real evidence (${evidenceSummary}). ` +
-    `Design Intelligence's disclosed motionIntensity is "${motionIntensity}". Motion budget set to "${motionBudget}" — the minimum of this mode's own register ceiling, how much real evidence backs an elevated experience, and the disclosed motion intensity, so motion never runs ahead of what this business's real evidence and category can honestly support.`
+    `Design Intelligence's disclosed motionIntensity is "${motionIntensity}". Motion budget set to "${motionBudget}" — the minimum of this mode's own register ceiling, how much real evidence backs an elevated experience, and the disclosed motion intensity, so motion never runs ahead of what this business's real evidence and category can honestly support.` +
+    describeHumanPreferenceOutcome(humanPreference, ceiling, motionBudget)
   );
 }
 
@@ -339,6 +412,17 @@ export interface ResolveExperiencePlanInput {
   /** DesignMemory.brandPersonality/contentTone, passed through unchanged — the same real per-business signal composition-variants.ts already uses for its own padding-bias nudge. */
   brandPersonality?: string[];
   contentTone?: string;
+  /**
+   * Phase 6.4: a founder's bounded preference, applied AFTER the AI baseline
+   * is otherwise fully resolved — absent for every generation-time call
+   * (the normal path, before any human has reviewed anything) and present
+   * only when lib/services/experience-refinement-service.ts re-resolves
+   * this same input with a real founder preference layered on top. Never
+   * changes `mode` (see resolveExperienceMode, which never reads this
+   * field) — only nudges motionBudget, and only within
+   * computeMotionBudgetCeiling's own hard limit.
+   */
+  humanPreference?: HumanExperiencePreference;
 }
 
 /**
@@ -355,9 +439,18 @@ export function resolveExperiencePlan(input: ResolveExperiencePlanInput): Experi
     input.evidence,
     input.motionIntensity,
     input.brandPersonality,
-    input.contentTone
+    input.contentTone,
+    input.humanPreference
   );
-  const rationale = buildRationale(mode, motionBudget, input.industryBucket, input.heroPattern, input.evidence, input.motionIntensity);
+  const rationale = buildRationale(
+    mode,
+    motionBudget,
+    input.industryBucket,
+    input.heroPattern,
+    input.evidence,
+    input.motionIntensity,
+    input.humanPreference
+  );
 
   return { mode, motionBudget, rationale };
 }
