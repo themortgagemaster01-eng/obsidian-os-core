@@ -24,6 +24,7 @@ import {
   safeAccentTextColor,
 } from "@/lib/design-render/safe-css";
 import { SlotValue, isRealSlot } from "@/components/design-preview/slot-value";
+import { ScrollRevealRuntime } from "@/components/design-preview/scroll-reveal-runtime";
 
 /**
  * components/design-preview/design-preview.tsx — the typed renderer at the
@@ -381,15 +382,55 @@ export function DesignPreview({
   // scrollWidth even if some future section ever reintroduces an
   // unconstrained-width element this pass didn't anticipate.
   const mobileStyleCss = `
-        @keyframes op-fade-in { from { opacity: 0; transform: translateY(var(--op-ty, 12px)); } to { opacity: 1; transform: none; } }
-        @keyframes op-fade-scale-in { from { opacity: 0; transform: translateY(var(--op-ty, 12px)) scale(1.03); } to { opacity: 1; transform: none; } }
+        /* Phase 6.3 (Scroll-Triggered Storytelling): the DEFAULT state for
+           any [data-op-animated] section is fully visible — no opacity/
+           transform override at all — so content "remains immediately
+           visible" by construction whether or not JS ever runs. The client
+           runtime (scroll-reveal-runtime.tsx) is the ONLY thing that ever
+           adds [data-op-pending] (the hidden, about-to-reveal state, for a
+           section it has confirmed is currently off-screen) or
+           [data-op-revealed] (the settled, visible state, once that section
+           has scrolled into view or a safety fallback fired).
+
+           transition lives ONLY on the [data-op-revealed] rule, deliberately
+           — NOT on the shared [data-op-animated] base selector. A version
+           of this pass that put it on the base selector had a real, confirmed
+           bug: the runtime's own mount-time getBoundingClientRect() call
+           forces a real layout/paint commit at the section's default
+           (visible) state, so the VERY NEXT attribute change (default ->
+           [data-op-pending], applied moments later in the same effect) was
+           itself treated as an animatable transition — a brief, unwanted
+           "flash to transparent" on mount, before any scrolling happened,
+           for every off-screen section. Scoping transition to only the
+           reveal direction means the hide step is always instant (no
+           transition rule is active for that change), and only the
+           scroll-triggered reveal itself ever animates. --op-scale defaults
+           to 1 (a no-op) so the exact same rule covers both "fade" and
+           "fade-scale" reveal styles — SectionShell sets --op-scale
+           explicitly only for the latter. */
+        [data-op-animated][data-op-pending] {
+          opacity: 0;
+          transform: translateY(var(--op-ty, 12px)) scale(var(--op-scale, 1));
+          will-change: opacity, transform;
+        }
+        [data-op-animated][data-op-revealed] {
+          opacity: 1;
+          transform: none;
+          transition: opacity var(--op-dur, 250ms) var(--op-ease, ease-out) var(--op-delay, 0ms), transform var(--op-dur, 250ms) var(--op-ease, ease-out) var(--op-delay, 0ms);
+        }
         [data-design-preview] { overflow-x: hidden; }
         [data-design-preview] img { max-width: 100%; height: auto; }
         [data-design-preview] * { overflow-wrap: break-word; word-break: break-word; }
         [data-design-preview] a, [data-design-preview] button { font-family: inherit; }
         [data-design-preview] a { color: inherit; text-decoration: none; }
+        /* Belt-and-suspenders (Phase 6.2's original protection, kept
+           unchanged in spirit): the client runtime already checks
+           prefers-reduced-motion before ever adding [data-op-pending], so
+           this should never actually need to fire — but if it ever did
+           (a future bug, a runtime that loaded before this stylesheet), a
+           reduced-motion visitor still never sees a hidden section. */
         @media (prefers-reduced-motion: reduce) {
-          [data-design-preview] [data-op-animated] { animation: none !important; opacity: 1 !important; transform: none !important; }
+          [data-design-preview] [data-op-animated] { transition: none !important; opacity: 1 !important; transform: none !important; }
         }
         /* Phase 6.2 hover-intensity primitive (high-energy-retail only,
            lib/services/design-refinement-service.ts's SectionHoverValue) —
@@ -470,6 +511,13 @@ export function DesignPreview({
           left to diverge — the fix removes the mismatch's actual cause
           rather than hiding the error it produces. */}
       <style dangerouslySetInnerHTML={{ __html: mobileStyleCss }} />
+      {/* Phase 6.3: the one client-side seam in an otherwise fully
+          server-rendered component. Renders nothing; only ever ADDS a
+          hidden state to a section it has confirmed is off-screen, and
+          guarantees every section it hides is later revealed (scroll,
+          deep-link, or a safety timeout) — see scroll-reveal-runtime.tsx's
+          own module comment for the full contract. */}
+      <ScrollRevealRuntime />
 
       <Nav
         businessName={businessName}
@@ -680,15 +728,22 @@ function SectionShell({
   // real semantic element, not a labeled-but-generic one everywhere.
   const Tag = section === "footer" ? "footer" : "section";
 
-  // Phase 6.2 (Experience Runtime): revealStyle picks which of the two
-  // keyframes below plays; translateYPx/delayMs are read straight off
-  // RefinedDesign.motion — this component never computes a motion value of
-  // its own, it only renders the one refineMotion already resolved. `?? `
-  // defaults (12px, "fade", 0ms) reproduce the exact pre-6.2 fixed CSS
-  // values, so a wireframe predating Phase 6.1's ExperiencePlan (no
-  // revealStyle/translateYPx/delayMs on its motion entries) renders
-  // byte-identically to before.
-  const animationName = motion?.revealStyle === "fade-scale" ? "op-fade-scale-in" : "op-fade-in";
+  // Phase 6.3 (Scroll-Triggered Storytelling): this element never animates
+  // on its own — it only declares, via CSS custom properties, what a
+  // reveal transition WOULD look like if the client runtime
+  // (scroll-reveal-runtime.tsx) decides this section should be pre-hidden
+  // and later revealed on scroll. Every value here is read straight off
+  // RefinedDesign.motion (refineMotion's already-resolved decision) — this
+  // component never computes or re-derives a motion value of its own. A
+  // section this maps to "fade-scale" gets --op-scale > 1 (its hidden state
+  // is very slightly scaled up as well as offset); every other section gets
+  // --op-scale: 1 (a no-op scale, so the SAME transform expression in the
+  // stylesheet below covers both reveal styles without two separate
+  // keyframe names). `??` defaults (12px, 1, 0ms) reproduce the exact
+  // pre-6.3 fixed values, so a wireframe predating Phase 6.1's
+  // ExperiencePlan (no revealStyle/translateYPx/delayMs on its motion
+  // entries) still renders a sensible hidden state if it's ever observed.
+  const revealScale = motion?.revealStyle === "fade-scale" ? 1.03 : 1;
 
   return (
     <Tag
@@ -739,10 +794,32 @@ function SectionShell({
         display: isHero ? "flex" : undefined,
         alignItems: isHero ? "center" : undefined,
         borderTop: isHero ? "none" : isSignature ? `3px solid ${accent}` : "1px solid rgba(0,0,0,0.08)",
-        animation: motion
-          ? `${animationName} ${motion.durationMs}ms ${motion.easing} ${motion.delayMs ?? 0}ms both`
-          : undefined,
+        // No `animation` and no unconditional inline `transition` here —
+        // Phase 6.3 replaced the automatic load-time keyframe with a
+        // scroll-triggered reveal driven by the [data-op-pending]/
+        // [data-op-revealed] attributes the client runtime toggles (see the
+        // stylesheet below). The transition itself is declared ONLY on the
+        // stylesheet's [data-op-revealed] rule, deliberately — an earlier
+        // version of this pass declared `transition` unconditionally here,
+        // which meant the client runtime's OWN synchronous mount-time
+        // `getBoundingClientRect()` call (forcing a real layout/paint
+        // commit at the section's natural, fully-visible default state)
+        // could make the browser treat the very next attribute change
+        // (default -> [data-op-pending]) as an animatable transition too —
+        // a real, confirmed brief "flash to transparent" on mount, before
+        // any scrolling happened, for every off-screen section. Declaring
+        // the transition only on [data-op-revealed] means the default ->
+        // pending hide is always instant (no transition rule is active for
+        // that change), and only the pending -> revealed reveal — the
+        // scroll-triggered moment this is actually for — ever animates.
+        // Only the raw TIMING values (duration/easing/delay/offset/scale)
+        // are set here, as custom properties the stylesheet's own
+        // transition/transform declarations read.
+        "--op-dur": motion ? `${motion.durationMs}ms` : undefined,
+        "--op-ease": motion ? motion.easing : undefined,
+        "--op-delay": motion ? `${motion.delayMs ?? 0}ms` : undefined,
         "--op-ty": motion ? `${motion.translateYPx ?? 12}px` : undefined,
+        "--op-scale": motion ? revealScale : undefined,
       } as React.CSSProperties}
     >
       <div style={{ maxWidth: `${contentWidthRem}rem`, margin: "0 auto", width: "100%" }}>{children}</div>
