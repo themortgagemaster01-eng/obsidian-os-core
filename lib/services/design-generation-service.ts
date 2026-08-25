@@ -15,6 +15,8 @@ import { resolveExperiencePlan, type ResolveExperiencePlanInput } from "@/lib/de
 import type { ExperiencePlan } from "@/shared/design-intelligence/types";
 import type { HumanExperiencePreference } from "@/shared/design-intelligence/types";
 import type { HeroPatternId } from "@/lib/design-intelligence/section-patterns";
+import { resolveMotionThroughCapabilities } from "@/lib/design-intelligence/capability-motion-execution";
+import type { CapabilityDecision } from "@/lib/design-intelligence/capability-selector";
 
 import {
   websiteDesignRepository,
@@ -1122,6 +1124,19 @@ export interface WebsiteStructure {
   refinedDesign: RefinedDesign;
   /** Real evidence conflicts detected and kept off the page — see ContentWarning. Empty when nothing conflicted. */
   contentWarnings: ContentWarning[];
+  /**
+   * Phase 6.5 integration follow-up: the real Capability Selector decisions
+   * computed for this run (lib/design-intelligence/capability-motion-
+   * execution.ts) — proof, on WebsiteStructure's own public return value,
+   * that the live pipeline actually traversed the Capability Selector seam
+   * rather than calling refineMotion directly. Mirrors contentWarnings'
+   * existing precedent exactly: a real, computed, in-memory field the
+   * caller may log/inspect, never persisted onto the website_designs row
+   * (runDesignGeneration below saves only wireframe/components/
+   * refined_design, unchanged). Empty only for a legacy wireframe with no
+   * ExperiencePlan, the same case where capability selection never runs.
+   */
+  capabilityDecisions: CapabilityDecision[];
 }
 
 /** Convenience entry point composing the two passes above, mirroring how insight-service/opportunity-scoring-service compose at call sites. */
@@ -1129,7 +1144,13 @@ export function generateWebsiteStructure(
   brief: DesignBrief,
   options: GenerateWebsiteStructureOptions
 ): WebsiteStructure {
-  const wireframe = generateWireframe(brief, {
+  // Named (not inlined into the generateWireframe call below) so the exact
+  // SAME evidence-density construction can be reused for the Capability
+  // Selector call further down via buildExperiencePlanInputs — never a
+  // second, independently-derived read of this business's real evidence
+  // (the same anti-drift discipline Phase 6.1/6.4 already hold
+  // experiencePlan resolution to, extended here to capability resolution).
+  const wireframeOptions: GenerateWireframeOptions = {
     ...options,
     hasRealImagery: !!brief.gallery && brief.gallery.length > 0,
     compositionEvidence: {
@@ -1140,7 +1161,8 @@ export function generateWebsiteStructure(
     },
     brandPersonality: options.designMemory?.brandPersonality,
     contentTone: options.designMemory?.contentTone,
-  });
+  };
+  const wireframe = generateWireframe(brief, wireframeOptions);
   const assembleContext: AssembleComponentsContext = {
     businessName: brief.businessName,
     citedInsights: brief.citedInsights,
@@ -1160,7 +1182,36 @@ export function generateWebsiteStructure(
   const components = assembleComponents(wireframe, assembleContext);
   const contentWarnings = collectContentWarnings(assembleContext);
   const refinedDesign = refineDesign({ wireframe }, brief, options.designMemory);
-  return { wireframe, components, refinedDesign, contentWarnings };
+
+  // Phase 6.5 integration follow-up: route motion through the real
+  // Capability Selector -> Capability Adapter Registry -> Granted Adapter
+  // seam (lib/design-intelligence/capability-motion-execution.ts) rather
+  // than relying solely on refineDesign's own internal refineMotion call
+  // above. evidence/industryBucket reuse buildExperiencePlanInputs — the
+  // SAME construction that just produced wireframe.experiencePlan itself —
+  // never an independent second read of raw evidence.
+  const capabilityPlanInputs = wireframe.compositionVariant
+    ? buildExperiencePlanInputs(brief, wireframe.compositionVariant.heroPattern, wireframeOptions)
+    : null;
+  const { motion, capabilityDecisions } = resolveMotionThroughCapabilities({
+    wireframe,
+    motionIntensity: brief.direction.motionIntensity,
+    evidence: capabilityPlanInputs?.evidence,
+    industryBucket: capabilityPlanInputs?.industryBucket,
+  });
+  const finalRefinedDesign: RefinedDesign = {
+    ...refinedDesign,
+    motion,
+    violations: [
+      ...refinedDesign.typography.violations,
+      ...refinedDesign.spacing.violations,
+      ...refinedDesign.layout.violations,
+      ...motion.violations,
+      ...refinedDesign.mobile.violations,
+    ],
+  };
+
+  return { wireframe, components, refinedDesign: finalRefinedDesign, contentWarnings, capabilityDecisions };
 }
 
 // ===========================================================================

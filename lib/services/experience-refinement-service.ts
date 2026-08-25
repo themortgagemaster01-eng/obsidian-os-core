@@ -11,6 +11,8 @@ import {
 import { resolveExperiencePlan, computeMotionBudgetCeiling } from "@/lib/design-intelligence/experience-planner";
 import type { HeroPatternId } from "@/lib/design-intelligence/section-patterns";
 import type { ExperiencePlan, HumanExperiencePreference } from "@/shared/design-intelligence/types";
+import { refineDesign, type RefinedDesign } from "@/lib/services/design-refinement-service";
+import { resolveMotionThroughCapabilities } from "@/lib/design-intelligence/capability-motion-execution";
 import {
   experienceRefinementRepository,
   type ExperienceRefinementRow,
@@ -87,6 +89,51 @@ export function resolveRefinement(
   const wasConstrained = requestedMore && resolved.motionBudget === ceiling;
 
   return { baseline, resolved, explanation: resolved.rationale, wasConstrained };
+}
+
+/**
+ * resolveRefinedDesign — Phase 6.5 integration follow-up: the founder-
+ * refinement re-render, now routed through the SAME Capability Selector ->
+ * Capability Adapter Registry -> Granted Adapter seam primary generation
+ * uses (lib/design-intelligence/capability-motion-execution.ts's
+ * resolveMotionThroughCapabilities), instead of relying solely on
+ * refineDesign's own internal refineMotion call. Extracted out of
+ * app/missions/[id]/preview/page.tsx — a Server Component this codebase has
+ * no test harness for — into this service specifically so the computation
+ * is a real, testable, pure function, matching this codebase's "always test
+ * the real function, not the page that calls it" convention (design-
+ * generation-service.test.ts, design-refinement-service.test.ts, etc.).
+ *
+ * Pure: no Supabase access. The caller (the preview page) still owns
+ * fetching the refinement row and substituting resolved_plan onto the
+ * wireframe's own experiencePlan field before calling this — this function
+ * never re-derives which plan is "current," it only renders whichever one
+ * it's given, exactly as refineDesign always has.
+ *
+ * Duplicates zero capability-selection or adapter-resolution logic —
+ * resolveMotionThroughCapabilities is the SAME function design-generation-
+ * service.ts's generateWebsiteStructure calls; this is the second, and
+ * only other, real call site.
+ */
+export function resolveRefinedDesign(wireframe: Wireframe, brief: DesignBrief, designMemory: DesignMemory | null): RefinedDesign {
+  const base = refineDesign({ wireframe }, brief, designMemory);
+  const { motion } = resolveMotionThroughCapabilities({
+    wireframe,
+    motionIntensity: brief.direction.motionIntensity,
+    industryBucket: brief.industryBucket,
+  });
+
+  return {
+    ...base,
+    motion,
+    violations: [
+      ...base.typography.violations,
+      ...base.spacing.violations,
+      ...base.layout.violations,
+      ...motion.violations,
+      ...base.mobile.violations,
+    ],
+  };
 }
 
 // ===========================================================================

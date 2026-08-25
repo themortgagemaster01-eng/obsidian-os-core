@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   resolveRefinement,
+  resolveRefinedDesign,
   refineExperience,
   type ExperienceRefinementServiceDeps,
 } from "@/lib/services/experience-refinement-service";
@@ -16,6 +17,8 @@ import type { MissionRow } from "@/lib/repositories/mission-repository";
 import type { ExperienceRefinementRow, ExperienceRefinementInsert } from "@/lib/repositories/experience-refinement-repository";
 import type { HumanExperiencePreference } from "@/shared/design-intelligence/types";
 import type { DomainEvent } from "@/lib/events/types";
+import { generateWireframe, type Wireframe } from "@/lib/services/design-generation-service";
+import { refineDesign, refineMotion } from "@/lib/services/design-refinement-service";
 
 const NO_CONTACT_EVIDENCE: ContactInfo = { phones: [], emails: [], address: null, hours: null };
 
@@ -249,6 +252,86 @@ describe("experience-refinement-service: resolveRefinement (pure)", () => {
     const more: HumanExperiencePreference = { energy: "more-energetic", motion: "more" };
     const { explanation } = resolveRefinement(LAW_FIRM_BRIEF, NO_DESIGN_MEMORY, "editorial-typographic", more);
     assert.match(explanation, /could not go further|real ceiling/);
+  });
+});
+
+/**
+ * Phase 6.5 integration follow-up: resolveRefinedDesign is the founder-
+ * refinement re-render path, now routed through the SAME capability seam
+ * (resolveMotionThroughCapabilities) design-generation-service.test.ts's
+ * own "Phase 6.5 Capability Selector integration" describe block already
+ * proves for primary generation. These tests prove the identical
+ * invariants hold for the SECOND real call site, using a REAL generated
+ * wireframe (generateWireframe), not the lightweight fakeWireframe() used
+ * below for refineExperience's own DB-orchestration tests (which never
+ * actually renders anything with it).
+ */
+describe("experience-refinement-service: resolveRefinedDesign (Phase 6.5 integration — motion via the Capability Selector seam)", () => {
+  function realWireframeFor(brief: DesignBrief): Wireframe {
+    return generateWireframe(brief, {
+      hasRealTestimonials: false,
+      hasRealTeam: (brief.team ?? []).length > 0,
+      hasRealImagery: !!brief.gallery && brief.gallery.length > 0,
+      compositionEvidence: {
+        services: brief.services?.length ?? 0,
+        certifications: brief.certifications?.length ?? 0,
+        hasReviews: !!brief.reviews && brief.reviews.count !== null,
+        galleryCount: brief.gallery?.length ?? 0,
+      },
+    });
+  }
+
+  test("law firm: More Motion + More Energetic simultaneously still caps motion output at subtle through the founder-refinement re-render", () => {
+    const wireframe = realWireframeFor(LAW_FIRM_BRIEF);
+    const bothMore: HumanExperiencePreference = { energy: "more-energetic", motion: "more" };
+    const { resolved } = resolveRefinement(LAW_FIRM_BRIEF, NO_DESIGN_MEMORY, wireframe.compositionVariant!.heroPattern, bothMore);
+    assert.equal(resolved.mode, "trust-authority");
+    assert.equal(resolved.motionBudget, "subtle");
+
+    const refinedWireframe: Wireframe = { ...wireframe, experiencePlan: resolved };
+    const refined = resolveRefinedDesign(refinedWireframe, LAW_FIRM_BRIEF, NO_DESIGN_MEMORY);
+
+    assert.equal(refined.motion.motionBudget, "subtle");
+    assert.deepEqual(refined.motion, refineMotion(refinedWireframe, LAW_FIRM_BRIEF.direction.motionIntensity));
+  });
+
+  test("sparse business: More Motion cannot produce anything but genuine zero motion through the founder-refinement re-render", () => {
+    const wireframe = realWireframeFor(SPARSE_BRIEF);
+    const more: HumanExperiencePreference = { energy: "keep", motion: "more" };
+    const { resolved } = resolveRefinement(SPARSE_BRIEF, NO_DESIGN_MEMORY, wireframe.compositionVariant!.heroPattern, more);
+    assert.equal(resolved.motionBudget, "none");
+
+    const refinedWireframe: Wireframe = { ...wireframe, experiencePlan: resolved };
+    const refined = resolveRefinedDesign(refinedWireframe, SPARSE_BRIEF, NO_DESIGN_MEMORY);
+
+    assert.deepEqual(refined.motion.motions, []);
+    assert.deepEqual(refined.motion.hover, []);
+    assert.equal(refined.motion.motionBudget, "none");
+  });
+
+  test("proof the seam is traversed: output is byte-identical to the existing refineDesign+refineMotion computation for a granted, neutral-preference case", () => {
+    const wireframe = realWireframeFor(LAW_FIRM_BRIEF);
+    const neutral: HumanExperiencePreference = { energy: "keep", motion: "recommended" };
+    const { resolved } = resolveRefinement(LAW_FIRM_BRIEF, NO_DESIGN_MEMORY, wireframe.compositionVariant!.heroPattern, neutral);
+    const refinedWireframe: Wireframe = { ...wireframe, experiencePlan: resolved };
+
+    const viaCapabilitySeam = resolveRefinedDesign(refinedWireframe, LAW_FIRM_BRIEF, NO_DESIGN_MEMORY);
+    const viaOldDirectPath = refineDesign({ wireframe: refinedWireframe }, LAW_FIRM_BRIEF, NO_DESIGN_MEMORY);
+
+    assert.deepEqual(viaCapabilitySeam.motion, viaOldDirectPath.motion);
+    assert.deepEqual(viaCapabilitySeam.typography, viaOldDirectPath.typography);
+    assert.deepEqual(viaCapabilitySeam.spacing, viaOldDirectPath.spacing);
+    assert.deepEqual(viaCapabilitySeam.layout, viaOldDirectPath.layout);
+    assert.deepEqual(viaCapabilitySeam.mobile, viaOldDirectPath.mobile);
+  });
+
+  test("fail closed, never a crash: an adapter that can't meet its requirements (empty sections) still returns a real, valid RefinedDesign", () => {
+    const wireframe = realWireframeFor(LAW_FIRM_BRIEF);
+    const neutral: HumanExperiencePreference = { energy: "keep", motion: "recommended" };
+    const { resolved } = resolveRefinement(LAW_FIRM_BRIEF, NO_DESIGN_MEMORY, wireframe.compositionVariant!.heroPattern, neutral);
+    const brokenWireframe: Wireframe = { ...wireframe, experiencePlan: resolved, sections: [] };
+
+    assert.doesNotThrow(() => resolveRefinedDesign(brokenWireframe, LAW_FIRM_BRIEF, NO_DESIGN_MEMORY));
   });
 });
 

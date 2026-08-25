@@ -8,8 +8,8 @@ import { websiteDesignRepository } from "@/lib/repositories/website-design-repos
 import { designBriefRepository } from "@/lib/repositories/design-brief-repository";
 import { experienceRefinementRepository } from "@/lib/repositories/experience-refinement-repository";
 import type { Wireframe, ComponentNode } from "@/lib/services/design-generation-service";
-import { refineDesign, type RefinedDesign } from "@/lib/services/design-refinement-service";
-import { resolveRefinement } from "@/lib/services/experience-refinement-service";
+import type { RefinedDesign } from "@/lib/services/design-refinement-service";
+import { resolveRefinement, resolveRefinedDesign } from "@/lib/services/experience-refinement-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import { DesignPreview } from "@/components/design-preview/design-preview";
@@ -155,13 +155,16 @@ async function PreviewBody({
 
   // When a refinement exists, the RENDERED page must reflect the founder's
   // resolved preference, not the unrefined generation-time plan — recomputed
-  // via the SAME refineDesign() call generateWebsiteStructure already uses,
-  // fed the resolved_plan in place of the wireframe's original experiencePlan
-  // (design-generation-service.ts's own anti-drift construction, never a
-  // second independent renderer).
+  // via resolveRefinedDesign (experience-refinement-service.ts), which
+  // routes motion through the SAME Capability Selector -> Capability Adapter
+  // Registry -> Granted Adapter seam generateWebsiteStructure already uses
+  // (Phase 6.5 integration follow-up) rather than a second, independent
+  // renderer, fed the resolved_plan in place of the wireframe's original
+  // experiencePlan (design-generation-service.ts's own anti-drift
+  // construction).
   const refinedDesign: RefinedDesign = currentRefinement
-    ? refineDesign(
-        { wireframe: { ...wireframe, experiencePlan: currentRefinement.resolved_plan as unknown as ExperiencePlan } },
+    ? resolveRefinedDesign(
+        { ...wireframe, experiencePlan: currentRefinement.resolved_plan as unknown as ExperiencePlan },
         (brief!.brief as unknown as DesignBrief),
         designMemory
       )

@@ -12,6 +12,7 @@ import {
   type SectionType,
 } from "@/lib/services/design-generation-service";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
+import { refineMotion } from "@/lib/services/design-refinement-service";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
@@ -914,6 +915,77 @@ describe("design-generation-service: generateWebsiteStructure", () => {
     assert.ok(refinedDesign.layout);
     assert.ok(refinedDesign.motion);
     assert.ok(refinedDesign.mobile);
+  });
+});
+
+/**
+ * Phase 6.5 integration follow-up: proves the LIVE generation path
+ * (generateWebsiteStructure — the exact function runDesignGeneration below
+ * calls) actually traverses Capability Selector -> Capability Adapter
+ * Registry -> Granted Adapter, not merely that the standalone capability
+ * modules work in isolation (already covered by capability-selector.test.ts,
+ * basic-motion-adapter.test.ts, capability-adapter-registry.test.ts, and
+ * capability-motion-execution.test.ts). capabilityDecisions on
+ * WebsiteStructure (mirroring the existing contentWarnings precedent — a
+ * real, computed, in-memory field, never persisted) is the proof surface:
+ * it can only be populated by resolveExperienceCapabilities genuinely
+ * having run inside generateWebsiteStructure's own call graph.
+ */
+describe("design-generation-service: generateWebsiteStructure — Phase 6.5 Capability Selector integration", () => {
+  test("a real business with evidence-backed motion carries a real, granted basic-motion capability decision, and its motion output matches a direct refineMotion call byte-for-byte", () => {
+    const brief = briefFor("homeService", "imagery-led", NO_CONTACT_EVIDENCE, {
+      services: [
+        { heading: "Service A", excerpt: "Real service A.", sourceUrl: "https://acme.test/services" },
+        { heading: "Service B", excerpt: "Real service B.", sourceUrl: "https://acme.test/services" },
+        { heading: "Service C", excerpt: "Real service C.", sourceUrl: "https://acme.test/services" },
+      ],
+      gallery: [
+        { src: "https://acme.test/1.jpg", alt: "Real photo 1", sourceUrl: "https://acme.test" },
+        { src: "https://acme.test/2.jpg", alt: "Real photo 2", sourceUrl: "https://acme.test" },
+      ] as GalleryImage[],
+      direction: {
+        layoutFamily: "imagery-led",
+        typographicMood: "test mood",
+        colorDirection: "test color direction",
+        motionIntensity: "energetic",
+      },
+    });
+
+    const { wireframe, refinedDesign, capabilityDecisions } = generateWebsiteStructure(brief, {
+      hasRealTestimonials: false,
+      hasRealImagery: true,
+    });
+
+    assert.ok(wireframe.experiencePlan, "fixture must carry a real resolved ExperiencePlan");
+    assert.notEqual(wireframe.experiencePlan!.motionBudget, "none");
+
+    // Proof the seam was traversed: this field only exists on WebsiteStructure
+    // because resolveMotionThroughCapabilities -> resolveExperienceCapabilities
+    // genuinely ran inside generateWebsiteStructure's own call graph.
+    assert.equal(capabilityDecisions.length, 1);
+    assert.equal(capabilityDecisions[0].token, "basic-motion");
+    assert.equal(capabilityDecisions[0].granted, true);
+    assert.equal(capabilityDecisions[0].supportLevel, "High");
+
+    // Proof the granted adapter's real execution — not a different,
+    // reimplemented computation — produced this motion: byte-identical to
+    // calling the existing refineMotion directly on the same wireframe.
+    const direct = refineMotion(wireframe, "energetic");
+    assert.deepEqual(refinedDesign.motion, direct);
+    assert.ok(refinedDesign.motion.motions.length > 0);
+  });
+
+  test("a genuinely sparse business's live pipeline output carries a NOT-granted decision, and the render stays true zero motion", () => {
+    const brief = briefFor("general", "editorial");
+    const { wireframe, refinedDesign, capabilityDecisions } = generateWebsiteStructure(brief, {
+      hasRealTestimonials: false,
+    });
+
+    assert.equal(wireframe.experiencePlan?.motionBudget, "none");
+    assert.equal(capabilityDecisions[0].token, "basic-motion");
+    assert.equal(capabilityDecisions[0].granted, false);
+    assert.deepEqual(refinedDesign.motion.motions, []);
+    assert.deepEqual(refinedDesign.motion.hover, []);
   });
 });
 
