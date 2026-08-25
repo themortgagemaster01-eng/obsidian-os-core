@@ -11,14 +11,22 @@ import {
   qaConversion,
   qaBrandFitStructured,
   qaGenericTemplate,
+  qaNarrativeConsistency,
+  resolveQaDesignInputs,
   runStructuredDeterministicChecks,
   assembleDesignQaReport,
   type QaStructuredInput,
   type DeterministicCategoryResult,
   type AiDerivedAssessment,
 } from "@/lib/services/design-qa-service";
-import { generateWireframe, assembleComponents, type ComponentSlot } from "@/lib/services/design-generation-service";
-import { refineDesign } from "@/lib/services/design-refinement-service";
+import {
+  generateWireframe,
+  assembleComponents,
+  type ComponentSlot,
+  type ComponentNode,
+  type Wireframe,
+} from "@/lib/services/design-generation-service";
+import { refineDesign, type SectionMotionValue } from "@/lib/services/design-refinement-service";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
 import { GENERIC_SAAS_TEMPLATE_SECTION_ORDER } from "@/lib/design-intelligence/layout-rules";
@@ -101,6 +109,55 @@ function buildValidInput(overrides: Partial<QaStructuredInput> = {}): QaStructur
     baselineLighthouse: null,
   };
   return { ...input, ...overrides };
+}
+
+/**
+ * Builds a QaStructuredInput hand-constructed to land on the "sensory"
+ * narrative arc (cinematic-storytelling mode) with a real, rendered gallery
+ * section assigned the "demonstrate" stage — narrative-arc-planner.ts's
+ * ONLY stage override, and therefore the one case qaNarrativeConsistency
+ * can mechanically check. evidenceSignals is deliberately 2 (gallery +
+ * certifications) to clear NARRATIVE_ARC_EVIDENCE_SIGNAL_FLOOR so the rich
+ * "sensory" arc is actually granted rather than downgraded. Starts from
+ * buildValidInput()'s own real pipeline output so every OTHER field
+ * (typography, spacing, mobile touch targets, etc.) stays realistic, and
+ * only wireframe/components/refinedDesign/designBrief are overridden to
+ * construct this specific narrative/motion scenario.
+ */
+function buildSensoryGalleryInput(galleryRevealStyle: SectionMotionValue["revealStyle"]): QaStructuredInput {
+  const base = buildValidInput();
+
+  const wireframe: Wireframe = {
+    ...base.wireframe,
+    sections: [
+      { type: "hero", rationale: "hero" },
+      { type: "gallery", rationale: "gallery" },
+      { type: "contact", rationale: "contact" },
+      { type: "footer", rationale: "footer" },
+    ],
+    experiencePlan: { mode: "cinematic-storytelling", motionBudget: "enhanced", rationale: "test fixture: forced sensory arc" },
+  };
+
+  const components: ComponentNode[] = [
+    ...base.components.filter((c) => c.section === "hero" || c.section === "contact" || c.section === "footer"),
+    { section: "gallery", componentKind: "gallery-grid", slots: [{ name: "photo-1", source: "real", value: "https://acme.test/photo1.jpg" }] },
+  ];
+
+  const motions: SectionMotionValue[] = [
+    { section: "hero", durationMs: 400, easing: "ease-out", purpose: "entrance", revealStyle: "fade-scale" },
+    { section: "gallery", durationMs: 400, easing: "ease-out", purpose: "entrance", revealStyle: galleryRevealStyle },
+  ];
+
+  return {
+    ...base,
+    wireframe,
+    components,
+    refinedDesign: {
+      ...base.refinedDesign,
+      motion: { ...base.refinedDesign.motion, motionBudget: "enhanced", motions },
+    },
+    designBrief: { ...base.designBrief, gallery: [{ src: "a", alt: null, sourceUrl: "a" }, { src: "b", alt: null, sourceUrl: "b" }, { src: "c", alt: null, sourceUrl: "c" }], certifications: [{ heading: "Certified", excerpt: "x", sourceUrl: "x" }] },
+  };
 }
 
 describe("design-qa-service: qaTypography", () => {
@@ -518,6 +575,138 @@ describe("design-qa-service: qaConversion", () => {
     const result = qaConversion(withoutContact);
     assert.equal(result.verdict, "FAIL");
   });
+
+  test("still detects duplicate touch-target names — the pre-existing check, unchanged by the Phase 6.8 narrative-aware extension", () => {
+    const input = buildValidInput();
+    const withDuplicateName: QaStructuredInput = {
+      ...input,
+      refinedDesign: {
+        ...input.refinedDesign,
+        mobile: {
+          ...input.refinedDesign.mobile,
+          touchTargets: [...input.refinedDesign.mobile.touchTargets, { name: "hero-primary-cta", widthPx: 48, heightPx: 48, spacingPx: 12 }],
+        },
+      },
+    };
+    const result = qaConversion(withDuplicateName);
+    assert.equal(result.verdict, "WARN");
+    assert.ok(result.findings.some((f) => /Duplicate touch-target names/.test(f)));
+  });
+
+  test("Phase 6.8: narrative-aware extension catches competing conversion pressure a duplicate-name check alone would miss (different names, same pressure)", () => {
+    const input = buildValidInput();
+    const wireframe: Wireframe = {
+      ...input.wireframe,
+      sections: [
+        { type: "hero", rationale: "hero" },
+        { type: "schedule", rationale: "schedule" },
+        { type: "contact", rationale: "contact" },
+        { type: "footer", rationale: "footer" },
+      ],
+    };
+    const components: ComponentNode[] = [
+      ...input.components.filter((c) => c.section === "hero" || c.section === "contact" || c.section === "footer"),
+      { section: "schedule", componentKind: "schedule-cta", slots: [{ name: "book-now", source: "real", value: "Book now" }] },
+    ];
+    const withCompetingCta: QaStructuredInput = {
+      ...input,
+      wireframe,
+      components,
+      refinedDesign: {
+        ...input.refinedDesign,
+        mobile: {
+          ...input.refinedDesign.mobile,
+          touchTargets: [...input.refinedDesign.mobile.touchTargets, { name: "schedule-book-button", widthPx: 48, heightPx: 48, spacingPx: 12 }],
+        },
+      },
+    };
+    const result = qaConversion(withCompetingCta);
+    assert.equal(result.verdict, "WARN");
+    assert.ok(result.findings.some((f) => /Competing conversion pressure: sections hero, schedule/.test(f)));
+  });
+
+  test("no false-positive competing-conversion-pressure finding for a normal hero+contact experience", () => {
+    const result = qaConversion(buildValidInput());
+    const narrativeEv = result.evidence.find((e) => e.source === "narrative-aware CTA competition (resolveNarrativeArc convert stage)");
+    assert.ok(narrativeEv);
+    assert.ok(/No competing conversion pressure detected/.test(narrativeEv!.detail));
+  });
+});
+
+describe("design-qa-service: qaNarrativeConsistency", () => {
+  test("PASS for a valid narrative/motion combination (sensory arc, gallery correctly fade-scale for its demonstrate stage)", () => {
+    const result = qaNarrativeConsistency(buildSensoryGalleryInput("fade-scale"));
+    assert.equal(result.verdict, "PASS");
+    assert.equal(result.findings.length, 0);
+  });
+
+  test("detects a deliberately inconsistent narrative/motion combination (gallery assigned demonstrate stage but resolved motion is plain fade)", () => {
+    const result = qaNarrativeConsistency(buildSensoryGalleryInput("fade"));
+    assert.equal(result.verdict, "WARN");
+    assert.ok(result.findings.some((f) => /"gallery" is assigned the "demonstrate" narrative stage/.test(f)));
+    assert.ok(result.findings.some((f) => /Diagnostic only/.test(f)));
+  });
+
+  test("a motion budget of \"none\" cannot be incorrectly treated as a narrative-motion failure", () => {
+    const input = buildValidInput();
+    assert.equal(input.wireframe.experiencePlan?.motionBudget, "none");
+    const result = qaNarrativeConsistency(input);
+    assert.equal(result.verdict, "PASS");
+    assert.ok(result.findings.some((f) => /motion budget is "none"/i.test(f)));
+  });
+
+  test("reduced-motion cannot create a false failure — this check reads only structured RefinedDesign.motion data, which never encodes prefers-reduced-motion (a client-runtime-only concern)", () => {
+    // No field on QaStructuredInput represents reduced-motion state at all;
+    // the same real design used for the PASS case above still PASSes
+    // regardless, since nothing here is sensitive to it.
+    const result = qaNarrativeConsistency(buildSensoryGalleryInput("fade-scale"));
+    assert.equal(result.verdict, "PASS");
+  });
+
+  test("sparse/trust-authority cases remain safely valid — no \"demonstrate\" stage is ever assigned outside the sensory arc's gallery override", () => {
+    const result = qaNarrativeConsistency(buildValidInput());
+    assert.notEqual(result.verdict, "FAIL");
+    assert.ok(result.verdict === "PASS" || result.verdict === "UNAVAILABLE");
+  });
+
+  test("UNAVAILABLE for a legacy wireframe predating Phase 6.1's ExperiencePlan", () => {
+    const input = buildValidInput();
+    const legacyWireframe = { ...input.wireframe, experiencePlan: undefined };
+    const result = qaNarrativeConsistency({ ...input, wireframe: legacyWireframe });
+    assert.equal(result.verdict, "UNAVAILABLE");
+  });
+});
+
+describe("design-qa-service: resolveQaDesignInputs (founder-refinement awareness)", () => {
+  test("returns the original wireframe/refinedDesign unchanged when no refinement exists", () => {
+    const input = buildValidInput();
+    const result = resolveQaDesignInputs(input.wireframe, input.refinedDesign, null, briefFor(), SAMPLE_DESIGN_MEMORY);
+    assert.equal(result.wireframe, input.wireframe);
+    assert.equal(result.refinedDesign, input.refinedDesign);
+  });
+
+  test("evaluates the founder's refined result, not the stale original, when a refinement exists", () => {
+    const brief = briefFor();
+    const originalWireframe = generateWireframe(brief, { hasRealTestimonials: false });
+    const originalRefinedDesign = refineDesign({ wireframe: originalWireframe }, brief, SAMPLE_DESIGN_MEMORY);
+    assert.equal(originalWireframe.experiencePlan?.mode, "warm-local-business");
+
+    // Simulates a founder's resolved Experience Refinement landing on a
+    // genuinely different mode — resolveQaDesignInputs must re-derive
+    // refinedDesign from THIS plan, not keep the stale original.
+    const refinedPlan = { mode: "cinematic-storytelling" as const, motionBudget: "enhanced" as const, rationale: "founder refinement" };
+    const result = resolveQaDesignInputs(
+      originalWireframe,
+      originalRefinedDesign,
+      { resolved_plan: refinedPlan as unknown as import("@/lib/supabase/database.types").Json },
+      brief,
+      SAMPLE_DESIGN_MEMORY
+    );
+
+    assert.equal(result.wireframe.experiencePlan?.mode, "cinematic-storytelling");
+    assert.notEqual(result.refinedDesign, originalRefinedDesign);
+    assert.equal(result.refinedDesign.motion.experienceMode, "cinematic-storytelling");
+  });
 });
 
 describe("design-qa-service: qaBrandFitStructured", () => {
@@ -706,7 +895,7 @@ describe("design-qa-service: runStructuredDeterministicChecks", () => {
     const categories = Object.keys(results);
     assert.deepEqual(
       categories.sort(),
-      ["accessibility", "brandFit", "conversion", "genericTemplate", "layout", "mobile", "motion", "performance", "spacing", "trust", "typography"].sort()
+      ["accessibility", "brandFit", "conversion", "genericTemplate", "layout", "mobile", "motion", "narrativeConsistency", "performance", "spacing", "trust", "typography"].sort()
     );
     for (const category of categories) {
       assert.ok(["PASS", "WARN", "FAIL", "UNAVAILABLE"].includes(results[category as keyof typeof results].verdict));
@@ -742,6 +931,7 @@ describe("design-qa-service: assembleDesignQaReport", () => {
       "conversion",
       "brandFit",
       "genericTemplate",
+      "narrativeConsistency",
     ];
     return Object.fromEntries(categories.map((c) => [c, baseDeterministic]));
   }
@@ -797,6 +987,6 @@ describe("design-qa-service: assembleDesignQaReport", () => {
 
   test("every category is present in the report, never silently omitted", () => {
     const report = assembleDesignQaReport({ missionId: "m1", websiteDesignId: "d1", businessName: "Acme" }, allPass() as never, {}, { available: true });
-    assert.equal(Object.keys(report.categories).length, 11);
+    assert.equal(Object.keys(report.categories).length, 12);
   });
 });

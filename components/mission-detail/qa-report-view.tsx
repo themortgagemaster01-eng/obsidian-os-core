@@ -19,6 +19,7 @@ const CATEGORY_LABEL: Record<QaCategoryId, string> = {
   conversion: "Conversion",
   brandFit: "Brand Fit",
   genericTemplate: "Generic Template",
+  narrativeConsistency: "Narrative Consistency",
 };
 
 // Fixed, deliberate order — not just Object.keys() over the report, since a
@@ -36,6 +37,7 @@ const CATEGORY_ORDER: QaCategoryId[] = [
   "conversion",
   "brandFit",
   "genericTemplate",
+  "narrativeConsistency",
 ];
 
 function verdictBadgeVariant(verdict: QaVerdict): NonNullable<BadgeProps["variant"]> {

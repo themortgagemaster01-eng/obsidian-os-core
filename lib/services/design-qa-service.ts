@@ -32,6 +32,11 @@ import {
 import { personalityPaddingBias } from "@/lib/design-intelligence/composition-variants";
 import { validateMotionChoice } from "@/lib/design-intelligence/motion-rules";
 import { validateMobileTypeChoice, validateTouchTarget } from "@/lib/design-intelligence/mobile-rules";
+import { resolveNarrativeArc } from "@/lib/design-intelligence/narrative-arc-planner";
+import type { ExperiencePlanEvidenceDensity } from "@/lib/design-intelligence/experience-planner";
+import { resolveRefinedDesign } from "@/lib/services/experience-refinement-service";
+import { experienceRefinementRepository } from "@/lib/repositories/experience-refinement-repository";
+import type { ExperiencePlan } from "@/shared/design-intelligence/types";
 
 import type { ContentSection, LighthouseCategoryScores } from "@/lib/adapters/types";
 import { runAccessibilityAdapter } from "@/lib/adapters/accessibility-adapter";
@@ -106,6 +111,7 @@ export const QA_CATEGORY_IDS = [
   "conversion",
   "brandFit",
   "genericTemplate",
+  "narrativeConsistency",
 ] as const;
 export type QaCategoryId = (typeof QA_CATEGORY_IDS)[number];
 
@@ -229,7 +235,28 @@ export interface QaStructuredInput {
   wireframe: Wireframe;
   components: ComponentNode[];
   refinedDesign: RefinedDesign;
-  designBrief: Pick<DesignBrief, "citedInsights" | "direction" | "referencesConsidered" | "positioning" | "heroThesis" | "signatureElement">;
+  designBrief: Pick<
+    DesignBrief,
+    | "citedInsights"
+    | "direction"
+    | "referencesConsidered"
+    | "positioning"
+    | "heroThesis"
+    | "signatureElement"
+    // Phase 6.8: the same real evidence-density fields
+    // generateWebsiteStructure's own compositionEvidence construction reads
+    // off DesignBrief (design-generation-service.ts) — widened here so
+    // qaNarrativeConsistency/qaConversion's narrative-aware extension can
+    // rebuild the IDENTICAL ExperiencePlanEvidenceDensity struct
+    // resolveNarrativeArc needs, never a re-derivation from a different
+    // source. Type-only widening: runDesignQa already passes the full
+    // DesignBrief object at runtime (see designBrief: brief below), so this
+    // is not a schema or persistence change.
+    | "services"
+    | "certifications"
+    | "reviews"
+    | "gallery"
+  >;
   designMemory: DesignMemory | null;
   /** Real crawled facts to cross-check "real"-tagged trust content against (§4.8) — null when no completed website analysis exists for this mission. */
   crawl: { certifications: ContentSection[]; testimonials: ContentSection[]; faq: ContentSection[] } | null;
@@ -596,6 +623,17 @@ export function qaTrust(input: QaStructuredInput): DeterministicCategoryResult {
 // 4.9 Conversion QA
 // ===========================================================================
 
+/**
+ * Sections whose own touch target represents an independent, competing
+ * conversion "ask" for the narrative-aware extension below — deliberately
+ * excludes "contact" (the narrative arc's own convert-stage destination,
+ * never competition for it) and "faq" (TOUCH_TARGET_NAME_BY_SECTION's
+ * "faq-accordion-toggle" is a content-interaction affordance, not a call to
+ * action, and counting it would false-positive on a page that simply has an
+ * FAQ section alongside a hero CTA).
+ */
+const CTA_COMPETITION_CANDIDATE_SECTIONS: SectionType[] = ["hero", "schedule", "listings"];
+
 export function qaConversion(input: QaStructuredInput): DeterministicCategoryResult {
   const findings: string[] = [];
   const targets = input.refinedDesign.mobile.touchTargets;
@@ -618,10 +656,49 @@ export function qaConversion(input: QaStructuredInput): DeterministicCategoryRes
     findings.push("Design Memory's ctaHierarchy.primary is empty — no stated primary call to action for this mission.");
   }
 
+  // Phase 6.8 narrative-aware extension: beyond duplicate touch-target
+  // NAMES (above), detect competing/misplaced conversion pressure using the
+  // Narrative Arc's own "convert" stage (lib/design-intelligence/
+  // narrative-arc-planner.ts), which resolveNarrativeArc only ever assigns
+  // to contact/footer — the one place the resolved narrative intends to
+  // concentrate the ask. Reuses the SAME touch-target presence data this
+  // function already reads; adds no new field, no copy scoring, no CTA
+  // rewriting — detection and reporting only.
+  let narrativeCtaFinding: string | null = null;
+  const experiencePlan = input.wireframe.experiencePlan;
+  if (experiencePlan) {
+    const sections = renderedSectionsFor(input.wireframe, input.components);
+    const evidenceDensity = narrativeEvidenceDensityFor(input.designBrief, input.wireframe);
+    const arcPlan = resolveNarrativeArc({ experiencePlan, sections, evidence: evidenceDensity });
+    const convertSections = arcPlan.stageBySection.filter((s) => s.stage === "convert").map((s) => s.section);
+
+    // Only sections whose own touch target is a genuine, independent
+    // conversion "ask" — never "contact" itself (the convert-stage
+    // destination, not competition for it) and never "faq" (an accordion
+    // toggle is a content-interaction affordance, not a call to action).
+    const competingSections = CTA_COMPETITION_CANDIDATE_SECTIONS.filter((section) => {
+      if (convertSections.includes(section)) return false;
+      if (!sections.includes(section)) return false;
+      const name = TOUCH_TARGET_NAME_BY_SECTION[section];
+      return !!name && targets.some((t) => t.name === name);
+    });
+
+    if (competingSections.length >= 2) {
+      narrativeCtaFinding = `Competing conversion pressure: sections ${competingSections.join(", ")} each carry their own independent primary call-to-action outside the narrative arc's "convert" stage (arc: "${arcPlan.arcToken}", which concentrates the ask at ${convertSections.join("/") || "contact/footer"}) — worth a human's attention as diluted rather than concentrated conversion intent.`;
+      findings.push(narrativeCtaFinding);
+    }
+  }
+
   const ev = [
     evidence("hero/contact touch-target presence", heroCta && contactCta ? "Both a hero CTA and a contact primary action are structurally present." : "One or both primary action targets missing."),
     evidence("touch-target name uniqueness", dupeNames.length === 0 ? "No duplicate primary-action names." : `Duplicates: ${dupeNames.join(", ")}.`),
     evidence("DesignMemory.ctaHierarchy", primaryCta ? `Stated primary CTA: "${primaryCta}".` : "No primary CTA stated."),
+    evidence(
+      "narrative-aware CTA competition (resolveNarrativeArc convert stage)",
+      experiencePlan
+        ? (narrativeCtaFinding ?? "No competing conversion pressure detected outside the narrative arc's convert stage.")
+        : "Unavailable: this wireframe predates Phase 6.1's ExperiencePlan, so no narrative arc could be resolved for this cross-check."
+    ),
   ];
 
   return deterministicResult(findings, ev, {
@@ -780,6 +857,165 @@ export function qaGenericTemplate(input: QaStructuredInput): DeterministicCatego
     evidenceSource: "structured",
     failIf: genericMatch || isHeroThesisDuplicated || isSignatureElementDuplicated || uniqueGenericPhraseHits.length > 0,
     warnIf: isDuplicated || emojiSlots.length > 0 || !!crossIndustryGroup || !!structuralGroup,
+  });
+}
+
+// ===========================================================================
+// 4.12 Narrative-Motion Consistency QA — Phase 6.8 (docs/
+// POST_PHASE_6.7_RESEARCH_SYNTHESIS.md), the first real consumer of
+// lib/design-intelligence/narrative-arc-planner.ts (Phase 6.7, shipped
+// inert). Diagnostic only: this check reports whether the ALREADY-resolved
+// motion (RefinedDesign.motion — the Capability Selector's own final
+// answer) is consistent with the ALREADY-resolved narrative arc
+// (resolveNarrativeArc's own output) — it never re-decides Experience Mode,
+// any motion/evidence/intensity ceiling, reduced-motion behavior, or a
+// Capability grant. Motion/evidence-density inputs are read, never
+// recomputed independently of what Generation already decided.
+// ===========================================================================
+
+/**
+ * Mirrors components/design-preview/design-preview.tsx's own
+ * OMIT_SECTION_IF_EMPTY list exactly (verified identical during the Phase
+ * 6.8 architectural audit) — the same 8-item list this file's own
+ * buildBatchContext already duplicates inline (see the renderedSections
+ * filter below) for the identical reason: design-qa-service.ts never
+ * imports from components/. Kept as its own copy here rather than factored
+ * into one shared constant with buildBatchContext's inline list, to avoid
+ * touching that already-working, unrelated code path for this narrowly
+ * scoped change.
+ */
+const SECTIONS_OMITTED_IF_EMPTY: SectionType[] = [
+  "menu",
+  "gallery",
+  "services",
+  "schedule",
+  "listings",
+  "serviceArea",
+  "credibility",
+  "faq",
+];
+
+/**
+ * The real rendered section sequence — post-filter, matching what
+ * design-preview.tsx would actually render and what resolveNarrativeArc's
+ * own doc comment requires as input (never the raw, pre-filter
+ * wireframe.sections, which risks describing a stage for a section that
+ * never actually renders).
+ */
+function renderedSectionsFor(wireframe: Wireframe, components: ComponentNode[]): SectionType[] {
+  return wireframe.sections
+    .map((s) => s.type)
+    .filter((type) => {
+      if (!SECTIONS_OMITTED_IF_EMPTY.includes(type)) return true;
+      const component = components.find((node) => node.section === type);
+      return !!component?.slots.some((slot) => slot.source === "real");
+    });
+}
+
+/**
+ * The exact evidence-density construction lib/services/design-generation-
+ * service.ts's own generateWebsiteStructure uses to feed
+ * resolveExperiencePlan (services/certifications/reviews/gallery counted
+ * directly off DesignBrief; see that file's wireframeOptions.compositionEvidence
+ * construction) — mirrored field-for-field here rather than reinvented, so
+ * this check's arc resolution can never silently diverge from the real
+ * evidence density Generation already resolved against. hasRealTeam is
+ * instead recovered from the wireframe's own real rendered section presence
+ * (wireframe.sections includes "team" only when generateWireframe's own
+ * options.hasRealTeam gate already granted it at generation time) — a
+ * structurally safer source than re-reading DesignBrief.team directly, since
+ * it reflects what Generation actually decided rather than a second,
+ * independent guess.
+ */
+function narrativeEvidenceDensityFor(
+  brief: Pick<DesignBrief, "services" | "certifications" | "reviews" | "gallery">,
+  wireframe: Wireframe
+): ExperiencePlanEvidenceDensity {
+  return {
+    services: brief.services?.length ?? 0,
+    certifications: brief.certifications?.length ?? 0,
+    hasReviews: !!brief.reviews && brief.reviews.count !== null,
+    galleryCount: brief.gallery?.length ?? 0,
+    hasRealTeam: wireframe.sections.some((s) => s.type === "team"),
+  };
+}
+
+/**
+ * The one narrative stage this check can honestly cross-reference against a
+ * specific resolved motion property. narrative-arc-planner.ts's own
+ * STAGE_OVERRIDE_BY_ARC only ever overrides a stage for a specific,
+ * evidence-backed reason (a "sensory" arc's gallery section becomes
+ * "demonstrate" because real photography evidence exists) — the same
+ * distinction design-refinement-service.ts's own refineMotionFromExperiencePlan
+ * already draws for "fade-scale" (reserved for photography-backed sections).
+ * Every other stage token governs pacing/ordering concepts this module does
+ * not own (per narrative-arc-planner.ts's own header comment) — checking
+ * them here would mean this file re-deciding what a stage implies, exactly
+ * the anti-drift failure this feature must not introduce.
+ */
+const DEMONSTRATE_EXPECTS_REVEAL_STYLE = "fade-scale" as const;
+
+export function qaNarrativeConsistency(input: QaStructuredInput): DeterministicCategoryResult {
+  const experiencePlan = input.wireframe.experiencePlan;
+  if (!experiencePlan) {
+    return unavailable(
+      "structured",
+      "This wireframe predates Phase 6.1's ExperiencePlan — no narrative arc can be resolved, so there is nothing to check for narrative/motion consistency."
+    );
+  }
+
+  // A "none" motion budget means Capability Selection/refineMotion
+  // legitimately produced zero motion entries (an evidence-gated, deliberate
+  // ceiling this check must never treat as a failure of its OWN check).
+  // Structurally, resolveNarrativeArc's own evidence-signal gate (fed the
+  // SAME evidence struct experience-planner.ts's own evidenceMotionCeiling
+  // reads) means an arc rich enough to ever assign "demonstrate" cannot
+  // co-occur with a "none" motion budget in real use — this early return
+  // makes that invariant explicit and directly testable rather than resting
+  // on that fact implicitly.
+  if (experiencePlan.motionBudget === "none") {
+    return deterministicResult(
+      ["Motion budget is \"none\" — no resolved motion entries exist to check, so a narrative/motion inconsistency is not applicable for this mission."],
+      [evidence("RefinedDesign.motion.motionBudget", "\"none\" — zero motion entries; nothing for this check to cross-reference.")],
+      { evidenceSource: "structured", failIf: false, warnIf: false }
+    );
+  }
+
+  const sections = renderedSectionsFor(input.wireframe, input.components);
+  const evidenceDensity = narrativeEvidenceDensityFor(input.designBrief, input.wireframe);
+  const arcPlan = resolveNarrativeArc({ experiencePlan, sections, evidence: evidenceDensity });
+
+  const motionBySection = new Map(input.refinedDesign.motion.motions.map((m) => [m.section, m]));
+  const findings: string[] = [];
+  const demonstrateStages = arcPlan.stageBySection.filter((s) => s.stage === "demonstrate");
+
+  for (const { section } of demonstrateStages) {
+    // Client-side prefers-reduced-motion is a runtime-only concern (never
+    // persisted onto RefinedDesign.motion — see components/design-preview's
+    // own scroll-reveal-runtime) — this check reads only structured,
+    // already-resolved data, so it cannot be affected by it either way.
+    const motion = motionBySection.get(section);
+    if (motion && motion.revealStyle !== DEMONSTRATE_EXPECTS_REVEAL_STYLE) {
+      findings.push(
+        `Section "${section}" is assigned the "demonstrate" narrative stage (arc: "${arcPlan.arcToken}", confidence: ${arcPlan.confidence}) — a photography-led treatment the Narrative Arc Planner only assigns when real evidence backs it — but its resolved motion revealStyle is "${motion.revealStyle ?? "fade"}", not "${DEMONSTRATE_EXPECTS_REVEAL_STYLE}". Diagnostic only: this does not override any motion ceiling, Experience Mode, or Capability grant — worth a human's attention as a possible mismatch between the resolved narrative and the resolved motion execution.`
+      );
+    }
+  }
+
+  const ev = [
+    evidence("resolveNarrativeArc (lib/design-intelligence/narrative-arc-planner.ts)", `Arc: "${arcPlan.arcToken}", confidence: ${arcPlan.confidence}. ${arcPlan.rationale}`),
+    evidence(
+      "RefinedDesign.motion cross-reference",
+      findings.length === 0
+        ? `${demonstrateStages.length} "demonstrate"-stage section(s) checked; no narrative/motion mismatch found.`
+        : findings.join(" ")
+    ),
+  ];
+
+  return deterministicResult(findings, ev, {
+    evidenceSource: "structured",
+    failIf: false,
+    warnIf: findings.length > 0,
   });
 }
 
@@ -1124,6 +1360,7 @@ export function runStructuredDeterministicChecks(input: QaStructuredInput): Reco
     conversion: qaConversion(input),
     brandFit: qaBrandFitStructured(input),
     genericTemplate: qaGenericTemplate(input),
+    narrativeConsistency: qaNarrativeConsistency(input),
   };
 }
 
@@ -1142,6 +1379,8 @@ export interface DesignQaServiceDeps {
   designBriefRepository: typeof designBriefRepository;
   missionRepository: typeof missionRepository;
   websiteAnalysisRepository: typeof websiteAnalysisRepository;
+  /** Phase 6.8: so runDesignQa can evaluate a founder's resolved Experience Refinement (lib/services/experience-refinement-service.ts) instead of the stale, pre-refinement wireframe/refinedDesign — mirrors app/missions/[id]/preview/page.tsx's own existing read of this same repository. */
+  experienceRefinementRepository: typeof experienceRefinementRepository;
   workflowDeps: MissionWorkflowDeps;
   eventBus: EventBus;
   llmProvider: LlmProvider;
@@ -1154,6 +1393,7 @@ export function createDesignQaServiceDeps(client: TypedClient): DesignQaServiceD
     designBriefRepository,
     missionRepository,
     websiteAnalysisRepository,
+    experienceRefinementRepository,
     workflowDeps: createMissionWorkflowDeps(client),
     eventBus: createEventBus(client),
     llmProvider: new MetricsLlmProvider(createAnthropicProviderFromEnv()),
@@ -1280,6 +1520,34 @@ export async function createDesignQaRun(
  * unreviewed mission staying at `designing` is the correct, honest failure
  * state, not a silent advance.
  */
+/**
+ * resolveQaDesignInputs — the founder-refinement-awareness fix, extracted as
+ * its own pure function so it is directly unit-testable without mocking
+ * Supabase/repositories (this file's only I/O-touching function is
+ * runDesignQa itself; every other function here, including this one, stays
+ * pure and fixture-testable, matching this file's own existing
+ * discipline). Mirrors app/missions/[id]/preview/page.tsx's own exact
+ * existing pattern: when a founder's Experience Refinement exists,
+ * resolved_plan is substituted onto the wireframe's experiencePlan and
+ * refinedDesign is recomputed via resolveRefinedDesign — never the stale,
+ * pre-refinement generation output. Returns the original wireframe/
+ * refinedDesign unchanged when no refinement exists.
+ */
+export function resolveQaDesignInputs(
+  originalWireframe: Wireframe,
+  originalRefinedDesign: RefinedDesign,
+  currentRefinement: { resolved_plan: Json } | null,
+  brief: DesignBrief,
+  designMemory: DesignMemory | null
+): { wireframe: Wireframe; refinedDesign: RefinedDesign } {
+  if (!currentRefinement) {
+    return { wireframe: originalWireframe, refinedDesign: originalRefinedDesign };
+  }
+  const wireframe: Wireframe = { ...originalWireframe, experiencePlan: currentRefinement.resolved_plan as unknown as ExperiencePlan };
+  const refinedDesign = resolveRefinedDesign(wireframe, brief, designMemory);
+  return { wireframe, refinedDesign };
+}
+
 export async function runDesignQa(deps: DesignQaServiceDeps, websiteDesignId: string): Promise<WebsiteDesignRow> {
   const run = await deps.websiteDesignRepository.findById(deps.client, websiteDesignId);
   if (!run) throw new Error(`Website design ${websiteDesignId} not found.`);
@@ -1301,9 +1569,21 @@ export async function runDesignQa(deps: DesignQaServiceDeps, websiteDesignId: st
     }
     const brief = briefRow.brief as unknown as DesignBrief;
     const designMemory = briefRow.design_memory as unknown as DesignMemory | null;
-    const wireframe = run.wireframe as unknown as Wireframe;
     const components = run.components as unknown as ComponentNode[];
-    const refinedDesign = run.refined_design as unknown as RefinedDesign;
+
+    // A founder's Experience Refinement (lib/services/experience-refinement-
+    // service.ts, Phase 6.4) must be evaluated, not the stale pre-refinement
+    // generation output — without this, QA would silently grade a design
+    // the founder already changed their mind about. See
+    // resolveQaDesignInputs's own doc comment for the exact substitution.
+    const currentRefinement = await deps.experienceRefinementRepository.findLatestByWebsiteDesign(deps.client, websiteDesignId);
+    const { wireframe, refinedDesign } = resolveQaDesignInputs(
+      run.wireframe as unknown as Wireframe,
+      run.refined_design as unknown as RefinedDesign,
+      currentRefinement,
+      brief,
+      designMemory
+    );
 
     const analysisRow = await deps.websiteAnalysisRepository.findLatestByMission(deps.client, mission.id);
     const normalized = analysisRow && analysisRow.status === "complete" ? normalizedAnalysisFromRow(analysisRow, mission.website_url) : null;
