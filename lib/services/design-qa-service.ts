@@ -37,6 +37,10 @@ import type { ExperiencePlanEvidenceDensity } from "@/lib/design-intelligence/ex
 import { resolveRefinedDesign } from "@/lib/services/experience-refinement-service";
 import { experienceRefinementRepository } from "@/lib/repositories/experience-refinement-repository";
 import type { ExperiencePlan } from "@/shared/design-intelligence/types";
+import { resolveExperienceCapabilities, type CapabilityDecision } from "@/lib/design-intelligence/capability-selector";
+import { requestCapabilityExecution, getCapabilityAdapter } from "@/lib/design-intelligence/capability-adapter-registry";
+import type { ShaderHeroAdapterInput, ShaderHeroPayload } from "@/lib/design-intelligence/shader-hero-adapter";
+import type { CapabilityExecutionResult, CapabilityQaContract } from "@/lib/design-intelligence/capability-adapter";
 
 import type { ContentSection, LighthouseCategoryScores } from "@/lib/adapters/types";
 import { runAccessibilityAdapter } from "@/lib/adapters/accessibility-adapter";
@@ -432,6 +436,136 @@ export function qaLayout(input: QaStructuredInput): DeterministicCategoryResult 
 // 4.4 Motion QA
 // ===========================================================================
 
+/**
+ * qaShaderHeroCapability — Phase 6.9: the first real consumer of
+ * `CapabilityAdapter.qaContract()` (lib/design-intelligence/capability-
+ * adapter.ts), which that file's own doc comment names as existing
+ * specifically "so a future Rendered QA pass can verify it" (docs/
+ * PHASE_6.5_CAPABILITY_AUDIT.md item 29). Diagnostic only: asks the SAME
+ * registered adapter, via the SAME `requestCapabilityExecution`/
+ * `getCapabilityAdapter` entry points the real Execution Runtime uses, the
+ * same question `capability-hero-execution.ts`'s own
+ * `resolveShaderHeroThroughCapabilities` asks at render time — never
+ * re-implements `isShaderHeroGranted`/`requirementsMet`/`execute`/
+ * `fallback`, never mutates `ExperiencePlan`/`RefinedDesign`/`Wireframe`,
+ * never a second capability resolver.
+ *
+ * Distinguishes four outcomes, per the founder's explicit architectural
+ * boundary — only the last is ever worth a human's attention:
+ *   1. Denied by the Selector (wrong mode, insufficient motion budget, or a
+ *      restrained-tone signal) — correct, evidence-driven, no finding.
+ *   2. Granted and realized — correct, no finding.
+ *   3. Granted, but the Adapter correctly declined at execution time
+ *      (`requirements-not-met`: a real photo already occupies the hero
+ *      background, or DesignMemory's color palette is incomplete) — the
+ *      Adapter's own fail-closed design working as intended, never treated
+ *      as a system failure, informational only, no finding.
+ *   4. Granted, but execution genuinely failed (`runtime-error`) and was
+ *      safely caught — a real, unexpected condition worth a human's
+ *      attention, reported as the one WARN this check can ever produce.
+ *
+ * `heroHasRealPhoto` mirrors `app/missions/[id]/preview/page.tsx`'s own
+ * `imageHeroPatterns`/`briefGallery` construction, narrowed by
+ * `design-preview.tsx`'s own `heroHasScrim` (only "image-full-bleed"/
+ * "centered-cinematic" count as "a real photo already occupies the
+ * background" — "split-media-text" places the photo beside the text, not
+ * behind it, so it never conflicts with a background treatment). A mirror,
+ * not an import — design-qa-service.ts never imports from components/ or
+ * app/ (the same boundary Phase 6.8's renderedSectionsFor already
+ * established) — and carries the same small, disclosed drift risk as that
+ * precedent if the renderer's own logic ever changes without a matching
+ * update here.
+ */
+export interface ShaderHeroCapabilityOutcome {
+  findings: string[];
+  warn: boolean;
+  evidenceDetail: string;
+}
+
+/**
+ * classifyShaderHeroCapabilityOutcome — the pure classification step,
+ * extracted on its own so its "requirements-not-met vs. runtime-error"
+ * branch is directly unit-testable with a hand-built `CapabilityExecutionResult`.
+ * The real `shaderHeroAdapter.execute()` (via `toSafeCssColor`) is
+ * deliberately defensive and never throws for any real input — meaning a
+ * genuine "runtime-error" outcome cannot be produced by driving the real
+ * adapter through realistic fixtures. This function still classifies that
+ * shape correctly should a future adapter (or an unexpected registry-level
+ * failure) ever produce it — `requestCapabilityExecution`'s own try/catch
+ * exists for exactly that possibility. Never called with a hand-built
+ * result in production code — only `qaShaderHeroCapability` below calls it,
+ * always with the real registry's own output.
+ */
+export function classifyShaderHeroCapabilityOutcome(
+  decision: CapabilityDecision | undefined,
+  executionResult: CapabilityExecutionResult<ShaderHeroPayload>,
+  contract: CapabilityQaContract,
+  heroHasRealPhoto: boolean
+): ShaderHeroCapabilityOutcome {
+  if (contract.status === "active") {
+    return { findings: [], warn: false, evidenceDetail: `Granted and realized — ${decision?.reason ?? "shader-enhanced-hero active"}` };
+  }
+
+  if (executionResult.failureReason === "requirements-not-met") {
+    return {
+      findings: [],
+      warn: false,
+      evidenceDetail: `Granted by the Selector but correctly declined by the Adapter at execution time (requirements-not-met: ${heroHasRealPhoto ? "a real photograph already occupies the hero background" : "DesignMemory's color palette is incomplete"}) — the Adapter's own fail-closed design working as intended, not a defect. The hero renders its existing, unchanged background.`,
+    };
+  }
+
+  return {
+    findings: [
+      `Shader-enhanced-hero was granted by the Selector but its Adapter execution failed unexpectedly (failureReason: "${executionResult.failureReason ?? "unknown"}") and safely fell back to the hero's existing background. Diagnostic only — the fallback already protected the render; worth a human's attention as a real, unexpected error, not a design-quality judgment.`,
+    ],
+    warn: true,
+    evidenceDetail: `Granted, but execution failed (${executionResult.failureReason ?? "unknown"}) — safe fallback applied.`,
+  };
+}
+
+function qaShaderHeroCapability(input: QaStructuredInput): ShaderHeroCapabilityOutcome {
+  const experiencePlan = input.wireframe.experiencePlan;
+  if (!experiencePlan) {
+    return {
+      findings: [],
+      warn: false,
+      evidenceDetail: "This wireframe predates Phase 6.1's ExperiencePlan — no Capability decision exists to verify.",
+    };
+  }
+
+  const heroPattern = input.wireframe.compositionVariant?.heroPattern;
+  const heroHasRealPhoto =
+    (heroPattern === "image-full-bleed" || heroPattern === "centered-cinematic") && !!input.designBrief.gallery?.[0]?.src;
+
+  const capabilityDecisions = resolveExperienceCapabilities({
+    experiencePlan,
+    brandPersonality: input.designMemory?.brandPersonality,
+    contentTone: input.designMemory?.contentTone,
+  });
+  const decision = capabilityDecisions.find((d) => d.token === "shader-enhanced-hero");
+
+  if (!decision?.granted) {
+    return { findings: [], warn: false, evidenceDetail: `Denied by the Selector — ${decision?.reason ?? "no decision computed"}` };
+  }
+
+  // Granted — ask the SAME registered adapter, via the SAME entry point the
+  // real Execution Runtime uses, whether it was actually realized.
+  const executionResult = requestCapabilityExecution<ShaderHeroAdapterInput, ShaderHeroPayload>("shader-enhanced-hero", {
+    heroHasRealPhoto,
+    colorPalette: input.designMemory?.colorPalette ?? {},
+  });
+  const adapter = getCapabilityAdapter<ShaderHeroAdapterInput, ShaderHeroPayload>("shader-enhanced-hero");
+
+  if (!executionResult || !adapter) {
+    // Unreachable for a real, registered token — defensive only, mirrors
+    // requestCapabilityExecution's own fail-closed contract.
+    return { findings: [], warn: false, evidenceDetail: "Granted by the Selector, but no adapter is registered for shader-enhanced-hero — nothing to verify." };
+  }
+
+  const contract = adapter.qaContract(executionResult);
+  return classifyShaderHeroCapabilityOutcome(decision, executionResult, contract, heroHasRealPhoto);
+}
+
 export function qaMotion(input: QaStructuredInput): DeterministicCategoryResult {
   const { motions, intensity, motionBudget, hover, experienceMode } = input.refinedDesign.motion;
   const violations: string[] = [];
@@ -486,6 +620,8 @@ export function qaMotion(input: QaStructuredInput): DeterministicCategoryResult 
     violations.push('Hover-intensity entries present alongside a "none" motion budget — motionBudget is a hard ceiling on ALL decorative motion, including hover (§6.2).');
   }
 
+  const capabilityCheck = qaShaderHeroCapability(input);
+
   const ev = [
     evidence(
       "validateMotionChoice (per section)",
@@ -502,9 +638,14 @@ export function qaMotion(input: QaStructuredInput): DeterministicCategoryResult 
       "hover-intensity mode gating",
       `${hoverEntries.length} hover-intensity entry(ies); re-verified traceability to experienceMode ("${experienceMode ?? "none resolved"}") and motionBudget ("${motionBudget ?? "none resolved"}").`
     ),
+    evidence("shader-enhanced-hero capability contract (Selector -> Adapter, qaContract())", capabilityCheck.evidenceDetail),
   ];
 
-  return deterministicResult(violations, ev, { evidenceSource: "structured", failIf: violations.length > 0 });
+  return deterministicResult([...violations, ...capabilityCheck.findings], ev, {
+    evidenceSource: "structured",
+    failIf: violations.length > 0,
+    warnIf: capabilityCheck.warn,
+  });
 }
 
 // ===========================================================================

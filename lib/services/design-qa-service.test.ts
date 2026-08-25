@@ -13,6 +13,7 @@ import {
   qaGenericTemplate,
   qaNarrativeConsistency,
   resolveQaDesignInputs,
+  classifyShaderHeroCapabilityOutcome,
   runStructuredDeterministicChecks,
   assembleDesignQaReport,
   type QaStructuredInput,
@@ -30,6 +31,11 @@ import { refineDesign, type SectionMotionValue } from "@/lib/services/design-ref
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
 import { GENERIC_SAAS_TEMPLATE_SECTION_ORDER } from "@/lib/design-intelligence/layout-rules";
+import type { ExperienceMode, MotionBudget } from "@/shared/design-intelligence/types";
+import type { CapabilityDecision } from "@/lib/design-intelligence/capability-selector";
+import type { CapabilityExecutionResult, CapabilityQaContract } from "@/lib/design-intelligence/capability-adapter";
+import type { ShaderHeroPayload } from "@/lib/design-intelligence/shader-hero-adapter";
+import type { HeroPatternId } from "@/lib/design-intelligence/section-patterns";
 
 function briefFor(overrides: Partial<DesignBrief["direction"]> = {}, briefOverrides: Partial<DesignBrief> = {}): DesignBrief {
   return {
@@ -366,6 +372,214 @@ describe("design-qa-service: qaMotion", () => {
     const input = buildValidInput({ wireframe, components, refinedDesign, designBrief: brief });
     const result = qaMotion(input);
     assert.equal(result.verdict, "PASS");
+  });
+});
+
+/**
+ * Builds a QaStructuredInput with full control over the exact inputs
+ * `qaShaderHeroCapability` (design-qa-service.ts, Phase 6.9) reads: the
+ * resolved ExperiencePlan (mode/motionBudget), the resolved hero pattern,
+ * whether a real gallery photo exists, and DesignMemory's color palette/
+ * brandPersonality/contentTone. Starts from buildValidInput()'s own real
+ * pipeline output so every other field stays realistic.
+ */
+function buildShaderHeroInput(opts: {
+  mode: ExperienceMode;
+  motionBudget: MotionBudget;
+  heroPattern: HeroPatternId;
+  galleryPhoto: boolean;
+  colorPalette?: { primary?: string; secondary?: string; accent?: string };
+  brandPersonality?: string[];
+  contentTone?: string;
+}): QaStructuredInput {
+  const base = buildValidInput();
+  const wireframe: Wireframe = {
+    ...base.wireframe,
+    experiencePlan: { mode: opts.mode, motionBudget: opts.motionBudget, rationale: "test fixture" },
+    compositionVariant: base.wireframe.compositionVariant
+      ? { ...base.wireframe.compositionVariant, heroPattern: opts.heroPattern }
+      : base.wireframe.compositionVariant,
+  };
+  return {
+    ...base,
+    wireframe,
+    designBrief: {
+      ...base.designBrief,
+      gallery: opts.galleryPhoto ? [{ src: "https://acme.test/photo.jpg", alt: null, sourceUrl: "https://acme.test" }] : [],
+    },
+    designMemory: {
+      ...SAMPLE_DESIGN_MEMORY,
+      colorPalette: {
+        primary: opts.colorPalette?.primary ?? "#111",
+        secondary: opts.colorPalette?.secondary ?? "#222",
+        accent: opts.colorPalette?.accent ?? "#333",
+        neutral: "#eee",
+        notes: "",
+      },
+      brandPersonality: opts.brandPersonality ?? [],
+      contentTone: opts.contentTone ?? "",
+    },
+  };
+}
+
+const CAPABILITY_EVIDENCE_SOURCE = "shader-enhanced-hero capability contract (Selector -> Adapter, qaContract())";
+
+function capabilityEvidence(result: DeterministicCategoryResult): string {
+  const entry = result.evidence.find((e) => e.source === CAPABILITY_EVIDENCE_SOURCE);
+  assert.ok(entry, "expected a shader-enhanced-hero capability evidence entry");
+  return entry!.detail;
+}
+
+describe("design-qa-service: qaMotion — shader-enhanced-hero capability contract (Phase 6.9)", () => {
+  test("1. denied by eligibility (wrong mode) never produces a warning", () => {
+    const input = buildShaderHeroInput({ mode: "trust-authority", motionBudget: "subtle", heroPattern: "editorial-typographic", galleryPhoto: false });
+    const result = qaMotion(input);
+    assert.equal(result.verdict, "PASS");
+    assert.ok(/^Denied by the Selector/.test(capabilityEvidence(result)));
+  });
+
+  test("2. granted and realized (rich, eligible mode/budget, no competing photo, complete palette)", () => {
+    const input = buildShaderHeroInput({
+      mode: "cinematic-storytelling",
+      motionBudget: "cinematic",
+      heroPattern: "editorial-typographic",
+      galleryPhoto: false,
+    });
+    const result = qaMotion(input);
+    assert.equal(result.verdict, "PASS");
+    assert.ok(/^Granted and realized/.test(capabilityEvidence(result)));
+  });
+
+  test("3. granted but the Adapter correctly declines — a real photo already occupies the hero background", () => {
+    const input = buildShaderHeroInput({
+      mode: "cinematic-storytelling",
+      motionBudget: "cinematic",
+      heroPattern: "image-full-bleed",
+      galleryPhoto: true,
+    });
+    const result = qaMotion(input);
+    // Non-failure/non-warning outcome — a legitimate Adapter fallback is never treated as a defect.
+    assert.equal(result.verdict, "PASS");
+    const detail = capabilityEvidence(result);
+    assert.ok(/correctly declined by the Adapter/.test(detail));
+    assert.ok(/real photograph already occupies/.test(detail));
+  });
+
+  test("4. granted but the Adapter correctly declines — DesignMemory's color palette is incomplete", () => {
+    const input = buildShaderHeroInput({
+      mode: "cinematic-storytelling",
+      motionBudget: "cinematic",
+      heroPattern: "editorial-typographic",
+      galleryPhoto: false,
+      colorPalette: { secondary: "" },
+    });
+    const result = qaMotion(input);
+    assert.equal(result.verdict, "PASS");
+    const detail = capabilityEvidence(result);
+    assert.ok(/correctly declined by the Adapter/.test(detail));
+    assert.ok(/color palette is incomplete/.test(detail));
+  });
+
+  test("5. a genuine Adapter execution failure is classified as a WARN, distinct from a legitimate decline", () => {
+    // The real shaderHeroAdapter.execute() (via toSafeCssColor) is deliberately
+    // defensive and never throws for any real input — a genuine "runtime-error"
+    // cannot be produced by driving the real adapter through realistic fixtures.
+    // classifyShaderHeroCapabilityOutcome (the pure classification step) is
+    // tested directly here with the exact shape requestCapabilityExecution's
+    // own catch-block would produce for a future adapter that could throw.
+    const decision: CapabilityDecision = {
+      token: "shader-enhanced-hero",
+      granted: true,
+      supportLevel: "High",
+      confidenceScore: 1,
+      reason: "Granted: test fixture.",
+    };
+    const executionResult: CapabilityExecutionResult<ShaderHeroPayload> = {
+      token: "shader-enhanced-hero",
+      status: "fallback-active",
+      failureReason: "runtime-error",
+      payload: { colors: null },
+    };
+    const contract: CapabilityQaContract = { expected: "shader-enhanced-hero", actual: "static-fallback", status: "degraded-but-valid" };
+
+    const outcome = classifyShaderHeroCapabilityOutcome(decision, executionResult, contract, false);
+    assert.equal(outcome.warn, true);
+    assert.ok(outcome.findings.some((f) => /execution failed unexpectedly/.test(f)));
+    assert.ok(!/correctly declined/.test(outcome.findings.join(" ")));
+  });
+
+  test("classifyShaderHeroCapabilityOutcome: an active contract never warns, regardless of decision/heroHasRealPhoto", () => {
+    const executionResult: CapabilityExecutionResult<ShaderHeroPayload> = {
+      token: "shader-enhanced-hero",
+      status: "active",
+      payload: { colors: { primary: "#111", secondary: "#222", accent: "#333" } },
+    };
+    const contract: CapabilityQaContract = { expected: "shader-enhanced-hero", actual: "shader-enhanced-hero", status: "active" };
+    const outcome = classifyShaderHeroCapabilityOutcome(undefined, executionResult, contract, false);
+    assert.equal(outcome.warn, false);
+    assert.equal(outcome.findings.length, 0);
+  });
+
+  test("6. reduced-motion cannot create a false rendered-capability failure — the check reads only structured data prefers-reduced-motion never touches", () => {
+    // No field on QaStructuredInput represents reduced-motion state (it is a
+    // client-runtime-only concern, enforced in shader-hero-runtime.tsx before
+    // any getContext() call — see capability-adapter.ts's reducedMotionStrategy:
+    // "gate-initialization"). The same real "granted and realized" fixture used
+    // in test 2 above is re-verified here to still PASS identically.
+    const input = buildShaderHeroInput({
+      mode: "cinematic-storytelling",
+      motionBudget: "cinematic",
+      heroPattern: "editorial-typographic",
+      galleryPhoto: false,
+    });
+    const result = qaMotion(input);
+    assert.equal(result.verdict, "PASS");
+  });
+
+  test("7. founder refinement: the capability contract is evaluated against the REFINED plan, not the stale original", () => {
+    const brief = briefFor();
+    const originalWireframe: Wireframe = {
+      ...generateWireframe(brief, { hasRealTestimonials: false }),
+      experiencePlan: { mode: "cinematic-storytelling", motionBudget: "subtle", rationale: "original: below the enhanced floor" },
+    };
+    const originalRefinedDesign = refineDesign({ wireframe: originalWireframe }, brief, SAMPLE_DESIGN_MEMORY);
+
+    const refinedPlan = { mode: "cinematic-storytelling" as const, motionBudget: "cinematic" as const, rationale: "founder refinement raised the budget" };
+    const { wireframe: refinedWireframe, refinedDesign: refinedRefinedDesign } = resolveQaDesignInputs(
+      originalWireframe,
+      originalRefinedDesign,
+      { resolved_plan: refinedPlan as unknown as import("@/lib/supabase/database.types").Json },
+      brief,
+      SAMPLE_DESIGN_MEMORY
+    );
+
+    const originalInput = buildValidInput({ wireframe: originalWireframe, refinedDesign: originalRefinedDesign, designBrief: brief });
+    const refinedInput = buildValidInput({ wireframe: refinedWireframe, refinedDesign: refinedRefinedDesign, designBrief: brief });
+
+    const originalDetail = capabilityEvidence(qaMotion(originalInput));
+    const refinedDetail = capabilityEvidence(qaMotion(refinedInput));
+
+    assert.ok(/^Denied by the Selector/.test(originalDetail), `expected the stale plan (subtle) to deny; got: ${originalDetail}`);
+    assert.notEqual(refinedDetail, originalDetail);
+    assert.ok(!/^Denied by the Selector/.test(refinedDetail), `expected the refined plan (cinematic) to no longer be denied; got: ${refinedDetail}`);
+  });
+
+  test("8. existing qaMotion behavior (entrance-motion coverage, hover gating) is unchanged by the capability check", () => {
+    // Re-verifies the exact pre-existing sparse fixture case from the qaMotion
+    // describe block above still behaves identically now that qaMotion also
+    // runs the capability cross-check.
+    const input = buildValidInput();
+    assert.equal(input.refinedDesign.motion.motionBudget, "none");
+    const result = qaMotion(input);
+    assert.equal(result.verdict, "PASS");
+    assert.ok(result.evidence.some((e) => /motion budget is "none"/.test(e.detail)));
+  });
+
+  test("9. no false warning is produced merely because a capability was denied by eligibility", () => {
+    const input = buildShaderHeroInput({ mode: "premium-minimal", motionBudget: "subtle", heroPattern: "oversized-typographic", galleryPhoto: false });
+    const result = qaMotion(input);
+    assert.notEqual(result.verdict, "WARN");
+    assert.notEqual(result.verdict, "FAIL");
   });
 });
 
