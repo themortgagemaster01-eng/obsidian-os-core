@@ -151,3 +151,131 @@ describe("capability-selector: resolveExperienceCapabilities — supportLevel/co
     assert.match(notGranted.reason, /zero-evidence rationale text/);
   });
 });
+
+// ===========================================================================
+// Phase 6.6 — shader-enhanced-hero gate
+// (docs/PHASE_6.6_SHADER_TECHNICAL_AUDIT.md's approved gate).
+// ===========================================================================
+
+function shaderDecisionFor(
+  mode: ExperiencePlan["mode"],
+  motionBudget: ExperiencePlan["motionBudget"],
+  overrides: { brandPersonality?: string[]; contentTone?: string } = {}
+) {
+  const decisions = resolveExperienceCapabilities({
+    experiencePlan: { mode, motionBudget, rationale: "test rationale" },
+    evidence: NO_EVIDENCE,
+    industryBucket: "general",
+    heroPattern: "editorial-typographic",
+    ...overrides,
+  });
+  return decisions.find((d) => d.token === "shader-enhanced-hero")!;
+}
+
+describe("capability-selector: resolveExperienceCapabilities — shader-enhanced-hero gate", () => {
+  test("granted for every allowed energetic-register mode at enhanced or cinematic budget", () => {
+    const allowedModes: ExperiencePlan["mode"][] = [
+      "cinematic-storytelling",
+      "high-energy-retail",
+      "product-showcase",
+      "interactive-showcase",
+    ];
+    for (const mode of allowedModes) {
+      for (const motionBudget of ["enhanced", "cinematic"] as const) {
+        const decision = shaderDecisionFor(mode, motionBudget);
+        assert.equal(decision.granted, true, `expected granted for ${mode} at ${motionBudget}`);
+      }
+    }
+  });
+
+  test("NOT granted below the enhanced floor, even for an otherwise-allowed mode", () => {
+    for (const motionBudget of ["none", "subtle"] as const) {
+      const decision = shaderDecisionFor("cinematic-storytelling", motionBudget);
+      assert.equal(decision.granted, false, `expected denied at ${motionBudget}`);
+    }
+  });
+
+  test("trust-authority is denied — structurally, via its own subtle ceiling, never reaching the enhanced floor", () => {
+    const decision = shaderDecisionFor("trust-authority", "subtle");
+    assert.equal(decision.granted, false);
+  });
+
+  test("premium-minimal is denied — same structural reason as trust-authority", () => {
+    const decision = shaderDecisionFor("premium-minimal", "subtle");
+    assert.equal(decision.granted, false);
+  });
+
+  test("editorial-storytelling is denied even when it reaches the enhanced budget — an explicit allowlist exclusion, not merely a budget shortfall (proves the allowlist does real work beyond what the budget check alone would already exclude)", () => {
+    const deniedAtEnhanced = shaderDecisionFor("editorial-storytelling", "enhanced");
+    assert.equal(deniedAtEnhanced.granted, false);
+    const deniedAtCinematic = shaderDecisionFor("editorial-storytelling", "cinematic");
+    assert.equal(deniedAtCinematic.granted, false);
+  });
+
+  test("warm-local-business is denied even when it reaches the enhanced budget — register mismatch, not evidence starvation", () => {
+    const decision = shaderDecisionFor("warm-local-business", "enhanced");
+    assert.equal(decision.granted, false);
+  });
+
+  test("a zero-motion sparse experience is denied regardless of mode", () => {
+    const decision = shaderDecisionFor("cinematic-storytelling", "none");
+    assert.equal(decision.granted, false);
+  });
+
+  test("a restrained brand personality/content tone denies the capability even for an otherwise-eligible mode+budget", () => {
+    const restrained = shaderDecisionFor("high-energy-retail", "cinematic", {
+      brandPersonality: ["understated", "quiet"],
+    });
+    assert.equal(restrained.granted, false);
+
+    const restrainedByTone = shaderDecisionFor("high-energy-retail", "cinematic", {
+      contentTone: "refined and restrained",
+    });
+    assert.equal(restrainedByTone.granted, false);
+
+    // A bold-read (not restrained) personality on the same otherwise-eligible mode+budget stays granted — confirms the tone check is a real exclusion, not an accidental universal denial.
+    const bold = shaderDecisionFor("high-energy-retail", "cinematic", { brandPersonality: ["bold", "energetic"] });
+    assert.equal(bold.granted, true);
+  });
+
+  test("human 'more energetic' + 'more motion' cannot breach the gate for trust-authority — the ceiling protection is inherited from resolveMotionBudget's own Math.min() composition, never re-implemented here", () => {
+    const plan = resolveExperiencePlan({
+      industryBucket: "lawFirm",
+      heroPattern: "editorial-typographic",
+      evidence: { services: 5, certifications: 3, hasReviews: true, galleryCount: 6, hasRealTeam: true },
+      motionIntensity: "energetic",
+      humanPreference: { energy: "more-energetic", motion: "more" },
+    });
+    assert.equal(plan.mode, "trust-authority");
+    assert.equal(plan.motionBudget, "subtle");
+    const decisions = resolveExperienceCapabilities({ experiencePlan: plan, evidence: NO_EVIDENCE, industryBucket: "lawFirm" });
+    const shaderDecision = decisions.find((d) => d.token === "shader-enhanced-hero")!;
+    assert.equal(shaderDecision.granted, false);
+  });
+
+  test("supportLevel is High when granted (the one shipped shader family fully supports every granted case), Low when not", () => {
+    assert.equal(shaderDecisionFor("cinematic-storytelling", "cinematic").supportLevel, "High");
+    assert.equal(shaderDecisionFor("trust-authority", "subtle").supportLevel, "Low");
+  });
+
+  test("reason distinguishes mode-exclusion, budget-shortfall, and restrained-tone denials honestly, and names the real granted conditions", () => {
+    assert.match(shaderDecisionFor("editorial-storytelling", "enhanced").reason, /energetic-register modes/);
+    assert.match(shaderDecisionFor("cinematic-storytelling", "subtle").reason, /enhanced.*floor/);
+    assert.match(
+      shaderDecisionFor("high-energy-retail", "cinematic", { brandPersonality: ["restrained"] }).reason,
+      /deliberately restrained/
+    );
+    const granted = shaderDecisionFor("cinematic-storytelling", "cinematic");
+    assert.match(granted.reason, /Granted/);
+    assert.match(granted.reason, /"cinematic-storytelling"/);
+    assert.match(granted.reason, /"cinematic"/);
+  });
+
+  test("evidence/industryBucket/heroPattern are entirely optional — the gate only ever reads experiencePlan and brandPersonality/contentTone", () => {
+    const decisions = resolveExperienceCapabilities({
+      experiencePlan: { mode: "cinematic-storytelling", motionBudget: "cinematic", rationale: "test" },
+    });
+    const decision = decisions.find((d) => d.token === "shader-enhanced-hero")!;
+    assert.equal(decision.granted, true);
+  });
+});

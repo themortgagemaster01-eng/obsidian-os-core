@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { getCapabilityAdapter, requestCapabilityExecution } from "@/lib/design-intelligence/capability-adapter-registry";
 import type { BasicMotionAdapterInput } from "@/lib/design-intelligence/basic-motion-adapter";
+import type { ShaderHeroAdapterInput, ShaderHeroPayload } from "@/lib/design-intelligence/shader-hero-adapter";
 import { generateWireframe, type Wireframe } from "@/lib/services/design-generation-service";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { CapabilityToken } from "@/lib/design-intelligence/capability-selector";
@@ -122,5 +123,49 @@ describe("capability-adapter-registry: full round trip proves the seam (Selector
     );
     assert.ok(result);
     assert.equal(result!.status, "active");
+  });
+});
+
+// ===========================================================================
+// Phase 6.6 — the registry generalizes to a SECOND, genuinely different
+// execution technology (raw WebGL, not a CSS/IntersectionObserver wrapper) —
+// the specific architectural proof docs/PHASE_6.6_RESEARCH_SYNTHESIS.md
+// identified as the highest-value thing this phase could demonstrate.
+// ===========================================================================
+
+describe("capability-adapter-registry: shader-enhanced-hero — a second, genuinely different token, same registry mechanics", () => {
+  test("returns the real registered shader-enhanced-hero adapter", () => {
+    const adapter = getCapabilityAdapter<ShaderHeroAdapterInput, ShaderHeroPayload>("shader-enhanced-hero");
+    assert.ok(adapter);
+    assert.equal(adapter!.token, "shader-enhanced-hero");
+  });
+
+  test("real requirements met: delegates to the adapter's own execute(), producing real color config, not motion", () => {
+    const result = requestCapabilityExecution<ShaderHeroAdapterInput, ShaderHeroPayload>("shader-enhanced-hero", {
+      heroHasRealPhoto: false,
+      colorPalette: { primary: "#111111", secondary: "#222222", accent: "#ff8800" },
+    });
+    assert.ok(result);
+    assert.equal(result!.status, "active");
+    assert.deepEqual(result!.payload.colors, { primary: "#111111", secondary: "#222222", accent: "#ff8800" });
+  });
+
+  test("unmet requirements (a real photo already occupies the hero) degrade to fallback(), classified requirements-not-met, colors null", () => {
+    const result = requestCapabilityExecution<ShaderHeroAdapterInput, ShaderHeroPayload>("shader-enhanced-hero", {
+      heroHasRealPhoto: true,
+      colorPalette: { primary: "#111111", secondary: "#222222", accent: "#ff8800" },
+    });
+    assert.ok(result);
+    assert.equal(result!.status, "fallback-active");
+    assert.equal(result!.failureReason, "requirements-not-met");
+    assert.equal(result!.payload.colors, null);
+  });
+
+  test("both real tokens are independently resolvable through the exact same registry functions — no per-token special-casing in getCapabilityAdapter/requestCapabilityExecution themselves", () => {
+    const motionAdapter = getCapabilityAdapter("basic-motion");
+    const shaderAdapter = getCapabilityAdapter("shader-enhanced-hero");
+    assert.ok(motionAdapter);
+    assert.ok(shaderAdapter);
+    assert.notEqual(motionAdapter!.token, shaderAdapter!.token);
   });
 });

@@ -25,6 +25,8 @@ import {
 } from "@/lib/design-render/safe-css";
 import { SlotValue, isRealSlot } from "@/components/design-preview/slot-value";
 import { ScrollRevealRuntime } from "@/components/design-preview/scroll-reveal-runtime";
+import { ShaderHeroRuntime } from "@/components/design-preview/shader-hero-runtime";
+import { resolveShaderHeroThroughCapabilities } from "@/lib/design-intelligence/capability-hero-execution";
 
 /**
  * components/design-preview/design-preview.tsx — the typed renderer at the
@@ -328,11 +330,31 @@ export function DesignPreview({
     // rendered FALLBACK.onDark white text unmeasured against it.
     const heroPattern = type === "hero" ? node.pattern : undefined;
     const heroHasScrim = !!heroImageUrl && (heroPattern === "image-full-bleed" || heroPattern === "centered-cinematic");
+    // Phase 6.6: re-derives the shader-enhanced-hero capability decision at
+    // render time (no persisted field, per Robert's approved renderer
+    // decision) using the SAME deterministic selector/registry logic
+    // generateWebsiteStructure/resolveRefinedDesign already use for
+    // basic-motion — never a second, independent shader gate. Only
+    // meaningful for "hero"; every other section passes heroHasRealPhoto:
+    // false and simply never has an ExperiencePlan-driven reason to be
+    // granted anything by this call (the mode/budget/tone gate is the same
+    // regardless of section, but shaderColors below is only ever wired into
+    // the hero's own rendering).
+    const shaderColors =
+      type === "hero"
+        ? resolveShaderHeroThroughCapabilities({
+            experiencePlan: wireframe.experiencePlan,
+            heroHasRealPhoto: heroHasScrim,
+            colorPalette: designMemory?.colorPalette,
+            brandPersonality: designMemory?.brandPersonality,
+            contentTone: designMemory?.contentTone,
+          }).colors
+        : null;
     const foreground =
       type === "footer"
         ? getReadableTextColor(background, FALLBACK.text, FALLBACK.onDark)
         : type === "hero"
-          ? heroHasScrim
+          ? heroHasScrim || shaderColors
             ? FALLBACK.onDark
             : getReadableTextColor(background, FALLBACK.text, FALLBACK.onDark)
           : FALLBACK.text;
@@ -346,6 +368,7 @@ export function DesignPreview({
         foreground={foreground}
         backgroundImageUrl={type === "hero" ? heroImageUrl : null}
         heroPattern={type === "hero" ? node.pattern : undefined}
+        shaderColors={shaderColors}
         isSignature={isSignature}
         accent={accent}
       >
@@ -431,6 +454,19 @@ export function DesignPreview({
            reduced-motion visitor still never sees a hidden section. */
         @media (prefers-reduced-motion: reduce) {
           [data-design-preview] [data-op-animated] { transition: none !important; opacity: 1 !important; transform: none !important; }
+        }
+        /* Phase 6.6 belt-and-suspenders: shader-hero-runtime.tsx already
+           checks prefers-reduced-motion before ever calling getContext(), so
+           a reduced-motion visitor's canvas never mounts in the first place
+           — this rule should never actually need to fire. Kept anyway for
+           the same "a future bug, a runtime that loaded before this
+           stylesheet" defense-in-depth reason as the rule above: if a canvas
+           element were ever present regardless, it stays hidden and the
+           static, palette-derived gradient (this element's own
+           backgroundImage, set unconditionally above) remains the entire
+           visible state. */
+        @media (prefers-reduced-motion: reduce) {
+          [data-design-preview] [data-op-shader-hero] canvas { display: none !important; }
         }
         /* Phase 6.2 hover-intensity primitive (high-energy-retail only,
            lib/services/design-refinement-service.ts's SectionHoverValue) —
@@ -518,6 +554,14 @@ export function DesignPreview({
           deep-link, or a safety timeout) — see scroll-reveal-runtime.tsx's
           own module comment for the full contract. */}
       <ScrollRevealRuntime />
+      {/* Phase 6.6: the shader-enhanced-hero capability's client half.
+          Renders nothing; only ever mounts a canvas into a real
+          [data-op-shader-hero] element this render actually emitted (never
+          for a business the capability wasn't granted for), and only after
+          confirming prefers-reduced-motion is off and WebGL is available —
+          see shader-hero-runtime.tsx's own module comment for the full
+          contract, mirroring ScrollRevealRuntime's own shape exactly. */}
+      <ShaderHeroRuntime />
 
       <Nav
         businessName={businessName}
@@ -700,6 +744,7 @@ function SectionShell({
   foreground,
   backgroundImageUrl,
   heroPattern,
+  shaderColors,
   isSignature,
   accent,
   children,
@@ -712,6 +757,15 @@ function SectionShell({
   /** Real, already-captured business photography (see DesignPreviewProps.heroImageUrl) — currently only ever passed for "hero". */
   backgroundImageUrl?: string | null;
   heroPattern?: string;
+  /**
+   * Phase 6.6: real, sanitized shader-enhanced-hero color stops — present
+   * only when the capability was granted AND the adapter's own
+   * requirementsMet cleared (which itself requires the hero to have no real
+   * photograph already driving its background — see backgroundImageUrl
+   * above, mutually exclusive with this by construction, never both at
+   * once). Currently only ever passed for "hero".
+   */
+  shaderColors?: { primary: string; secondary: string; accent: string } | null;
   /** True for exactly the one section design-generation-service.ts's resolveSignatureSection targets — see SignatureRule. */
   isSignature: boolean;
   accent: string;
@@ -783,9 +837,31 @@ function SectionShell({
         // that zone at every possible width.
         backgroundImage: backgroundImageUrl && (heroPattern === "image-full-bleed" || heroPattern === "centered-cinematic")
           ? `linear-gradient(to right, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.72) 42%, rgba(0,0,0,0.58) 62%, rgba(0,0,0,0.48) 85%, rgba(0,0,0,0.45) 100%), url("${backgroundImageUrl}")`
-          : isSignature && !isHero
-            ? `linear-gradient(${background}, ${background}), linear-gradient(${accent}14, ${accent}14)`
-            : undefined,
+          : shaderColors
+            ? // Phase 6.6: the always-present, per-business, palette-derived
+              // static fallback shader-enhanced-hero's own adapter/runtime
+              // enhance on top of, never replace — see shader-hero-adapter.ts's
+              // own doc comment. Reuses the EXACT same proven scrim stops the
+              // real-photo case above already uses (0.72/0.72/0.58/0.48/0.45),
+              // not a new, independently-invented set — an earlier, weaker
+              // version of this scrim (0.55/0.42/0.30) measured out to a WCAG
+              // contrast ratio of only ~1.7:1 against FALLBACK.onDark for a
+              // worst-case light/pastel business palette, well under the
+              // 4.5:1 AA floor safe-css.ts already enforces elsewhere in this
+              // codebase — the SAME failure mode this file's own photo-scrim
+              // comment already solved once for a bright real photograph.
+              // Reusing its already-validated values rather than re-deriving
+              // a second, weaker threshold for a structurally identical
+              // problem. The WebGL canvas, when it mounts, independently
+              // guarantees the same legible floor via its own hard color
+              // ceiling (shader-hero.ts's SHADER_FRAGMENT_SOURCE), verified
+              // the same way — real browser, real readPixels — so legibility
+              // never depends on which of the two layers happens to be
+              // visible.
+              `linear-gradient(to right, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.72) 42%, rgba(0,0,0,0.58) 62%, rgba(0,0,0,0.48) 85%, rgba(0,0,0,0.45) 100%), radial-gradient(circle at 30% 20%, ${shaderColors.accent}40, transparent 60%), linear-gradient(135deg, ${shaderColors.primary}, ${shaderColors.secondary})`
+            : isSignature && !isHero
+              ? `linear-gradient(${background}, ${background}), linear-gradient(${accent}14, ${accent}14)`
+              : undefined,
         backgroundSize: "cover",
         backgroundPosition: "center",
         color: foreground,
@@ -793,6 +869,7 @@ function SectionShell({
         minHeight: isHero ? "min(46rem, 88vh)" : undefined,
         display: isHero ? "flex" : undefined,
         alignItems: isHero ? "center" : undefined,
+        position: isHero && shaderColors ? "relative" : undefined,
         borderTop: isHero ? "none" : isSignature ? `3px solid ${accent}` : "1px solid rgba(0,0,0,0.08)",
         // No `animation` and no unconditional inline `transition` here —
         // Phase 6.3 replaced the automatic load-time keyframe with a
@@ -822,7 +899,44 @@ function SectionShell({
         "--op-scale": motion ? revealScale : undefined,
       } as React.CSSProperties}
     >
-      <div style={{ maxWidth: `${contentWidthRem}rem`, margin: "0 auto", width: "100%" }}>{children}</div>
+      {shaderColors && (
+        // Phase 6.6: the shader-hero-runtime.tsx client component finds this
+        // element via SHADER_HERO_SELECTOR and appends its <canvas> INTO it —
+        // never part of this server-rendered tree itself, so there is no
+        // hydration mismatch to reconcile (React never manages the canvas or
+        // its pixel contents). Absent entirely when shaderColors is null,
+        // mirroring [data-op-animated]'s own "absent means nothing to do"
+        // discipline exactly. The CSS custom properties below are this
+        // element's own real, per-business color config — read by the
+        // runtime via getComputedStyle, never duplicated as a second data
+        // source.
+        <div
+          data-op-shader-hero=""
+          aria-hidden="true"
+          style={
+            {
+              position: "absolute",
+              inset: 0,
+              zIndex: 0,
+              pointerEvents: "none",
+              "--op-shader-primary": shaderColors.primary,
+              "--op-shader-secondary": shaderColors.secondary,
+              "--op-shader-accent": shaderColors.accent,
+            } as React.CSSProperties
+          }
+        />
+      )}
+      <div
+        style={{
+          maxWidth: `${contentWidthRem}rem`,
+          margin: "0 auto",
+          width: "100%",
+          position: shaderColors ? "relative" : undefined,
+          zIndex: shaderColors ? 1 : undefined,
+        }}
+      >
+        {children}
+      </div>
     </Tag>
   );
 }

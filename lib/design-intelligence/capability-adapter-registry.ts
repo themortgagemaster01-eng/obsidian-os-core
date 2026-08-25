@@ -1,6 +1,7 @@
 import type { CapabilityToken } from "@/lib/design-intelligence/capability-selector";
 import type { CapabilityAdapter, CapabilityExecutionResult } from "@/lib/design-intelligence/capability-adapter";
 import { basicMotionAdapter } from "@/lib/design-intelligence/basic-motion-adapter";
+import { shaderHeroAdapter } from "@/lib/design-intelligence/shader-hero-adapter";
 
 /**
  * lib/design-intelligence/capability-adapter-registry.ts — the "simple
@@ -22,6 +23,7 @@ import { basicMotionAdapter } from "@/lib/design-intelligence/basic-motion-adapt
 
 const CAPABILITY_ADAPTER_REGISTRY: Readonly<Partial<Record<CapabilityToken, CapabilityAdapter<unknown, unknown>>>> = {
   "basic-motion": basicMotionAdapter,
+  "shader-enhanced-hero": shaderHeroAdapter,
 };
 
 export function getCapabilityAdapter<TInput, TPayload>(

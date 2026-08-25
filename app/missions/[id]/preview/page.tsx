@@ -154,20 +154,29 @@ async function PreviewBody({
   }
 
   // When a refinement exists, the RENDERED page must reflect the founder's
-  // resolved preference, not the unrefined generation-time plan — recomputed
-  // via resolveRefinedDesign (experience-refinement-service.ts), which
-  // routes motion through the SAME Capability Selector -> Capability Adapter
-  // Registry -> Granted Adapter seam generateWebsiteStructure already uses
-  // (Phase 6.5 integration follow-up) rather than a second, independent
-  // renderer, fed the resolved_plan in place of the wireframe's original
+  // resolved preference, not the unrefined generation-time plan — the
+  // resolved_plan substituted in place of the wireframe's own original
   // experiencePlan (design-generation-service.ts's own anti-drift
-  // construction).
+  // construction). Built as its own variable (renderedWireframe), not
+  // inlined only into resolveRefinedDesign's call, because Phase 6.6's
+  // shader-enhanced-hero capability re-derives its own grant decision
+  // directly from wireframe.experiencePlan INSIDE design-preview.tsx at
+  // render time (Robert's approved renderer decision) — the exact same
+  // wireframe object passed to <DesignPreview> below must therefore already
+  // carry the founder's resolved plan too, or that render-time re-derivation
+  // would silently evaluate against the stale, pre-refinement plan while
+  // refinedDesign.motion correctly reflected the refined one.
+  const renderedWireframe: Wireframe = currentRefinement
+    ? { ...wireframe, experiencePlan: currentRefinement.resolved_plan as unknown as ExperiencePlan }
+    : wireframe;
+
+  // Recomputed via resolveRefinedDesign (experience-refinement-service.ts),
+  // which routes motion through the SAME Capability Selector -> Capability
+  // Adapter Registry -> Granted Adapter seam generateWebsiteStructure
+  // already uses (Phase 6.5 integration follow-up) rather than a second,
+  // independent renderer.
   const refinedDesign: RefinedDesign = currentRefinement
-    ? resolveRefinedDesign(
-        { ...wireframe, experiencePlan: currentRefinement.resolved_plan as unknown as ExperiencePlan },
-        (brief!.brief as unknown as DesignBrief),
-        designMemory
-      )
+    ? resolveRefinedDesign(renderedWireframe, brief!.brief as unknown as DesignBrief, designMemory)
     : (design.refined_design as unknown as RefinedDesign);
 
   // heroImageUrl is real only when the Pattern Selection stage (lib/design-
@@ -203,7 +212,7 @@ async function PreviewBody({
       )}
       <DesignPreview
         businessName={businessName}
-        wireframe={wireframe}
+        wireframe={renderedWireframe}
         components={components}
         refinedDesign={refinedDesign}
         designMemory={designMemory}

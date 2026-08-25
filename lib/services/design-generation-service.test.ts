@@ -961,11 +961,16 @@ describe("design-generation-service: generateWebsiteStructure — Phase 6.5 Capa
 
     // Proof the seam was traversed: this field only exists on WebsiteStructure
     // because resolveMotionThroughCapabilities -> resolveExperienceCapabilities
-    // genuinely ran inside generateWebsiteStructure's own call graph.
-    assert.equal(capabilityDecisions.length, 1);
-    assert.equal(capabilityDecisions[0].token, "basic-motion");
-    assert.equal(capabilityDecisions[0].granted, true);
-    assert.equal(capabilityDecisions[0].supportLevel, "High");
+    // genuinely ran inside generateWebsiteStructure's own call graph. Two
+    // decisions since Phase 6.6 added shader-enhanced-hero as a second real
+    // token — this fixture's evidence only earns a "subtle" motion budget
+    // (services alone is one evidence signal, below shader-enhanced-hero's
+    // own "enhanced" floor), so it's correctly present but NOT granted here;
+    // basic-motion only requires a non-"none" budget, so it's granted.
+    assert.equal(capabilityDecisions.length, 2);
+    const basicMotionDecision = capabilityDecisions.find((d) => d.token === "basic-motion")!;
+    assert.equal(basicMotionDecision.granted, true);
+    assert.equal(basicMotionDecision.supportLevel, "High");
 
     // Proof the granted adapter's real execution — not a different,
     // reimplemented computation — produced this motion: byte-identical to
