@@ -45,7 +45,7 @@ import type { CapabilityExecutionResult, CapabilityQaContract } from "@/lib/desi
 import type { ContentSection, LighthouseCategoryScores } from "@/lib/adapters/types";
 import { runAccessibilityAdapter } from "@/lib/adapters/accessibility-adapter";
 import { runLighthouseAdapter } from "@/lib/adapters/lighthouse-adapter";
-import { runRenderedPreviewAdapter } from "@/lib/adapters/rendered-preview-adapter";
+import { runRenderedPreviewAdapter, type ViewportRenderResult, type ShaderHeroRenderResult } from "@/lib/adapters/rendered-preview-adapter";
 
 import type { LlmProvider } from "@/lib/llm/provider";
 import { extractJsonFromLlmResponse } from "@/lib/llm/json-response";
@@ -1249,6 +1249,70 @@ export interface RenderedMobileEvidence {
   screenshotByteSize: number;
 }
 
+export interface ShaderHeroRenderHealthOutcome {
+  findings: string[];
+  fail: boolean;
+}
+
+/**
+ * classifyShaderHeroRenderHealth — Phase 7: the deterministic client-side
+ * counterpart to Phase 6.9's qaMotion/qaContract() cross-check. That check
+ * already fully owns distinguishing "denied by the Selector" from "granted
+ * but the Adapter legitimately declined" — both produce an identical DOM
+ * signature here (no [data-op-shader-hero] marker at all), and this
+ * function never re-derives that distinction; it only asks, given whatever
+ * the server already decided and rendered (the marker's own presence, read
+ * by rendered-preview-adapter.ts), whether the client-side WebGL canvas
+ * actually initialized and stayed healthy. Reduced-motion is deliberately
+ * NOT checked here — the runtime's own pre-getContext() gate means a
+ * reduced-motion visitor's canvas never mounts at all, which is the same
+ * "marker present, canvas absent" shape a genuine failure would produce;
+ * validating that distinction requires emulating prefers-reduced-motion,
+ * which per Robert's own Phase 7 scoping decision belongs in the one-time
+ * real-browser validation suite, not a per-mission automated check that
+ * would double browser-automation cost over a generic runtime property
+ * that never varies per business.
+ */
+export function classifyShaderHeroRenderHealth(
+  desktop: ViewportRenderResult,
+  mobile: ViewportRenderResult,
+  consoleErrors: string[],
+  pageErrors: string[]
+): ShaderHeroRenderHealthOutcome {
+  const viewports: { label: string; result: ShaderHeroRenderResult | null }[] = [
+    { label: "desktop", result: desktop.shaderHero },
+    { label: "mobile (375px)", result: mobile.shaderHero },
+  ];
+  const expectedAnywhere = viewports.some((v) => v.result !== null);
+  if (!expectedAnywhere) {
+    return { findings: [], fail: false };
+  }
+
+  const findings: string[] = [];
+  for (const { label, result } of viewports) {
+    if (!result) continue;
+    if (!result.canvasPresent) {
+      findings.push(
+        `Shader-enhanced-hero was expected to render at the ${label} viewport (the server-rendered [data-op-shader-hero] marker was present) but no canvas ever mounted — a genuine client-side initialization failure, not a legitimate decline (Phase 6.9's structural qaContract() check already confirmed eligibility separately).`
+      );
+    } else if (result.contextLost) {
+      findings.push(
+        `Shader-enhanced-hero's canvas mounted at the ${label} viewport, but its WebGL context is lost (isContextLost() === true) — the render started but the GPU/driver context failed afterward.`
+      );
+    }
+  }
+
+  if (consoleErrors.length > 0 || pageErrors.length > 0) {
+    findings.push(
+      `Shader-enhanced-hero was expected to render, and ${consoleErrors.length} browser console error(s) and ${pageErrors.length} unhandled page error(s) were captured during the same verification window. Attributed here under a presence-based rule only (shader-hero was active on this page) — never content-matched to the shader specifically. Known, disclosed limitation: an unrelated error on a page where shader-hero is also active could be misattributed; no heuristic is used to try to rule that out.${
+        consoleErrors.length + pageErrors.length > 0 ? ` First captured: "${[...consoleErrors, ...pageErrors][0]}"` : ""
+      }`
+    );
+  }
+
+  return { findings, fail: findings.length > 0 };
+}
+
 export async function qaMobileRendered(previewUrl: string, cookies: { name: string; value: string; domain: string; path?: string }[]) {
   const result = await runRenderedPreviewAdapter(previewUrl, { cookies });
   if (result.fetchError || !result.mobile || !result.desktop) {
@@ -1269,15 +1333,32 @@ export async function qaMobileRendered(previewUrl: string, cookies: { name: stri
     warnIf: belowMin.length > 0,
   });
 
+  const shaderHeroHealth = classifyShaderHeroRenderHealth(result.desktop, result.mobile, result.consoleErrors, result.pageErrors);
+
   const visualFindings = [
     `Desktop screenshot captured: ${result.desktop.screenshotByteSize} bytes at ${result.desktop.widthPx}x${result.desktop.heightPx}.`,
     `Mobile (375px) screenshot captured: ${result.mobile.screenshotByteSize} bytes at ${result.mobile.widthPx}x${result.mobile.heightPx}.`,
     `Page title observed: "${result.pageTitle ?? "(none)"}" — DOM rendered with real content, not just structurally present markup.`,
+    ...shaderHeroHealth.findings,
   ];
-  const visual = deterministicResult(visualFindings, [evidence("runRenderedPreviewAdapter (screenshot capture)", visualFindings.join(" "))], {
-    evidenceSource: "rendered",
-    failIf: false,
-  });
+  const visual = deterministicResult(
+    visualFindings,
+    [
+      evidence("runRenderedPreviewAdapter (screenshot capture)", visualFindings.slice(0, 3).join(" ")),
+      evidence(
+        "shader-enhanced-hero render-health (real WebGL canvas + isContextLost(), Phase 7)",
+        shaderHeroHealth.findings.length > 0
+          ? shaderHeroHealth.findings.join(" ")
+          : result.desktop.shaderHero || result.mobile.shaderHero
+            ? "Shader-enhanced-hero was expected and the real browser confirms a healthy, initialized WebGL canvas at every viewport where it was expected."
+            : "Shader-enhanced-hero was not expected on this render (no [data-op-shader-hero] marker present) — nothing to verify."
+      ),
+    ],
+    {
+      evidenceSource: "rendered",
+      failIf: shaderHeroHealth.fail,
+    }
+  );
 
   return { mobile, visual };
 }

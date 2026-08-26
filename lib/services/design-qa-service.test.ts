@@ -14,6 +14,7 @@ import {
   qaNarrativeConsistency,
   resolveQaDesignInputs,
   classifyShaderHeroCapabilityOutcome,
+  classifyShaderHeroRenderHealth,
   runStructuredDeterministicChecks,
   assembleDesignQaReport,
   type QaStructuredInput,
@@ -36,6 +37,7 @@ import type { CapabilityDecision } from "@/lib/design-intelligence/capability-se
 import type { CapabilityExecutionResult, CapabilityQaContract } from "@/lib/design-intelligence/capability-adapter";
 import type { ShaderHeroPayload } from "@/lib/design-intelligence/shader-hero-adapter";
 import type { HeroPatternId } from "@/lib/design-intelligence/section-patterns";
+import type { ViewportRenderResult } from "@/lib/adapters/rendered-preview-adapter";
 
 function briefFor(overrides: Partial<DesignBrief["direction"]> = {}, briefOverrides: Partial<DesignBrief> = {}): DesignBrief {
   return {
@@ -580,6 +582,84 @@ describe("design-qa-service: qaMotion — shader-enhanced-hero capability contra
     const result = qaMotion(input);
     assert.notEqual(result.verdict, "WARN");
     assert.notEqual(result.verdict, "FAIL");
+  });
+});
+
+/** A minimal, real-shaped ViewportRenderResult — only the fields classifyShaderHeroRenderHealth reads are given real values; the rest are irrelevant filler for this pure function's own tests. */
+function buildViewportResult(shaderHero: ViewportRenderResult["shaderHero"]): ViewportRenderResult {
+  return { widthPx: 1280, heightPx: 800, horizontalOverflow: false, touchTargets: [], screenshotByteSize: 1000, shaderHero };
+}
+
+describe("design-qa-service: classifyShaderHeroRenderHealth (Phase 7 — browser render verification)", () => {
+  test("A. shader not expected anywhere (no [data-op-shader-hero] marker) — nothing to verify, never fails (covers outcomes B and C, which are indistinguishable at the DOM level and are not this check's job to tell apart)", () => {
+    const outcome = classifyShaderHeroRenderHealth(buildViewportResult(null), buildViewportResult(null), [], []);
+    assert.equal(outcome.fail, false);
+    assert.equal(outcome.findings.length, 0);
+  });
+
+  test("A. shader expected and healthy at both desktop and mobile — PASS, no finding", () => {
+    const healthy = { canvasPresent: true, contextLost: false };
+    const outcome = classifyShaderHeroRenderHealth(buildViewportResult(healthy), buildViewportResult(healthy), [], []);
+    assert.equal(outcome.fail, false);
+    assert.equal(outcome.findings.length, 0);
+  });
+
+  test("E. shader expected but the canvas never mounted — deterministic FAIL", () => {
+    const outcome = classifyShaderHeroRenderHealth(
+      buildViewportResult({ canvasPresent: false, contextLost: null }),
+      buildViewportResult({ canvasPresent: true, contextLost: false }),
+      [],
+      []
+    );
+    assert.equal(outcome.fail, true);
+    assert.ok(outcome.findings.some((f) => /genuine client-side initialization failure/.test(f)));
+  });
+
+  test("G. canvas present but the WebGL context is lost — deterministic FAIL, distinct wording from a missing canvas", () => {
+    const outcome = classifyShaderHeroRenderHealth(
+      buildViewportResult({ canvasPresent: true, contextLost: true }),
+      buildViewportResult({ canvasPresent: true, contextLost: false }),
+      [],
+      []
+    );
+    assert.equal(outcome.fail, true);
+    assert.ok(outcome.findings.some((f) => /context is lost/.test(f)));
+    assert.ok(!outcome.findings.some((f) => /never mounted/.test(f)));
+  });
+
+  test("F. a captured console error while shader-hero was expected — deterministic FAIL under the presence-based attribution rule", () => {
+    const healthy = { canvasPresent: true, contextLost: false };
+    const outcome = classifyShaderHeroRenderHealth(buildViewportResult(healthy), buildViewportResult(healthy), ["WebGL: INVALID_OPERATION"], []);
+    assert.equal(outcome.fail, true);
+    assert.ok(outcome.findings.some((f) => /browser console error/.test(f)));
+    assert.ok(outcome.findings.some((f) => /presence-based rule/.test(f)));
+  });
+
+  test("F. a captured unhandled page error while shader-hero was expected — deterministic FAIL", () => {
+    const healthy = { canvasPresent: true, contextLost: false };
+    const outcome = classifyShaderHeroRenderHealth(buildViewportResult(healthy), buildViewportResult(healthy), [], ["TypeError: x is not a function"]);
+    assert.equal(outcome.fail, true);
+    assert.ok(outcome.findings.some((f) => /unhandled page error/.test(f)));
+  });
+
+  test("console/page errors captured while shader-hero was NOT expected are never attributed to this check — presence-based scoping, not content-based", () => {
+    const outcome = classifyShaderHeroRenderHealth(buildViewportResult(null), buildViewportResult(null), ["some unrelated error"], ["some unrelated page error"]);
+    assert.equal(outcome.fail, false);
+    assert.equal(outcome.findings.length, 0);
+  });
+
+  test("D (documented via reduced-motion's own real shape): a marker present with the canvas absent at every viewport is reported as outcome E by this function — the reduced-motion PASS distinction is established by the one-time real-browser validation suite (page.emulateMediaFeatures), not by this per-mission function, per Robert's own Phase 7 scoping decision", () => {
+    const outcome = classifyShaderHeroRenderHealth(
+      buildViewportResult({ canvasPresent: false, contextLost: null }),
+      buildViewportResult({ canvasPresent: false, contextLost: null }),
+      [],
+      []
+    );
+    // Documents the real, current behavior of this function in isolation —
+    // a genuinely reduced-motion-emulated session is never fed through this
+    // per-mission path, so this shape (marker present, canvas absent, no
+    // reduced-motion context) is correctly treated as outcome E here.
+    assert.equal(outcome.fail, true);
   });
 });
 

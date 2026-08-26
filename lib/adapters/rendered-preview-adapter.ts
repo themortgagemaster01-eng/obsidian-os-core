@@ -1,4 +1,5 @@
 import puppeteer from "puppeteer";
+import { SHADER_HERO_SELECTOR } from "@/lib/design-render/shader-hero";
 
 const NAV_TIMEOUT_MS = 20_000;
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
@@ -25,6 +26,31 @@ export interface MeasuredTouchTarget {
   heightPx: number;
 }
 
+/**
+ * Phase 7: real, deterministic client-side render-health for
+ * shader-enhanced-hero, checked at this viewport. `canvasPresent`/
+ * `contextLost` are read directly from the DOM/WebGL API — never a
+ * re-derivation of Selector/Adapter eligibility, which
+ * lib/design-intelligence/capability-selector.ts and Phase 6.9's own
+ * qaContract() cross-check (design-qa-service.ts's qaMotion) already own
+ * exclusively. This adapter only asks: given whatever the server already
+ * decided and rendered (SHADER_HERO_SELECTOR's own presence, the one
+ * server-rendered fact this checks against), did the client-side WebGL
+ * canvas actually initialize and stay healthy.
+ */
+export interface ShaderHeroRenderResult {
+  /** A real <canvas> element exists inside the SHADER_HERO_SELECTOR mount — shader-hero-runtime.tsx only ever appends one after its own getContext()/compile/link/uniform-resolution chain fully succeeds (see that file's own doc comment), so presence alone is already a real, non-trivial signal, not empty markup. */
+  canvasPresent: boolean;
+  /**
+   * canvas.getContext("webgl").isContextLost() — calling getContext() again
+   * on an existing canvas returns the SAME context per spec (never creates a
+   * second one, never a side effect), so this is a safe, standard, zero-cost
+   * read of a real browser API, not a new capability or a pixel-content
+   * assertion. Null when canvasPresent is false — nothing to check.
+   */
+  contextLost: boolean | null;
+}
+
 export interface ViewportRenderResult {
   widthPx: number;
   heightPx: number;
@@ -32,6 +58,8 @@ export interface ViewportRenderResult {
   horizontalOverflow: boolean;
   touchTargets: MeasuredTouchTarget[];
   screenshotByteSize: number;
+  /** Null when SHADER_HERO_SELECTOR is absent entirely — shader-enhanced-hero was not expected to render at all here (denied by the Selector, or the Adapter legitimately declined; design-qa-service.ts's qaMotion already owns that distinction exclusively — this field never re-derives it). */
+  shaderHero: ShaderHeroRenderResult | null;
 }
 
 export interface RenderedPreviewRawResult {
@@ -40,6 +68,9 @@ export interface RenderedPreviewRawResult {
   /** Raw axe-core violations at desktop viewport — mirrors AccessibilityRawResult's own shape (lib/adapters/accessibility-adapter.ts), gathered from the same authenticated page load rather than a second navigation. */
   pageTitle: string | null;
   fetchError?: string;
+  /** Phase 7: real browser console error / unhandled page-error messages captured across the entire session (both viewports, one authenticated page load) — attributed to shader-render-health only when SHADER_HERO_SELECTOR was present somewhere on the page (design-qa-service.ts's own presence-scoped attribution rule; a known, disclosed, accepted limitation — an unrelated error on a page that also has shader-hero active could be misattributed, and no content-based heuristic is used to try to rule that out). */
+  consoleErrors: string[];
+  pageErrors: string[];
 }
 
 async function measureViewport(
@@ -62,12 +93,30 @@ async function measureViewport(
 
   const screenshot = (await page.screenshot({ type: "png" })) as Buffer;
 
+  // Phase 7: wait two chained RAF ticks — a standard, zero-magic-number way
+  // to guarantee shader-hero-runtime.tsx's own first requestAnimationFrame
+  // callback (where its gl/program/uniform setup completes and the canvas
+  // is appended, or none of that happens) has had a real chance to run,
+  // rather than an arbitrary fixed sleep.
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  );
+  const shaderHero = await page.evaluate((selector) => {
+    const mount = document.querySelector(selector);
+    if (!mount) return null;
+    const canvas = mount.querySelector("canvas");
+    if (!canvas) return { canvasPresent: false, contextLost: null };
+    const gl = canvas.getContext("webgl") as WebGLRenderingContext | null;
+    return { canvasPresent: true, contextLost: gl ? gl.isContextLost() : null };
+  }, SHADER_HERO_SELECTOR);
+
   return {
     widthPx: viewport.width,
     heightPx: viewport.height,
     horizontalOverflow,
     touchTargets,
     screenshotByteSize: screenshot.byteLength,
+    shaderHero,
   };
 }
 
@@ -93,6 +142,16 @@ async function measureViewport(
  * session would. Returns fetchError (never throws) when no page ever loaded
  * — e.g. no cookies were supplied, or the preview 404s — so a caller can
  * report UNAVAILABLE honestly rather than crash.
+ *
+ * Phase 7 finding, fixed here: headless Chromium's own default
+ * `prefers-reduced-motion` state is "reduce", not "no-preference" — verified
+ * directly (a bare `puppeteer.launch` + `matchMedia` check confirms this),
+ * not assumed. Every check this adapter has ever run was therefore silently
+ * measuring a reduced-motion visitor, invisible until Phase 7 introduced the
+ * first check actually sensitive to it (shader-enhanced-hero's canvas never
+ * mounts under reduced motion, by design). Explicitly emulating
+ * "no-preference" here makes this adapter represent the real, normal
+ * visitor experience it was always intended to measure.
  */
 export async function runRenderedPreviewAdapter(
   targetUrl: string,
@@ -102,6 +161,21 @@ export async function runRenderedPreviewAdapter(
   try {
     browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
     const page = await browser.newPage();
+    await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "no-preference" }]);
+
+    // Phase 7: real console/page-error capture, attached before navigation
+    // so nothing during initial load is missed. Accumulated across the
+    // whole session (both viewports, one page load) — design-qa-service.ts
+    // decides attribution (see RenderedPreviewRawResult's own doc comment),
+    // never this adapter, which only reports what the browser really said.
+    const consoleErrors: string[] = [];
+    const pageErrors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error") consoleErrors.push(msg.text());
+    });
+    page.on("pageerror", (err) => {
+      pageErrors.push(err.message);
+    });
 
     if (options.cookies && options.cookies.length > 0) {
       await page.setCookie(
@@ -115,13 +189,15 @@ export async function runRenderedPreviewAdapter(
     const desktop = await measureViewport(page, DESKTOP_VIEWPORT);
     const mobile = await measureViewport(page, MOBILE_VIEWPORT);
 
-    return { desktop, mobile, pageTitle: pageTitle || null };
+    return { desktop, mobile, pageTitle: pageTitle || null, consoleErrors, pageErrors };
   } catch (err) {
     return {
       desktop: null,
       mobile: null,
       pageTitle: null,
       fetchError: err instanceof Error ? err.message : "Failed to render preview page",
+      consoleErrors: [],
+      pageErrors: [],
     };
   } finally {
     await browser?.close();
@@ -154,6 +230,10 @@ export async function runPreviewScreenshotCapture(
   try {
     browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
     const page = await browser.newPage();
+    // Same fix as runRenderedPreviewAdapter above — a before/after
+    // screenshot should represent the same normal-visitor experience, not
+    // headless Chromium's own reduced-motion default.
+    await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "no-preference" }]);
 
     if (options.cookies && options.cookies.length > 0) {
       await page.setCookie(
