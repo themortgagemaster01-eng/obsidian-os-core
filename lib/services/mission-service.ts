@@ -255,8 +255,11 @@ export function computeMissionStageTrack(
   });
 }
 
+/** States that require a founder decision right now — the Design Brief Approval Gate ("reviewing") and, since Phase 8, the Prospect-to-Approval Gate ("approval": a real, complete proposal + email draft is already waiting). Both are real "a human must act" states; neither is more urgent than the other. */
+const NEEDS_REVIEW_STATES: ReadonlySet<MissionState> = new Set(["reviewing", "approval"]);
+
 export interface MissionGroups {
-  /** State === "reviewing" — the Founder Approval Gate. Requires a decision now. */
+  /** State === "reviewing" or "approval" — a real decision is required now. */
   needsReview: MissionRow[];
   /** On the Line, no preview yet. */
   inProduction: MissionRow[];
@@ -269,6 +272,15 @@ export interface MissionGroups {
  * List (Studio Docket synthesis) — nothing is hidden: the three groups
  * always sum to `missions.length`. Order within each group preserves the
  * input order (most-recent-first, from `listMissionsForOrganization`).
+ *
+ * Phase 9 fix: `needsReview` previously checked only `state === "reviewing"`
+ * — a mission Phase 8's own workflow already advanced to `"approval"` (a
+ * real, complete proposal + email draft, genuinely awaiting a founder
+ * decision) fell through to `inProduction`/`readyToPresent` instead, the
+ * exact bug a founder's "wake up and see what's ready to review" morning
+ * workflow depends on not having. Fixed here, not worked around in the
+ * batch service — the dashboard's own grouping is where this always
+ * belonged.
  */
 export function groupMissionsForDisplay(
   missions: MissionRow[],
@@ -279,7 +291,7 @@ export function groupMissionsForDisplay(
   const inProduction: MissionRow[] = [];
 
   for (const mission of missions) {
-    if (mission.state === "reviewing") {
+    if (NEEDS_REVIEW_STATES.has(mission.state)) {
       needsReview.push(mission);
     } else if (missionsWithPreview.has(mission.id)) {
       readyToPresent.push(mission);

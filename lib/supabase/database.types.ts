@@ -30,6 +30,10 @@ export type LeadStatus = "pending" | "candidate" | "rejected" | "promoted";
 export type MakeoverPotential = "very_high" | "high" | "medium" | "low" | "reject";
 /** Phase 8 (0024_proposals.sql) — a live, editable-until-decided value, not permanent history (that's the existing `decisions` table's job). */
 export type ProposalStatus = "draft" | "approved" | "rejected";
+/** Phase 9 (0025_mission_batch_runs.sql) — mirrors LeadScanRunRow's own status discipline exactly. */
+export type MissionBatchRunStatus = "running" | "complete" | "failed";
+/** Populated only once status = 'complete' — which real stop condition this run actually hit. */
+export type MissionBatchStopReason = "target_reached" | "pool_exhausted" | "max_attempts_reached";
 /** A single Lead Hunter scan's own funnel-progress record (0021_lead_scan_runs.sql, CTO Phase 3 directive) — same pending/running/complete/failed-shaped domain as AnalysisStatus/GenerationStatus, kept distinct since a scan run is a different kind of job (no "pending" state — a row is only ever inserted once the scan has actually started). */
 export type LeadScanRunStatus = "running" | "complete" | "failed";
 
@@ -147,6 +151,8 @@ export interface Database {
           website_url: string;
           state: MissionState;
           state_changed_at: string;
+          /** Phase 9 (0025_mission_batch_runs.sql) — which batch run (if any) created this mission. Null for a mission created the normal, one-at-a-time way. */
+          batch_run_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -159,6 +165,7 @@ export interface Database {
           website_url: string;
           state?: MissionState;
           state_changed_at?: string;
+          batch_run_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -171,6 +178,7 @@ export interface Database {
           website_url?: string;
           state?: MissionState;
           state_changed_at?: string;
+          batch_run_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -194,6 +202,13 @@ export interface Database {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "missions_batch_run_id_fkey";
+            columns: ["batch_run_id"];
+            isOneToOne: false;
+            referencedRelation: "mission_batch_runs";
             referencedColumns: ["id"];
           }
         ];
@@ -997,6 +1012,71 @@ export interface Database {
           },
           {
             foreignKeyName: "proposals_organization_id_fkey";
+            columns: ["organization_id"];
+            isOneToOne: false;
+            referencedRelation: "organizations";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      mission_batch_runs: {
+        Row: {
+          id: string;
+          organization_id: string;
+          location: string;
+          requested_count: number;
+          max_attempts: number;
+          status: MissionBatchRunStatus;
+          stop_reason: MissionBatchStopReason | null;
+          attempted_count: number;
+          succeeded_count: number;
+          failed_count: number;
+          results: Json;
+          error_message: string | null;
+          started_at: string;
+          completed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          location: string;
+          requested_count: number;
+          max_attempts: number;
+          status?: MissionBatchRunStatus;
+          stop_reason?: MissionBatchStopReason | null;
+          attempted_count?: number;
+          succeeded_count?: number;
+          failed_count?: number;
+          results?: Json;
+          error_message?: string | null;
+          started_at?: string;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          organization_id?: string;
+          location?: string;
+          requested_count?: number;
+          max_attempts?: number;
+          status?: MissionBatchRunStatus;
+          stop_reason?: MissionBatchStopReason | null;
+          attempted_count?: number;
+          succeeded_count?: number;
+          failed_count?: number;
+          results?: Json;
+          error_message?: string | null;
+          started_at?: string;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "mission_batch_runs_organization_id_fkey";
             columns: ["organization_id"];
             isOneToOne: false;
             referencedRelation: "organizations";

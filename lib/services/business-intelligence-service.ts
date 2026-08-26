@@ -10,6 +10,7 @@ import {
   computeMakeoverPotential,
   type MakeoverPotential,
 } from "@/lib/services/lead-scoring-service";
+import { normalizeCrawlRawResult } from "@/lib/adapters/types";
 import type {
   CrawlRawResult,
   CrawlPage,
@@ -347,7 +348,7 @@ function explainOpportunity(
  * second one to build a display profile.
  */
 export function buildBusinessIntelligenceProfile(lead: LeadRow): BusinessIntelligenceProfile {
-  const crawl = (lead.crawl_result as unknown as CrawlRawResult | null) ?? null;
+  const crawl = lead.crawl_result ? normalizeCrawlRawResult(lead.crawl_result) : null;
   const contact = (lead.contact_evidence as unknown as ContactInfo | null) ?? crawl?.contact ?? { phones: [], emails: [], address: null, hours: null };
   const socials = (lead.social_links as unknown as SocialLinks | null) ?? crawl?.socials ?? null;
   const mainWeaknesses = (lead.main_weaknesses as unknown as string[] | null) ?? [];

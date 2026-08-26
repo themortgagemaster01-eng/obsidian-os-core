@@ -7,6 +7,7 @@ import {
   normalizeAccessibilityScore,
   accessibilityFindings,
 } from "@/lib/services/analysis-service";
+import { normalizeCrawlRawResult } from "@/lib/adapters/types";
 import type {
   CrawlRawResult,
   MobileRawResult,
@@ -243,7 +244,7 @@ export function normalizedAnalysisFromRow(
   row: WebsiteAnalysisRow,
   websiteUrl: string
 ): NormalizedAnalysis {
-  const crawl = (row.crawl_result as unknown as CrawlRawResult | null) ?? null;
+  const crawl = row.crawl_result ? normalizeCrawlRawResult(row.crawl_result) : null;
   const mobile = (row.mobile_result as unknown as MobileRawResult | null) ?? null;
   const seo = (row.seo_result as unknown as SeoRawResult | null) ?? null;
   const accessibility = (row.accessibility_result as unknown as AccessibilityRawResult | null) ?? null;

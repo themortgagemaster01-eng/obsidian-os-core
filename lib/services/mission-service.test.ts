@@ -27,6 +27,7 @@ function missionAt(state: MissionState, overrides: Partial<MissionRow> = {}): Mi
     website_url: "https://example.test",
     state,
     state_changed_at: now,
+    batch_run_id: null,
     created_at: now,
     updated_at: now,
     ...overrides,
@@ -239,6 +240,13 @@ describe("computeMissionStageTrack (Signal Room)", () => {
 describe("groupMissionsForDisplay (Studio Docket mission list)", () => {
   test("reviewing missions go to needsReview regardless of preview status", () => {
     const m = missionAt("reviewing");
+    const groups = groupMissionsForDisplay([m], new Set([m.id]));
+    assert.deepEqual(groups.needsReview, [m]);
+    assert.deepEqual(groups.readyToPresent, []);
+  });
+
+  test("Phase 9 fix: approval-state missions go to needsReview too — a real, complete proposal + email draft awaiting a founder decision, the same urgency as 'reviewing'", () => {
+    const m = missionAt("approval");
     const groups = groupMissionsForDisplay([m], new Set([m.id]));
     assert.deepEqual(groups.needsReview, [m]);
     assert.deepEqual(groups.readyToPresent, []);

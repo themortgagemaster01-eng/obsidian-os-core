@@ -189,6 +189,98 @@ export interface CrawlRawResult {
   fetchError?: string;
 }
 
+/**
+ * normalizeCrawlRawResult — the read boundary for a CrawlRawResult coming
+ * back from persisted storage (leads.crawl_result, website_analyses.
+ * crawl_result), both jsonb columns with zero runtime shape enforcement.
+ * The one real producer, lib/adapters/crawl-adapter.ts's runCrawlAdapter,
+ * always returns every field (including its own fetch-failure branch) — but
+ * an unchecked `as CrawlRawResult` cast on a jsonb read asserts that
+ * guarantee without verifying it, and this codebase already has one
+ * precedent for that guarantee not holding (ContactInfo's own
+ * phoneEvidence/emailEvidence/addressSource/hoursByDay were added later and
+ * marked optional specifically so an older, already-persisted row without
+ * them wouldn't break). A lead created by any future path other than
+ * runCrawlAdapter (bulk import, manual entry, a cheaper partial crawl tier)
+ * would silently reintroduce the same class of crash. Every reader of a
+ * persisted CrawlRawResult should call this once here rather than trust the
+ * cast — mirrors runCrawlAdapter's own honest-empty-defaults discipline
+ * (ADR-013: "every adapter must fail gracefully") for whatever field isn't
+ * actually present, never fabricating real-looking data for it. Real,
+ * present data is always preserved untouched; only gaps get defaulted.
+ */
+export function normalizeCrawlRawResult(raw: unknown): CrawlRawResult {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Partial<CrawlRawResult>;
+  const contact = (r.contact && typeof r.contact === "object" ? r.contact : {}) as Partial<ContactInfo>;
+  const socials = (r.socials && typeof r.socials === "object" ? r.socials : {}) as Partial<SocialLinks>;
+  const reviews = (r.reviews && typeof r.reviews === "object" ? r.reviews : {}) as Partial<ReviewsSummary>;
+  const headingCounts = (r.headingCounts && typeof r.headingCounts === "object" ? r.headingCounts : {}) as Partial<CrawlRawResult["headingCounts"]>;
+
+  return {
+    requestedUrl: r.requestedUrl ?? "",
+    finalUrl: r.finalUrl ?? "",
+    statusCode: r.statusCode ?? null,
+    title: r.title ?? null,
+    metaDescription: r.metaDescription ?? null,
+    headingCounts: {
+      h1: headingCounts.h1 ?? 0,
+      h2: headingCounts.h2 ?? 0,
+      h3: headingCounts.h3 ?? 0,
+      h4: headingCounts.h4 ?? 0,
+      h5: headingCounts.h5 ?? 0,
+      h6: headingCounts.h6 ?? 0,
+    },
+    internalLinkCount: r.internalLinkCount ?? 0,
+    externalLinkCount: r.externalLinkCount ?? 0,
+    pages: r.pages ?? [],
+    robotsTxtFound: r.robotsTxtFound ?? false,
+    sitemapFound: r.sitemapFound ?? false,
+    htmlByteSize: r.htmlByteSize ?? 0,
+    contact: {
+      phones: contact.phones ?? [],
+      emails: contact.emails ?? [],
+      address: contact.address ?? null,
+      hours: contact.hours ?? null,
+      // Optional provenance fields (added later than the rest of ContactInfo,
+      // per its own doc comment: "optional for compatibility with older
+      // rows") are omitted entirely when absent, not set to `undefined` —
+      // an absent optional field and one explicitly present-but-undefined
+      // are different things to a consumer doing `"phoneEvidence" in contact`
+      // or a deepEqual comparison against a hand-built fixture.
+      ...(contact.phoneEvidence !== undefined ? { phoneEvidence: contact.phoneEvidence } : {}),
+      ...(contact.emailEvidence !== undefined ? { emailEvidence: contact.emailEvidence } : {}),
+      ...(contact.addressSource !== undefined ? { addressSource: contact.addressSource } : {}),
+      ...(contact.hoursByDay !== undefined ? { hoursByDay: contact.hoursByDay } : {}),
+    },
+    socials: {
+      facebook: socials.facebook ?? null,
+      instagram: socials.instagram ?? null,
+      twitter: socials.twitter ?? null,
+      linkedin: socials.linkedin ?? null,
+      youtube: socials.youtube ?? null,
+      tiktok: socials.tiktok ?? null,
+      yelp: socials.yelp ?? null,
+    },
+    certifications: r.certifications ?? [],
+    licenses: r.licenses ?? [],
+    services: r.services ?? [],
+    products: r.products ?? [],
+    team: r.team ?? [],
+    faq: r.faq ?? [],
+    testimonials: r.testimonials ?? [],
+    reviews: {
+      averageRating: reviews.averageRating ?? null,
+      count: reviews.count ?? null,
+      source: reviews.source ?? null,
+    },
+    gallery: r.gallery ?? [],
+    menu: r.menu ?? [],
+    forms: r.forms ?? [],
+    maps: r.maps ?? [],
+    ...(r.fetchError !== undefined ? { fetchError: r.fetchError } : {}),
+  };
+}
+
 export interface MobileRawResult {
   hasViewportMeta: boolean;
   viewportContent: string | null;

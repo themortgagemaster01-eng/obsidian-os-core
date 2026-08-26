@@ -265,6 +265,43 @@ describe("business-intelligence-service: Phase 3 opportunity intelligence (busin
     assert.deepEqual(profile.businessStrengthSignals, []);
     assert.deepEqual(profile.websiteOpportunitySignals, []);
   });
+
+  // Phase 9 regression: the real end-to-end batch validation crashed here
+  // with "Cannot read properties of undefined (reading 'h1')" because the
+  // seeded lead's crawl_result was missing headingCounts entirely — not a
+  // shape runCrawlAdapter itself would ever produce, but nothing at the
+  // read boundary verified that before this fix (normalizeCrawlRawResult,
+  // lib/adapters/types.ts). A non-null but incomplete crawl_result (an
+  // older row predating a field, or a lead created outside runCrawlAdapter)
+  // must degrade to honest defaults, never throw.
+  test("Phase 9 regression: a crawl_result missing headingCounts entirely no longer throws — defaults to 0s instead", () => {
+    const incomplete = { ...crawlFor() } as Record<string, unknown>;
+    delete incomplete.headingCounts;
+    const profile = buildBusinessIntelligenceProfile(fakeLead({ crawl_result: incomplete as unknown as LeadRow["crawl_result"] }));
+    assert.equal(profile.existingWebsiteStructure.headingCounts?.h1, 0);
+  });
+
+  test("Phase 9 regression: a crawl_result missing the entire contact/reviews sub-objects no longer throws — defaults, never crashes", () => {
+    const incomplete = { ...crawlFor() } as Record<string, unknown>;
+    delete incomplete.contact;
+    delete incomplete.reviews;
+    // contact_evidence/social_links are separate lead columns that take
+    // priority over crawl.contact (see buildBusinessIntelligenceProfile) —
+    // null them out too so this test actually exercises the crawl.contact
+    // fallback this fix touches, not the unrelated contact_evidence column.
+    const profile = buildBusinessIntelligenceProfile(
+      fakeLead({ crawl_result: incomplete as unknown as LeadRow["crawl_result"], contact_evidence: null, social_links: null })
+    );
+    assert.equal(profile.phone, null);
+    assert.equal(profile.reviewSignals?.averageRating, null);
+  });
+
+  test("a crawl_result with every real field present is completely unaffected by the read-boundary normalization — deterministic, no data loss", () => {
+    const profile = buildBusinessIntelligenceProfile(fakeLead());
+    assert.equal(profile.existingWebsiteStructure.headingCounts?.h1, 1);
+    assert.equal(profile.reviewSignals?.averageRating, 4.5);
+    assert.equal(profile.phone, "+15550001111");
+  });
 });
 
 describe("business-intelligence-service: deriveConversionGoal", () => {
