@@ -28,6 +28,8 @@ export type GenerationStatus = "pending" | "running" | "complete" | "failed";
 export type LeadStatus = "pending" | "candidate" | "rejected" | "promoted";
 /** The fourth lead score (0020_lead_makeover_potential.sql) — how strong a makeover opportunity this lead is, derived from the other three scores plus evidence richness (lib/services/lead-scoring-service.ts::computeMakeoverPotential), never an arbitrary threshold alone. */
 export type MakeoverPotential = "very_high" | "high" | "medium" | "low" | "reject";
+/** Phase 8 (0024_proposals.sql) — a live, editable-until-decided value, not permanent history (that's the existing `decisions` table's job). */
+export type ProposalStatus = "draft" | "approved" | "rejected";
 /** A single Lead Hunter scan's own funnel-progress record (0021_lead_scan_runs.sql, CTO Phase 3 directive) — same pending/running/complete/failed-shaped domain as AnalysisStatus/GenerationStatus, kept distinct since a scan run is a different kind of job (no "pending" state — a row is only ever inserted once the scan has actually started). */
 export type LeadScanRunStatus = "running" | "complete" | "failed";
 
@@ -944,6 +946,57 @@ export interface Database {
           },
           {
             foreignKeyName: "experience_refinements_organization_id_fkey";
+            columns: ["organization_id"];
+            isOneToOne: false;
+            referencedRelation: "organizations";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      proposals: {
+        Row: {
+          id: string;
+          mission_id: string;
+          organization_id: string;
+          status: ProposalStatus;
+          content: Json | null;
+          email_subject: string | null;
+          email_body: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          mission_id: string;
+          organization_id: string;
+          status?: ProposalStatus;
+          content?: Json | null;
+          email_subject?: string | null;
+          email_body?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          mission_id?: string;
+          organization_id?: string;
+          status?: ProposalStatus;
+          content?: Json | null;
+          email_subject?: string | null;
+          email_body?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "proposals_mission_id_fkey";
+            columns: ["mission_id"];
+            isOneToOne: true;
+            referencedRelation: "missions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "proposals_organization_id_fkey";
             columns: ["organization_id"];
             isOneToOne: false;
             referencedRelation: "organizations";

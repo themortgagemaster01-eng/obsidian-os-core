@@ -7,6 +7,7 @@ import { missionRepository } from "@/lib/repositories/mission-repository";
 import { websiteAnalysisRepository } from "@/lib/repositories/website-analysis-repository";
 import { websiteDesignRepository } from "@/lib/repositories/website-design-repository";
 import { designBriefRepository } from "@/lib/repositories/design-brief-repository";
+import { proposalRepository } from "@/lib/repositories/proposal-repository";
 import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
 import { generateInsights } from "@/lib/services/insight-service";
 import { computeOpportunityScore } from "@/lib/services/opportunity-scoring-service";
@@ -15,6 +16,7 @@ import { resolveScreenshotUrl } from "@/lib/presentation/resolve-screenshot-url"
 import { MissionHeader } from "@/components/mission-detail/mission-header";
 import { AnalysisPanel } from "@/components/mission-detail/analysis-panel";
 import { DesignBriefPanel } from "@/components/mission-detail/design-brief-panel";
+import { ApprovalPanel } from "@/components/mission-detail/approval-panel";
 
 interface PageParams {
   params: { id: string };
@@ -49,6 +51,7 @@ export default async function MissionDetailPage({ params }: PageParams) {
   const analysis = await websiteAnalysisRepository.findLatestByMission(supabase, mission.id);
   const design = await websiteDesignRepository.findLatestByMission(supabase, mission.id);
   const designBrief = await designBriefRepository.findLatestByMission(supabase, mission.id);
+  const proposal = await proposalRepository.findByMission(supabase, mission.id);
 
   let report = null;
   let screenshotUrl: string | null = null;
@@ -109,6 +112,12 @@ export default async function MissionDetailPage({ params }: PageParams) {
           originalScreenshotUrl={screenshotUrl}
           initialPreviewScreenshotDesktopUrl={previewScreenshotDesktopUrl}
           initialPreviewScreenshotMobileUrl={previewScreenshotMobileUrl}
+        />
+        <ApprovalPanel
+          missionId={mission.id}
+          initialMissionState={mission.state}
+          initialProposal={proposal}
+          qaAvailable={!!design?.qa_result}
         />
       </div>
     </main>
