@@ -47,4 +47,26 @@ export const missionBatchRunRepository = {
     if (error) throw error;
     return data;
   },
+
+  /**
+   * Phase 10's overlap guard needs "is a run currently in progress for this
+   * organization," not "whatever run most recently started" — those two
+   * questions only coincide when nothing has ever altered a row's
+   * started_at after the fact. Deliberately a separate, direct query
+   * (filtered on status, not derived from "most recent by started_at") so
+   * the guard's correctness never depends on that coincidence holding.
+   * At most one row can ever match, since the DB-level partial unique index
+   * (mission_batch_runs_one_running_per_org) is the real authority that
+   * guarantees it.
+   */
+  async findRunningByOrganization(client: TypedClient, organizationId: string): Promise<MissionBatchRunRow | null> {
+    const { data, error } = await client
+      .from("mission_batch_runs")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .eq("status", "running")
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
 };

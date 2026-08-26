@@ -19,6 +19,9 @@
 # Compiled test output (see package.json's "test" script / scripts/register-path-alias.js)
 /.test-build
 
+# Compiled scripts output (Phase 10 — see package.json's "build:scripts" script / tsconfig.scripts.json)
+/.scripts-build
+
 # misc
 .DS_Store
 *.pem

@@ -225,15 +225,99 @@ class StageError extends Error {
 }
 
 /**
+ * Phase 10: how long a "running" row is trusted before it's treated as
+ * abandoned (a crashed process, a killed/cancelled job — never a thrown
+ * error, which the outer try/catch below already turns into a real
+ * "failed" status on its own). A tuning value, not an architectural one
+ * (docs/PHASE_10_IMPLEMENTATION_PLAN.md §5 deliberately left the exact
+ * number undecided) — four hours is comfortably above every real batch
+ * duration observed in Phase 9's own end-to-end validation (2-7 minutes
+ * per successful candidate, a handful of candidates per run) while still
+ * catching a genuinely abandoned run well before the next scheduled
+ * attempt. Deliberately not a fifth configurable input alongside
+ * owner/location/target-count/safety-cap — this is an internal safety
+ * parameter, not a per-run choice a caller should have to make.
+ */
+const DEFAULT_MAX_RUNNING_DURATION_MS = 4 * 60 * 60 * 1000;
+
+export type OverlapGuardAction =
+  | { kind: "proceed" }
+  | { kind: "reap_stale_then_proceed"; staleRunId: string }
+  | { kind: "skip_already_running"; runningRun: MissionBatchRunRow };
+
+/**
+ * decideOverlapGuardAction — Phase 10's own "is it safe to start a new run"
+ * decision, pulled out as a pure function on the same principle
+ * decideBatchStop already established: directly unit-testable without a
+ * real database. Takes the organization's currently-`running` row, if any
+ * (the caller must resolve this via a direct status-filtered query —
+ * findRunningByOrganization, never findLatestByOrganization's "most
+ * recently started regardless of status," which is a different question
+ * that only coincides with this one when nothing has altered a row's
+ * started_at after the fact). A null input means no run is in progress.
+ */
+export function decideOverlapGuardAction(
+  currentlyRunningRun: MissionBatchRunRow | null,
+  nowMs: number,
+  maxRunningDurationMs: number
+): OverlapGuardAction {
+  // Defensive, even though the real caller is expected to have already
+  // filtered to status='running' — never trust that a future caller got
+  // that right, when checking here costs nothing.
+  if (!currentlyRunningRun || currentlyRunningRun.status !== "running") {
+    return { kind: "proceed" };
+  }
+  const startedAtMs = new Date(currentlyRunningRun.started_at).getTime();
+  const ageMs = nowMs - startedAtMs;
+  if (ageMs > maxRunningDurationMs) {
+    return { kind: "reap_stale_then_proceed", staleRunId: currentlyRunningRun.id };
+  }
+  return { kind: "skip_already_running", runningRun: currentlyRunningRun };
+}
+
+/**
  * runMissionBatch — the one entry point. Mirrors runLeadHunterScan's own
  * shape exactly: a run row is created before any real work starts, one
  * broad try/catch around the whole loop records a genuine run-level failure
  * (never leaving the row stuck at "running"), and every real outcome
  * (success or failure) is recorded honestly, including a real stop_reason
  * once the run reaches one of its three defined stop conditions.
+ *
+ * Phase 10 addition: before any of that, an overlap guard (§4/§5 of
+ * docs/PHASE_10_IMPLEMENTATION_PLAN.md) either lets this proceed, reaps a
+ * genuinely abandoned prior run first, or skips entirely — living here,
+ * once, means every caller (the existing manual dashboard route and the
+ * new scheduled CLI script alike) gets identical protection automatically,
+ * with nothing duplicated in either caller. The database's own partial
+ * unique index (`mission_batch_runs_one_running_per_org`,
+ * supabase/migrations/0026_mission_batch_overlap_guard.sql) remains the
+ * real, final authority — this guard exists to produce an honest, legible
+ * outcome instead of a raw constraint-violation error, not to replace the
+ * constraint.
  */
 export async function runMissionBatch(deps: MissionBatchServiceDeps, input: RunMissionBatchInput): Promise<MissionBatchRunRow> {
   const maxAttempts = input.maxAttempts ?? input.requestedCount * 3;
+
+  // findRunningByOrganization, not findLatestByOrganization — the guard
+  // needs "is a run currently in progress," a direct status-filtered query,
+  // not "whatever run most recently started" (a different question that
+  // only coincides with this one when nothing has altered a row's
+  // started_at after the fact).
+  const runningRun = await deps.missionBatchRunRepository.findRunningByOrganization(deps.client, input.organizationId);
+  const overlapAction = decideOverlapGuardAction(runningRun, Date.now(), DEFAULT_MAX_RUNNING_DURATION_MS);
+
+  if (overlapAction.kind === "skip_already_running") {
+    return overlapAction.runningRun;
+  }
+
+  if (overlapAction.kind === "reap_stale_then_proceed") {
+    await deps.missionBatchRunRepository.update(deps.client, overlapAction.staleRunId, {
+      status: "failed",
+      error_message:
+        "Run considered abandoned — exceeded its maximum expected duration, likely due to a process restart, cancellation, or crash before it could reach a real terminal status.",
+      completed_at: new Date().toISOString(),
+    });
+  }
 
   const run = await deps.missionBatchRunRepository.insert(deps.client, {
     organization_id: input.organizationId,

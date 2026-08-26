@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": ".scripts-build",
+    "rootDir": ".",
+    "incremental": false,
+    "jsx": "react-jsx"
+  },
+  "include": ["lib/**/*.ts", "scripts/run-scheduled-batch.ts"],
+  "exclude": [
+    "node_modules",
+    "lib/supabase/server.ts",
+    "lib/supabase/middleware.ts",
+    "lib/supabase/client.ts"
+  ]
+}

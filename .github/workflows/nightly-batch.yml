@@ -1,0 +1,77 @@
+name: Nightly Prospect Batch
+
+# Phase 10 — GitHub Actions running the existing, unmodified mission-batch
+# orchestrator directly (docs/PHASE_10_IMPLEMENTATION_PLAN.md, Option C from
+# docs/PHASE_10_DEPLOYMENT_RUNTIME_AUDIT.md). This workflow contains no
+# batch logic of its own — it checks out the repo, builds the thin CLI
+# adapter (scripts/run-scheduled-batch.ts), and runs it. Every real decision
+# (what counts as success, overlap protection, stale-run recovery,
+# concurrency=1) lives in lib/services/mission-batch-service.ts, unchanged
+# by this file.
+#
+# Safe to merge before any real secret/variable is configured: the
+# scheduled trigger only actually proceeds once the required secrets exist
+# (the `if:` guard below); until then, a scheduled run shows as cleanly
+# skipped, never a failure. Manual dispatch always runs, precisely so this
+# workflow itself — including its own "not configured yet" path — can be
+# tested deliberately at any time.
+
+on:
+  schedule:
+    # Illustrative placeholder only — the real UTC hour is a product
+    # decision (docs/PHASE_10_SCHEDULED_BATCH_AUTOMATION_AUDIT.md §D),
+    # deliberately not made by this workflow file. Chosen with a wide buffer
+    # around a plausible overnight window so the ~1 hour of DST drift twice
+    # a year never pushes it outside that window; revisit once the
+    # founder's real target overnight hour is decided.
+    - cron: "0 7 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  # A second CI-level guard, on top of the application-level guard inside
+  # runMissionBatch and the database's own partial unique index (the real,
+  # final authority — supabase/migrations/0026_mission_batch_overlap_guard.sql).
+  # Two workflow runs for this same group never even both start; GitHub
+  # queues the second rather than running it concurrently. Belt, suspenders,
+  # and a third strap — each layer catches what the one below it would
+  # catch anyway, at negligible cost.
+  group: nightly-prospect-batch
+  cancel-in-progress: false
+
+jobs:
+  run-batch:
+    runs-on: ubuntu-latest
+    # The scheduled trigger only proceeds once real configuration exists —
+    # until BATCH_OWNER_PROFILE_ID and the Supabase service-role secret are
+    # both supplied, a scheduled run is cleanly skipped (shown as such in
+    # the Actions UI), never a failure. Manual dispatch is never gated here
+    # — it always runs, so the workflow (including this exact guard, and
+    # the CLI's own configuration validation) can be tested at any time.
+    if: ${{ github.event_name == 'workflow_dispatch' || (secrets.SUPABASE_SERVICE_ROLE_KEY != '' && vars.BATCH_OWNER_PROFILE_ID != '') }}
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the scheduled-batch script
+        run: npm run build:scripts
+
+      - name: Run the scheduled batch
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BATCH_OWNER_PROFILE_ID: ${{ vars.BATCH_OWNER_PROFILE_ID }}
+          BATCH_LOCATION: ${{ vars.BATCH_LOCATION }}
+          BATCH_REQUESTED_COUNT: ${{ vars.BATCH_REQUESTED_COUNT }}
+          BATCH_MAX_ATTEMPTS: ${{ vars.BATCH_MAX_ATTEMPTS }}
+        run: node scripts/run-scheduled-batch-launcher.js
