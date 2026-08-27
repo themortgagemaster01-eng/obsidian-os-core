@@ -4,7 +4,7 @@ import {
   MIN_GALLERY_FOR_PHOTO_HERO_PREFERENCE,
   type HeroPatternId,
 } from "@/lib/design-intelligence/section-patterns";
-import { personalityPaddingBias, MIN_SERVICES_FOR_GRID_CARDS } from "@/lib/design-intelligence/composition-variants";
+import { isMotionRestrainedTone, MIN_SERVICES_FOR_GRID_CARDS } from "@/lib/design-intelligence/composition-variants";
 import {
   EXPERIENCE_MODE_VOCABULARY,
   MOTION_BUDGET_VOCABULARY,
@@ -276,11 +276,14 @@ export function computeMotionBudgetCeiling(
 /**
  * resolveMotionBudget — starts from computeMotionBudgetCeiling's hard limit,
  * then narrows it one further step when Design Memory's own real
- * brandPersonality/contentTone reads as deliberately restrained (reusing
- * composition-variants.ts's personalityPaddingBias rather than a second
- * keyword classifier — never redefined here), then applies Phase 6.4's
- * human preference as one more bounded nudge on the SAME resolved rank —
- * never a parallel decision path, never a widening of the ceiling itself.
+ * brandPersonality/contentTone reads as deliberately restrained (Phase 11:
+ * composition-variants.ts's isMotionRestrainedTone — a narrower keyword set
+ * than personalityPaddingBias's own spacing-oriented list, since a business
+ * merely describing itself as e.g. "unpretentious" is not a claim that its
+ * SITE should hold still; docs/PHASE_11_RESTRAINED_TONE_AUDIT.md), then
+ * applies Phase 6.4's human preference as one more bounded nudge on the SAME
+ * resolved rank — never a parallel decision path, never a widening of the
+ * ceiling itself.
  *
  * The human-preference nudge is deliberately asymmetric, per the founder's
  * own non-negotiable: "calmer"/"less" can always pull the rank further
@@ -307,7 +310,7 @@ export function resolveMotionBudget(
 
   let rank = ceilingRank;
 
-  const restrainedTone = personalityPaddingBias(brandPersonality, contentTone) > 0;
+  const restrainedTone = isMotionRestrainedTone(brandPersonality, contentTone);
   if (restrainedTone) rank = Math.max(0, rank - 1);
 
   if (humanPreference) {

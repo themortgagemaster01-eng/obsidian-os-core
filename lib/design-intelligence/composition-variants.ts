@@ -139,11 +139,63 @@ const BASE_VARIANT_BY_HERO_PATTERN: Record<HeroPatternId, Omit<CompositionVarian
  */
 export const MIN_SERVICES_FOR_GRID_CARDS = 3;
 
+/**
+ * The full spacing-nudge vocabulary — unchanged by Phase 11. "unpretentious"
+ * stays here: for a low-stakes whitespace/density nudge, "this business's
+ * real personality is unpretentious" honestly supports "give it a touch more
+ * breathing room," and this exact word is what two existing tests
+ * (composition-variants.test.ts, design-qa-service.test.ts) already prove
+ * that with.
+ */
 const RESTRAINED_TONE_KEYWORDS = ["restrained", "quiet", "understate", "minimal", "refined", "subtle", "calm", "unpretentious"];
+
+/**
+ * Phase 11 fix: a business's own real personality/tone can independently
+ * pull the resolved MotionBudget down a full tier (experience-planner.ts)
+ * and veto shader-enhanced-hero outright (capability-selector.ts) — both
+ * far higher-stakes than a spacing nudge, so this list is deliberately
+ * narrower than RESTRAINED_TONE_KEYWORDS above. Confirmed root cause (Phase
+ * 11 audit, docs/PHASE_11_RESTRAINED_TONE_AUDIT.md): "unpretentious"
+ * describes a business's own character, not its website's visual register —
+ * Dante's Trattoria's real, honestly-assigned brandPersonality
+ * (["warm", "unpretentious", "rooted", "authentic"]) mechanically zeroed its
+ * motion budget even though nothing about "unpretentious" is a claim that
+ * the SITE should hold still. Every word kept here plausibly describes an
+ * intended visual/experiential register directly, not merely a business's
+ * character — and every one is already proven, by existing tests predating
+ * this fix, to correctly express a real "the site itself should feel
+ * restrained" signal (a genuinely formal/somber business — a funeral home,
+ * a formal law firm — reaches this list via "restrained"/"quiet"/etc., the
+ * same words those tests already use). Removing "unpretentious" from THIS
+ * list only — never from RESTRAINED_TONE_KEYWORDS above — is a deliberate,
+ * narrow fix: the mechanism that produced Dante's flat, motionless page
+ * stops firing on mere warmth/humility, while a business whose real voice
+ * calls for actual visual restraint is caught exactly as before.
+ */
+export const MOTION_RESTRAINED_TONE_KEYWORDS = ["restrained", "quiet", "understate", "minimal", "refined", "subtle", "calm"];
+
 const BOLD_TONE_KEYWORDS = ["bold", "energetic", "vibrant", "loud", "punchy", "urgent", "playful", "high-energy"];
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * Phase 11 fix: word-boundary-anchored match instead of a raw substring
+ * test. A bare `haystack.includes(keyword)` matches a keyword fused onto a
+ * negating prefix with no separator — "unrestrained" contains "restrained",
+ * "unrefined" contains "refined", "disquiet" contains "quiet" — each with
+ * the OPPOSITE meaning the keyword is supposed to detect. Anchored only at
+ * the START of the keyword (`\b<keyword>`, no trailing `\b`) rather than
+ * both ends deliberately preserves the list's existing stem-style matches —
+ * "understate" is meant to also catch "understated"/"understatement", and a
+ * trailing boundary would break that legitimate suffix — while a leading
+ * boundary alone already can't fire in the middle of a fused token like
+ * "unrestrained" (no non-word character sits between "un" and "restrained"
+ * for `\b` to match against).
+ */
+function matchesAnyToneKeyword(haystack: string, keywords: string[]): boolean {
+  return keywords.some((kw) => new RegExp(`\\b${kw}`).test(haystack));
 }
 
 /**
@@ -161,15 +213,38 @@ function clamp(value: number, min: number, max: number): number {
  * of hollow, could-paste-onto-any-business phrasing
  * BANNED_GENERIC_DESIGN_PHRASES (genericity-rules.ts) exists to keep off the
  * page, not something to aim for.
+ *
+ * Spacing-only (RESTRAINED_TONE_KEYWORDS, including "unpretentious") —
+ * never used for motion/capability decisions; see isMotionRestrainedTone
+ * below for that separate, narrower check.
  */
 export function personalityPaddingBias(brandPersonality: string[] | undefined, contentTone: string | undefined): number {
   const haystack = [...(brandPersonality ?? []), contentTone ?? ""].join(" ").toLowerCase();
   if (!haystack.trim()) return 0;
-  const restrained = RESTRAINED_TONE_KEYWORDS.some((kw) => haystack.includes(kw));
-  const bold = BOLD_TONE_KEYWORDS.some((kw) => haystack.includes(kw));
+  const restrained = matchesAnyToneKeyword(haystack, RESTRAINED_TONE_KEYWORDS);
+  const bold = matchesAnyToneKeyword(haystack, BOLD_TONE_KEYWORDS);
   if (restrained && !bold) return 1;
   if (bold && !restrained) return -1;
   return 0;
+}
+
+/**
+ * Phase 11: the motion/capability-specific restrained-tone check —
+ * experience-planner.ts's resolveMotionBudget and capability-selector.ts's
+ * shader-enhanced-hero gate both call this instead of personalityPaddingBias
+ * now, so a real business's genuine warmth/humility (e.g. "unpretentious")
+ * can no longer suppress motion or veto a capability, while a genuinely
+ * restrained/formal register ("restrained", "quiet", "understated", ...)
+ * still does, exactly as before. Same "restrained AND NOT bold" symmetry
+ * personalityPaddingBias already applies, returned as the plain boolean
+ * both call sites actually use (neither ever reads the bold/-1 case).
+ */
+export function isMotionRestrainedTone(brandPersonality: string[] | undefined, contentTone: string | undefined): boolean {
+  const haystack = [...(brandPersonality ?? []), contentTone ?? ""].join(" ").toLowerCase();
+  if (!haystack.trim()) return false;
+  const restrained = matchesAnyToneKeyword(haystack, MOTION_RESTRAINED_TONE_KEYWORDS);
+  const bold = matchesAnyToneKeyword(haystack, BOLD_TONE_KEYWORDS);
+  return restrained && !bold;
 }
 
 export interface CompositionEvidenceDensity {

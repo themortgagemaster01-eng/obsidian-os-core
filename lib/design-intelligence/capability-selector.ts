@@ -2,7 +2,7 @@ import type { IndustryBucket } from "@/lib/design-references/reference-library";
 import type { HeroPatternId } from "@/lib/design-intelligence/section-patterns";
 import type { ExperiencePlanEvidenceDensity } from "@/lib/design-intelligence/experience-planner";
 import { MOTION_BUDGET_RANK, type ExperienceMode, type ExperiencePlan } from "@/shared/design-intelligence/types";
-import { personalityPaddingBias } from "@/lib/design-intelligence/composition-variants";
+import { isMotionRestrainedTone } from "@/lib/design-intelligence/composition-variants";
 
 /**
  * lib/design-intelligence/capability-selector.ts — Phase 6.5's approved
@@ -103,11 +103,14 @@ export interface ResolveExperienceCapabilitiesInput {
   heroPattern?: HeroPatternId;
   /**
    * Design Intelligence's own real per-business brandPersonality/contentTone
-   * (DesignMemory) — the same real signal composition-variants.ts's
-   * personalityPaddingBias already uses for its spacing-rhythm nudge, reused
-   * here verbatim (never a second keyword scanner) by shader-enhanced-hero's
-   * gate: an energetic-register business whose actual DesignMemory reads as
-   * deliberately restrained still doesn't get an atmospheric shader
+   * (DesignMemory) — checked by shader-enhanced-hero's gate via
+   * composition-variants.ts's isMotionRestrainedTone (Phase 11: a narrower
+   * keyword set than the spacing-nudge's own personalityPaddingBias — see
+   * docs/PHASE_11_RESTRAINED_TONE_AUDIT.md — since a business merely
+   * describing itself as warm/humble is not a claim that its site should
+   * hold still): an energetic-register business whose actual DesignMemory
+   * reads as deliberately restrained (in the visual-register sense, not
+   * merely a humble personality) still doesn't get an atmospheric shader
    * background — restraint is respected even inside a bold mode, the same
    * discipline the rest of this codebase already extends everywhere else.
    * Unused by basic-motion. Optional — the live render-time integration
@@ -233,7 +236,7 @@ const SHADER_HERO_MIN_MOTION_BUDGET_RANK = MOTION_BUDGET_RANK.enhanced;
 function isShaderHeroGranted(plan: ExperiencePlan, brandPersonality?: string[], contentTone?: string): boolean {
   if (!SHADER_HERO_ALLOWED_MODES.has(plan.mode)) return false;
   if (MOTION_BUDGET_RANK[plan.motionBudget] < SHADER_HERO_MIN_MOTION_BUDGET_RANK) return false;
-  const restrainedTone = personalityPaddingBias(brandPersonality, contentTone) > 0;
+  const restrainedTone = isMotionRestrainedTone(brandPersonality, contentTone);
   if (restrainedTone) return false;
   return true;
 }
@@ -269,7 +272,7 @@ function shaderHeroReason(plan: ExperiencePlan, granted: boolean, brandPersonali
   if (MOTION_BUDGET_RANK[plan.motionBudget] < SHADER_HERO_MIN_MOTION_BUDGET_RANK) {
     return `Not granted: this business's resolved motion budget is "${plan.motionBudget}", below the "enhanced" floor shader-enhanced-hero requires even under an eligible "${plan.mode}" mode — ${plan.rationale}`;
   }
-  if (personalityPaddingBias(brandPersonality, contentTone) > 0) {
+  if (isMotionRestrainedTone(brandPersonality, contentTone)) {
     return `Not granted: this business's real brand personality/content tone reads as deliberately restrained — an atmospheric shader background is withheld even though "${plan.mode}" at "${plan.motionBudget}" would otherwise qualify, the same respect for real restraint this codebase already extends to spacing rhythm.`;
   }
   return `Granted: "${plan.mode}" is an energetic-register mode and this business's resolved motion budget ("${plan.motionBudget}") clears shader-enhanced-hero's "enhanced" floor, with no restrained-tone signal withholding it. The shader adapter still requires the hero to have no real photograph already driving its background, and a real usable color palette, before it actually executes — checked separately, at execution time.`;

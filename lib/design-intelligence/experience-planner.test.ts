@@ -145,6 +145,83 @@ describe("experience-planner: resolveMotionBudget", () => {
     const max = resolveMotionBudget("cinematic-storytelling", rich, "energetic");
     assert.equal(max, "cinematic");
   });
+
+  describe("Phase 11: restrained-tone keyword fix (docs/PHASE_11_RESTRAINED_TONE_AUDIT.md)", () => {
+    // The exact real evidence density for Dante's Trattoria (a real mission,
+    // hosted-Supabase validation): 20 real photos, no services/certifications/
+    // team/structured-review evidence. Confirmed by direct re-execution
+    // against the real persisted design brief before this fix existed.
+    const dantesEvidence: ExperiencePlanEvidenceDensity = {
+      services: 0,
+      certifications: 0,
+      hasReviews: false,
+      galleryCount: 20,
+      hasRealTeam: false,
+    };
+    const dantesBrandPersonality = ["warm", "unpretentious", "rooted", "authentic"];
+    const dantesContentTone = "Warm, direct, unpretentious neighborhood-Italian voice — short, confident sentences, no corporate filler.";
+
+    test("the confirmed root cause: 'unpretentious' no longer collapses Dante's Trattoria's motion budget to \"none\"", () => {
+      const budget = resolveMotionBudget(
+        "cinematic-storytelling",
+        dantesEvidence,
+        "restrained",
+        dantesBrandPersonality,
+        dantesContentTone
+      );
+      assert.equal(budget, "subtle", "matches this business's real evidence-based ceiling — the tone nudge no longer fires on mere warmth/humility");
+    });
+
+    test("the evidence-based ceiling alone (no personality at all) already computes \"subtle\" for this business — proving the fix removes an EXTRA penalty, not the ceiling itself", () => {
+      const budget = resolveMotionBudget("cinematic-storytelling", dantesEvidence, "restrained");
+      assert.equal(budget, "subtle");
+    });
+
+    test("a genuinely formal/somber business (funeral home / formal law firm equivalent) still correctly gets little/no motion — this protection is unchanged", () => {
+      const richButSomberEvidence: ExperiencePlanEvidenceDensity = {
+        services: 5,
+        certifications: 3,
+        hasReviews: true,
+        galleryCount: 10,
+        hasRealTeam: true,
+      };
+      // Rich evidence would otherwise support a much higher budget.
+      // trust-authority's own mode ceiling already floors this at "subtle"
+      // regardless of evidence — and a real, register-restrained brand voice
+      // (genuinely different from mere warmth/humility) correctly pulls it
+      // one step further, to "none": exactly the outcome a solemn business
+      // should get, and exactly the mechanism's real, legitimate job, which
+      // this fix must not weaken.
+      const budget = resolveMotionBudget(
+        "trust-authority",
+        richButSomberEvidence,
+        "restrained",
+        ["dignified", "restrained", "solemn"],
+        "A quiet, understated register befitting the occasion."
+      );
+      assert.equal(budget, "none");
+
+      // Without the tone signal, the same rich-evidence trust-authority
+      // business stops at the mode ceiling alone ("subtle") — isolating
+      // exactly what the tone check itself is contributing.
+      const withoutTone = resolveMotionBudget("trust-authority", richButSomberEvidence, "restrained");
+      assert.equal(withoutTone, "subtle");
+    });
+
+    test("a rich-evidence, non-restrained-mode business whose real voice is genuinely restrained is still pulled down a tier (the mechanism's real, legitimate job, preserved)", () => {
+      const richEvidence: ExperiencePlanEvidenceDensity = {
+        services: 3,
+        certifications: 1,
+        hasReviews: false,
+        galleryCount: 0,
+        hasRealTeam: false,
+      };
+      const withoutPersonality = resolveMotionBudget("warm-local-business", richEvidence, "energetic");
+      const withGenuinelyRestrainedPersonality = resolveMotionBudget("warm-local-business", richEvidence, "energetic", ["quiet", "understated"]);
+      assert.equal(withoutPersonality, "enhanced");
+      assert.equal(withGenuinelyRestrainedPersonality, "subtle");
+    });
+  });
 });
 
 // ===========================================================================

@@ -238,6 +238,20 @@ describe("capability-selector: resolveExperienceCapabilities — shader-enhanced
     assert.equal(bold.granted, true);
   });
 
+  test("Phase 11: 'unpretentious' no longer vetoes shader-enhanced-hero for an otherwise-eligible mode+budget — the confirmed root cause, at this layer", () => {
+    const decision = shaderDecisionFor("high-energy-retail", "cinematic", {
+      brandPersonality: ["warm", "unpretentious", "rooted", "authentic"],
+    });
+    assert.equal(decision.granted, true);
+  });
+
+  test("Phase 11: a genuinely restrained register (not merely humble) still vetoes shader-enhanced-hero — this protection is unchanged", () => {
+    const decision = shaderDecisionFor("high-energy-retail", "cinematic", {
+      brandPersonality: ["dignified", "restrained", "solemn"],
+    });
+    assert.equal(decision.granted, false);
+  });
+
   test("human 'more energetic' + 'more motion' cannot breach the gate for trust-authority — the ceiling protection is inherited from resolveMotionBudget's own Math.min() composition, never re-implemented here", () => {
     const plan = resolveExperiencePlan({
       industryBucket: "lawFirm",
