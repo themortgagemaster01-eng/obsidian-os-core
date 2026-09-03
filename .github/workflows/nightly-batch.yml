@@ -41,13 +41,6 @@ concurrency:
 jobs:
   run-batch:
     runs-on: ubuntu-latest
-    # The scheduled trigger only proceeds once real configuration exists —
-    # until BATCH_OWNER_PROFILE_ID and the Supabase service-role secret are
-    # both supplied, a scheduled run is cleanly skipped (shown as such in
-    # the Actions UI), never a failure. Manual dispatch is never gated here
-    # — it always runs, so the workflow (including this exact guard, and
-    # the CLI's own configuration validation) can be tested at any time.
-    if: ${{ github.event_name == 'workflow_dispatch' || (secrets.SUPABASE_SERVICE_ROLE_KEY != '' && vars.BATCH_OWNER_PROFILE_ID != '') }}
     timeout-minutes: 180
     steps:
       - name: Checkout
@@ -66,6 +59,17 @@ jobs:
         run: npm run build:scripts
 
       - name: Run the scheduled batch
+        # The scheduled trigger only proceeds once real configuration exists —
+        # until BATCH_OWNER_PROFILE_ID and the Supabase service-role secret are
+        # both supplied, a scheduled run is cleanly skipped (shown as such in
+        # the Actions UI), never a failure. Manual dispatch is never gated here
+        # — it always runs, so the workflow (including this exact guard, and
+        # the CLI's own configuration validation) can be tested at any time.
+        # Deliberately a step-level `if:`, not job-level: the secrets/vars
+        # contexts are not available in `jobs.<job_id>.if:` at all — GitHub
+        # rejects it outright ("Unrecognized named-value: 'secrets'") — only
+        # from `jobs.<job_id>.steps.<step>.if:` onward within a job.
+        if: ${{ github.event_name == 'workflow_dispatch' || (secrets.SUPABASE_SERVICE_ROLE_KEY != '' && vars.BATCH_OWNER_PROFILE_ID != '') }}
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
