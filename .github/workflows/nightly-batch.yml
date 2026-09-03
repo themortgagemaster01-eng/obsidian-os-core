@@ -42,6 +42,20 @@ jobs:
   run-batch:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    env:
+      # Phase 12 fix, second attempt: secrets/vars are not valid inside ANY
+      # `if:` expression at all (confirmed by two real failures — job-level
+      # and step-level both rejected identically, "Unrecognized named-value:
+      # 'secrets'", at the same character offset) — `if:` is evaluated by
+      # GitHub's own orchestration service before a runner exists, before any
+      # secret is ever materialized anywhere; secrets only ever get resolved
+      # into `env:`/`with:`/`run:` on an actual runner. Routing the check
+      # through a job-level env var first works because `env` (unlike
+      # `secrets`/`vars`) IS a valid context inside `if:`. Must be job-level,
+      # not on the step itself — a step's own `if:` is evaluated before that
+      # same step's own `env:` block is materialized, so a step can't gate
+      # itself on its own env var.
+      HAS_REQUIRED_CONFIG: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY != '' && vars.BATCH_OWNER_PROFILE_ID != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,11 +79,10 @@ jobs:
         # the Actions UI), never a failure. Manual dispatch is never gated here
         # — it always runs, so the workflow (including this exact guard, and
         # the CLI's own configuration validation) can be tested at any time.
-        # Deliberately a step-level `if:`, not job-level: the secrets/vars
-        # contexts are not available in `jobs.<job_id>.if:` at all — GitHub
-        # rejects it outright ("Unrecognized named-value: 'secrets'") — only
-        # from `jobs.<job_id>.steps.<step>.if:` onward within a job.
-        if: ${{ github.event_name == 'workflow_dispatch' || (secrets.SUPABASE_SERVICE_ROLE_KEY != '' && vars.BATCH_OWNER_PROFILE_ID != '') }}
+        # References the job-level env.HAS_REQUIRED_CONFIG above, never
+        # secrets/vars directly — see that env: block's own comment for why.
+        # Env vars are always strings, hence the explicit 'true' comparison.
+        if: ${{ github.event_name == 'workflow_dispatch' || env.HAS_REQUIRED_CONFIG == 'true' }}
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
