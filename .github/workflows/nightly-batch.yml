@@ -63,7 +63,18 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Bumped from 20: @supabase/supabase-js / @supabase/realtime-js
+          # (resolved 2.112.2, satisfying package.json's own ^2.111.0 range)
+          # both declare "engines": { "node": ">=22.0.0" } and require a
+          # native WebSocket implementation only Node 22+ provides —
+          # confirmed by a real failure on this exact runner ("Node.js
+          # detected but native WebSocket not found") inside
+          # createServiceRoleClient, before any database call. No other
+          # dependency in this project sets a conflicting upper bound: Next.js
+          # requires >=18.17.0, Puppeteer >=18, TypeScript >=14.17 — all
+          # satisfied by 22. This is the only place "20" appeared anywhere in
+          # this repo's CI config.
+          node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
