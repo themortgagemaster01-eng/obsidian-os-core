@@ -31,3 +31,5 @@ Analysis → Business Insights → Opportunity Score → Opportunity Report
 ## Documentation
 
 See [`/docs`](./docs) for the complete architecture and design documentation.
+
+<!-- deploy-trigger: no-op change to force a fresh Vercel build/promotion of main HEAD (a manual dashboard redeploy had picked an older commit) -->
