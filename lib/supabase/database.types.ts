@@ -36,6 +36,8 @@ export type MissionBatchRunStatus = "running" | "complete" | "failed";
 export type MissionBatchStopReason = "target_reached" | "pool_exhausted" | "max_attempts_reached";
 /** A single Lead Hunter scan's own funnel-progress record (0021_lead_scan_runs.sql, CTO Phase 3 directive) — same pending/running/complete/failed-shaped domain as AnalysisStatus/GenerationStatus, kept distinct since a scan run is a different kind of job (no "pending" state — a row is only ever inserted once the scan has actually started). */
 export type LeadScanRunStatus = "running" | "complete" | "failed";
+/** Phase 14 (0027_identity_verification.sql) — the tri-state identity-verification outcome; see docs/PHASE_14_IMPLEMENTATION_PLAN.md §3. */
+export type IdentityVerdict = "confirmed" | "uncertain" | "failed";
 
 export interface Database {
   public: {
@@ -548,6 +550,9 @@ export interface Database {
           longitude: number | null;
           discovery_source: string;
           discovery_external_id: string;
+          /** Phase 14 (0027_identity_verification.sql) — OSM's own tagged phone/address, independent of anything the crawl itself reports. Null when Discovery found neither. */
+          discovery_phone: string | null;
+          discovery_address: string | null;
           status: LeadStatus;
           rejection_reason: string | null;
           website_score: number | null;
@@ -584,6 +589,8 @@ export interface Database {
           longitude?: number | null;
           discovery_source: string;
           discovery_external_id: string;
+          discovery_phone?: string | null;
+          discovery_address?: string | null;
           status?: LeadStatus;
           rejection_reason?: string | null;
           website_score?: number | null;
@@ -620,6 +627,8 @@ export interface Database {
           longitude?: number | null;
           discovery_source?: string;
           discovery_external_id?: string;
+          discovery_phone?: string | null;
+          discovery_address?: string | null;
           status?: LeadStatus;
           rejection_reason?: string | null;
           website_score?: number | null;
@@ -1077,6 +1086,52 @@ export interface Database {
         Relationships: [
           {
             foreignKeyName: "mission_batch_runs_organization_id_fkey";
+            columns: ["organization_id"];
+            isOneToOne: false;
+            referencedRelation: "organizations";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      /** Phase 14 (0027_identity_verification.sql) — one row per identity check; see docs/PHASE_14_IMPLEMENTATION_PLAN.md §1.4. */
+      identity_verifications: {
+        Row: {
+          id: string;
+          mission_id: string;
+          organization_id: string;
+          verdict: IdentityVerdict;
+          signals: Json;
+          suppressed_evidence_categories: string[];
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          mission_id: string;
+          organization_id: string;
+          verdict: IdentityVerdict;
+          signals?: Json;
+          suppressed_evidence_categories?: string[];
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          mission_id?: string;
+          organization_id?: string;
+          verdict?: IdentityVerdict;
+          signals?: Json;
+          suppressed_evidence_categories?: string[];
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "identity_verifications_mission_id_fkey";
+            columns: ["mission_id"];
+            isOneToOne: false;
+            referencedRelation: "missions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "identity_verifications_organization_id_fkey";
             columns: ["organization_id"];
             isOneToOne: false;
             referencedRelation: "organizations";

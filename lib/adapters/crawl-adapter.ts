@@ -105,6 +105,8 @@ function emptyStructuredFacts() {
 
 /** Loosely-typed schema.org LocalBusiness/Organization shape — sites vary widely in which fields they actually populate, so every access below is defensive. */
 interface JsonLdEntity {
+  name?: string;
+  "@type"?: string | string[];
   telephone?: string;
   email?: string;
   address?: unknown;
@@ -1791,6 +1793,19 @@ export async function runCrawlAdapter(targetUrl: string): Promise<CrawlRawResult
   const metaDescription =
     $('meta[name="description"]').attr("content")?.trim() || null;
 
+  // Phase 14 (docs/PHASE_14_IMPLEMENTATION_PLAN.md §5): the homepage's own
+  // schema.org JSON-LD name/@type, when present — a business's own declared
+  // identity, exactly the same "homepage-only, top-level" treatment
+  // title/metaDescription already get above, not folded into
+  // extractStructuredFacts's per-page StructuredFacts shape (this is
+  // identity metadata, not a content section to merge across sub-pages).
+  // Never compared against anything here — lib/services/identity-
+  // verification-service.ts is the one place that reads these two fields
+  // for comparison, matching this file's own "adapters are I/O only" split.
+  const homepageJsonLd = parseJsonLdEntities($);
+  const jsonLdName = homepageJsonLd.map((e) => e.name).find((v): v is string => !!v?.trim()) ?? null;
+  const jsonLdType = homepageJsonLd.map((e) => e["@type"]).find((v): v is string | string[] => !!v) ?? null;
+
   const linkEntries: { url: string; text: string }[] = [];
   const seenLinkUrls = new Set<string>();
   let internalLinkCount = 0;
@@ -1937,6 +1952,8 @@ export async function runCrawlAdapter(targetUrl: string): Promise<CrawlRawResult
     statusCode: response.status,
     title,
     metaDescription,
+    jsonLdName,
+    jsonLdType,
     headingCounts: headingCounts($),
     internalLinkCount,
     externalLinkCount,

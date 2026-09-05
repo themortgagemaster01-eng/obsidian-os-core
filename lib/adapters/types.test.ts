@@ -10,6 +10,8 @@ function fullCrawl(): CrawlRawResult {
     statusCode: 200,
     title: "Acme Co",
     metaDescription: "Real description.",
+    jsonLdName: "Acme Co",
+    jsonLdType: "LocalBusiness",
     headingCounts: { h1: 1, h2: 2, h3: 0, h4: 0, h5: 0, h6: 0 },
     internalLinkCount: 12,
     externalLinkCount: 3,
@@ -134,5 +136,23 @@ describe("normalizeCrawlRawResult", () => {
     raw.unparsedDocuments = [{ url: "https://acme.test/menu.pdf", reason: "no-text-layer" }];
     const normalized = normalizeCrawlRawResult(raw);
     assert.deepEqual(normalized.unparsedDocuments, raw.unparsedDocuments);
+  });
+
+  test("Phase 14: jsonLdName/jsonLdType missing entirely (an older persisted row, predating this field) default to null, never throw", () => {
+    const raw = fullCrawl() as unknown as Record<string, unknown>;
+    delete raw.jsonLdName;
+    delete raw.jsonLdType;
+    const normalized = normalizeCrawlRawResult(raw);
+    assert.equal(normalized.jsonLdName, null);
+    assert.equal(normalized.jsonLdType, null);
+  });
+
+  test("Phase 14: jsonLdName/jsonLdType present pass through untouched, including a string[] @type", () => {
+    const raw = fullCrawl();
+    raw.jsonLdName = "Acme Restaurant";
+    raw.jsonLdType = ["LocalBusiness", "Restaurant"];
+    const normalized = normalizeCrawlRawResult(raw);
+    assert.equal(normalized.jsonLdName, "Acme Restaurant");
+    assert.deepEqual(normalized.jsonLdType, ["LocalBusiness", "Restaurant"]);
   });
 });

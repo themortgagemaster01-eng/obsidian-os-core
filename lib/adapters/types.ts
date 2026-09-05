@@ -181,6 +181,9 @@ export interface CrawlRawResult {
   statusCode: number | null;
   title: string | null;
   metaDescription: string | null;
+  /** Phase 14 — the homepage's own schema.org JSON-LD `name`/`@type`, when present (crawl-adapter.ts's homepageJsonLd). A business's own declared identity, read by lib/services/identity-verification-service.ts — never compared against anything in this file. Optional for the same older-row/fixture-compatibility reason unparsedDocuments is (types.ts:206) — normalizeCrawlRawResult defaults both to null below; the real producer (runCrawlAdapter) always sets them. */
+  jsonLdName?: string | null;
+  jsonLdType?: string | string[] | null;
   headingCounts: Record<"h1" | "h2" | "h3" | "h4" | "h5" | "h6", number>;
   internalLinkCount: number;
   externalLinkCount: number;
@@ -242,6 +245,8 @@ export function normalizeCrawlRawResult(raw: unknown): CrawlRawResult {
     statusCode: r.statusCode ?? null,
     title: r.title ?? null,
     metaDescription: r.metaDescription ?? null,
+    jsonLdName: r.jsonLdName ?? null,
+    jsonLdType: r.jsonLdType ?? null,
     headingCounts: {
       h1: headingCounts.h1 ?? 0,
       h2: headingCounts.h2 ?? 0,

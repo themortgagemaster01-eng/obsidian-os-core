@@ -19,6 +19,8 @@ function fakeLead(overrides: Partial<LeadRow> = {}): LeadRow {
     longitude: -80.49,
     discovery_source: "openstreetmap",
     discovery_external_id: "node/1",
+    discovery_phone: null,
+    discovery_address: null,
     status: "candidate",
     rejection_reason: null,
     website_score: 40,

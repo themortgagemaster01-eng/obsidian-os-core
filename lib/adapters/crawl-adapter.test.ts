@@ -1858,3 +1858,88 @@ describe("crawl-adapter: Phase 13 PDF evidence integration (runCrawlAdapter, moc
     assert.equal(reasonsByUrl["https://example3.test/huge.pdf"], "too-large");
   });
 });
+
+// ===========================================================================
+// Phase 14 (docs/PHASE_14_IMPLEMENTATION_PLAN.md §5) — the homepage's own
+// schema.org JSON-LD name/@type, surfaced as top-level CrawlRawResult
+// fields (jsonLdName/jsonLdType), the same homepage-only treatment
+// title/metaDescription already get. Never compared against anything in
+// this file — lib/services/identity-verification-service.ts is the one
+// place that reads these for comparison.
+// ===========================================================================
+describe("crawl-adapter: Phase 14 JSON-LD name/@type extraction (runCrawlAdapter, mocked fetch)", () => {
+  function fakeResponse(opts: { status: number; body: Buffer | string; url?: string }) {
+    const bodyBuffer = typeof opts.body === "string" ? Buffer.from(opts.body) : opts.body;
+    return {
+      status: opts.status,
+      ok: opts.status >= 200 && opts.status < 300,
+      url: opts.url ?? "",
+      headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? "text/html" : null) },
+      text: async () => bodyBuffer.toString("utf8"),
+      arrayBuffer: async () => bodyBuffer.buffer.slice(bodyBuffer.byteOffset, bodyBuffer.byteOffset + bodyBuffer.byteLength),
+    };
+  }
+
+  test("a real LocalBusiness JSON-LD block's name/@type are surfaced as top-level jsonLdName/jsonLdType", async (t) => {
+    const homepageHtml = `
+      <html><head>
+        <script type="application/ld+json">
+          { "@context": "https://schema.org", "@type": "Restaurant", "name": "Acme Diner", "telephone": "+15550001111" }
+        </script>
+      </head><body><p>Welcome to Acme Diner.</p></body></html>
+    `;
+    const originalFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+    });
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = input.toString();
+      if (url === "https://acmediner.test/") return fakeResponse({ status: 200, body: homepageHtml, url });
+      throw new Error(`not found: ${url}`);
+    }) as typeof fetch;
+
+    const result = await runCrawlAdapter("https://acmediner.test/");
+    assert.equal(result.jsonLdName, "Acme Diner");
+    assert.equal(result.jsonLdType, "Restaurant");
+  });
+
+  test("no JSON-LD at all on the homepage — both fields are honestly null, never fabricated", async (t) => {
+    const homepageHtml = `<html><head><title>Acme Diner</title></head><body><p>Welcome.</p></body></html>`;
+    const originalFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+    });
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = input.toString();
+      if (url === "https://acmediner2.test/") return fakeResponse({ status: 200, body: homepageHtml, url });
+      throw new Error(`not found: ${url}`);
+    }) as typeof fetch;
+
+    const result = await runCrawlAdapter("https://acmediner2.test/");
+    assert.equal(result.jsonLdName, null);
+    assert.equal(result.jsonLdType, null);
+  });
+
+  test("a JSON-LD block with no name/@type (only telephone, e.g.) still yields null for both — never a false value from an unrelated field", async (t) => {
+    const homepageHtml = `
+      <html><head>
+        <script type="application/ld+json">
+          { "telephone": "+15550001111" }
+        </script>
+      </head><body></body></html>
+    `;
+    const originalFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+    });
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = input.toString();
+      if (url === "https://acmediner3.test/") return fakeResponse({ status: 200, body: homepageHtml, url });
+      throw new Error(`not found: ${url}`);
+    }) as typeof fetch;
+
+    const result = await runCrawlAdapter("https://acmediner3.test/");
+    assert.equal(result.jsonLdName, null);
+    assert.equal(result.jsonLdType, null);
+  });
+});

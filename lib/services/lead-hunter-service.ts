@@ -282,6 +282,12 @@ async function runScanAgainstDiscovered(
         latitude: candidate.latitude,
         longitude: candidate.longitude,
         discovery_external_id: candidate.externalId,
+        // Phase 14 (docs/PHASE_14_IMPLEMENTATION_PLAN.md §4): OSM's own
+        // phone/address, independent of anything the crawl itself reports —
+        // previously extracted by discovery-adapter.ts and then silently
+        // dropped here, confirmed a real gap by the Phase 14 audit.
+        discovery_phone: candidate.phone,
+        discovery_address: candidate.address,
         status: "rejected",
         rejection_reason: qualification.rejectionReason,
         qualified_at: new Date().toISOString(),
@@ -307,6 +313,9 @@ async function runScanAgainstDiscovered(
       latitude: candidate.latitude,
       longitude: candidate.longitude,
       discovery_external_id: candidate.externalId,
+      // Phase 14 — see the matching comment at the rejected-lead call site above.
+      discovery_phone: candidate.phone,
+      discovery_address: candidate.address,
       status: "candidate",
       website_score: websiteScoreResult.score,
       opportunity_score: opportunityResult.score,

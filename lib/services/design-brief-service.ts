@@ -4,10 +4,12 @@ import type { Database, Json } from "@/lib/supabase/database.types";
 import type { AnalysisCategory, NormalizedAnalysis } from "@/lib/services/analysis-types";
 import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage, MenuCategory } from "@/lib/adapters/types";
 import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
+import { normalizeCrawlRawResult } from "@/lib/adapters/types";
 import { generateInsights, type Insight } from "@/lib/services/insight-service";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 import { resolveIndustryBucket, selectReferenceDirections, type IndustryBucket } from "@/lib/design-references/reference-library";
 import { generateDesignIntelligence, type DesignMemory } from "@/lib/services/design-intelligence-service";
+import { verifyBusinessIdentity } from "@/lib/services/identity-verification-service";
 import type { LlmProvider } from "@/lib/llm/provider";
 import { createAnthropicProviderFromEnv } from "@/lib/llm/anthropic-provider";
 import { MetricsLlmProvider } from "@/lib/llm/metrics";
@@ -19,9 +21,12 @@ import {
 import { websiteAnalysisRepository } from "@/lib/repositories/website-analysis-repository";
 import { missionRepository } from "@/lib/repositories/mission-repository";
 import { companyRepository } from "@/lib/repositories/company-repository";
+import { leadRepository } from "@/lib/repositories/lead-repository";
+import { identityVerificationRepository } from "@/lib/repositories/identity-verification-repository";
 import {
   createMissionWorkflowDeps,
   transitionMissionState,
+  rejectMission,
   type MissionWorkflowDeps,
 } from "@/lib/workflow/mission-workflow";
 import { createEventBus, type EventBus } from "@/lib/events/event-bus";
@@ -230,6 +235,10 @@ export interface DesignBriefServiceDeps {
   websiteAnalysisRepository: typeof websiteAnalysisRepository;
   missionRepository: typeof missionRepository;
   companyRepository: typeof companyRepository;
+  /** Phase 14 — the mission's originating lead, if any (findByMission), read only for its OSM-tagged phone/address/location (docs/PHASE_14_IMPLEMENTATION_PLAN.md §4); never written to here. */
+  leadRepository: Pick<typeof leadRepository, "findByMission">;
+  /** Phase 14 — one row per identity check (supabase/migrations/0027_identity_verification.sql). */
+  identityVerificationRepository: typeof identityVerificationRepository;
   workflowDeps: MissionWorkflowDeps;
   eventBus: EventBus;
   /** Design Intelligence's LLM dependency — injected, never a specific vendor imported directly by this file's own logic (docs/ARCHITECTURE_SPECIFICATION_V1.md §3). Defaults to Anthropic via createDesignBriefServiceDeps, but construction never throws for a missing API key — only an actual call inside runDesignBrief does (see lib/llm/anthropic-provider.ts). */
@@ -243,6 +252,8 @@ export function createDesignBriefServiceDeps(client: TypedClient): DesignBriefSe
     websiteAnalysisRepository,
     missionRepository,
     companyRepository,
+    leadRepository,
+    identityVerificationRepository,
     workflowDeps: createMissionWorkflowDeps(client),
     eventBus: createEventBus(client),
     // The production Design Brief path must emit operational metrics for
@@ -316,12 +327,6 @@ export async function runDesignBrief(
     started_at: new Date().toISOString(),
   });
 
-  // Only advance analyzing -> researching; a re-run on a mission already
-  // past `researching` shouldn't attempt a second, now-invalid transition.
-  if (mission.state === "analyzing") {
-    await transitionMissionState(deps.workflowDeps, mission.id, "researching");
-  }
-
   try {
     const analysisRow = await deps.websiteAnalysisRepository.findLatestByMission(deps.client, mission.id);
     if (!analysisRow || analysisRow.status !== "complete") {
@@ -334,7 +339,96 @@ export async function runDesignBrief(
       ? await deps.companyRepository.findById(deps.client, mission.company_id)
       : null;
 
-    const normalized = normalizedAnalysisFromRow(analysisRow, mission.website_url);
+    let normalized = normalizedAnalysisFromRow(analysisRow, mission.website_url);
+
+    // ===================================================================
+    // Phase 14 (docs/PHASE_14_IMPLEMENTATION_PLAN.md §1/§7) — the identity
+    // verification gate. Runs BEFORE the analyzing -> researching
+    // transition (moved here from directly after the "running" update
+    // above, deliberately — a FAILED verdict must mean this mission never
+    // even reaches `researching`) and before any citedInsights/LLM work.
+    // A completed website analysis is required for both this gate and the
+    // rest of the function, so it stays inside the same try/catch as
+    // everything else — an identity-check failure (a thrown error, not an
+    // identity_verifications "failed" verdict) degrades exactly like any
+    // other failure in this function already does.
+    // ===================================================================
+    const lead = await deps.leadRepository.findByMission(deps.client, mission.id);
+    const rawCrawl = normalizeCrawlRawResult(analysisRow.crawl_result);
+    const identityResult = verifyBusinessIdentity({
+      businessName: mission.business_name,
+      expectedLocation: lead ? { raw: lead.location, countryHint: null } : null,
+      osmPhone: lead?.discovery_phone ?? null,
+      osmAddress: lead?.discovery_address ?? null,
+      crawl: {
+        requestedUrl: rawCrawl.requestedUrl,
+        finalUrl: rawCrawl.finalUrl,
+        title: rawCrawl.title,
+        metaDescription: rawCrawl.metaDescription,
+        jsonLdName: rawCrawl.jsonLdName ?? null,
+        jsonLdType: rawCrawl.jsonLdType ?? null,
+        contact: rawCrawl.contact,
+      },
+    });
+
+    await deps.identityVerificationRepository.insert(deps.client, {
+      mission_id: mission.id,
+      organization_id: mission.organization_id,
+      verdict: identityResult.verdict,
+      signals: identityResult.signals as unknown as Json,
+      suppressed_evidence_categories: identityResult.suppressedEvidenceCategories,
+    });
+
+    if (identityResult.verdict === "failed") {
+      // IDENTITY_FAILED: rejectMission() (the existing, unmodified
+      // any-non-terminal-state -> "rejected" side-transition) instead of
+      // transitionMissionState(..., "researching") — citedInsights,
+      // generateDesignIntelligence, Website Generation, and QA are never
+      // invoked for this mission at all.
+      const reason = `Identity verification failed: ${identityResult.signals
+        .filter((s) => s.verdict === "mismatch")
+        .map((s) => s.detail)
+        .join(" ")}`;
+      await rejectMission(deps.workflowDeps, mission.id, reason);
+      const failed = await deps.designBriefRepository.update(deps.client, designBriefId, {
+        status: "failed",
+        completed_at: new Date().toISOString(),
+        error_message: reason,
+      });
+      await deps.eventBus.publish({
+        type: "DesignBriefFailed",
+        missionId: mission.id,
+        organizationId: mission.organization_id,
+        payload: { errorMessage: reason },
+      });
+      return failed;
+    }
+
+    if (identityResult.verdict === "uncertain" && identityResult.suppressedEvidenceCategories.length > 0) {
+      // "Don't let questionable evidence into the generated proposal" — the
+      // specific NormalizedAnalysis fields the identity check itself
+      // flagged are cleared to the exact same honest-empty shape this
+      // codebase already uses for a business that genuinely has none.
+      // generateInsights/buildCitations/design-intelligence-service.ts are
+      // never modified and have no awareness this happened — they simply
+      // receive an honestly-thinner `normalized` than they otherwise would.
+      normalized = {
+        ...normalized,
+        gallery: identityResult.suppressedEvidenceCategories.includes("gallery") ? [] : normalized.gallery,
+        contactEvidence: identityResult.suppressedEvidenceCategories.includes("contactEvidence")
+          ? { phones: [], emails: [], address: null, hours: null }
+          : normalized.contactEvidence,
+      };
+    }
+
+    // Only advance analyzing -> researching for a mission that just passed
+    // (confirmed/uncertain) the identity gate; a re-run on a mission
+    // already past `researching` shouldn't attempt a second, now-invalid
+    // transition.
+    if (mission.state === "analyzing") {
+      await transitionMissionState(deps.workflowDeps, mission.id, "researching");
+    }
+
     const insights = generateInsights(normalized);
 
     // --- Deterministic fact-gathering (this file's job, §2's "Analysis
