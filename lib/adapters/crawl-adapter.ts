@@ -14,8 +14,10 @@ import type {
   MenuCategory,
   FormInfo,
   MapEmbed,
+  UnparsedDocument,
 } from "@/lib/adapters/types";
 import { GENERIC_TESTIMONIAL_HEADING } from "@/lib/adapters/types";
+import { extractPdfText, findMenuItemsInPdfText, MAX_PDF_BYTES } from "@/lib/adapters/pdf-evidence";
 
 const FETCH_TIMEOUT_MS = 15_000;
 /**
@@ -1827,10 +1829,55 @@ export async function runCrawlAdapter(targetUrl: string): Promise<CrawlRawResult
   // sub-page's own document, with its own try/catch: a markup quirk on one
   // sub-page must never discard that page's CrawlPage entry, and must never
   // take down the homepage's own already-succeeded extraction.
-  const subPageResults: { page: CrawlPage; facts: StructuredFacts | null }[] = await Promise.all(
-    sampleUrls.map(async (pageUrl): Promise<{ page: CrawlPage; facts: StructuredFacts | null }> => {
+  const subPageResults: { page: CrawlPage; facts: StructuredFacts | null; unparsedDocument?: UnparsedDocument }[] = await Promise.all(
+    sampleUrls.map(async (pageUrl): Promise<{ page: CrawlPage; facts: StructuredFacts | null; unparsedDocument?: UnparsedDocument }> => {
       try {
         const pageResponse = await fetchWithTimeout(pageUrl);
+
+        // Phase 13 (docs/PHASE_13_PDF_EVIDENCE_SCOPE.md): detection is driven
+        // by the response's real Content-Type header, never by URL extension
+        // or anchor text — the only signal that survives a PDF served at a
+        // URL with no ".pdf" in it, and a link whose own text says nothing
+        // like "menu" (both real limitations the Phase 13 audit named).
+        const contentType = pageResponse.headers.get("content-type") ?? "";
+        if (contentType.includes("application/pdf")) {
+          const contentLength = Number(pageResponse.headers.get("content-length") ?? "0");
+          if (contentLength > MAX_PDF_BYTES) {
+            return {
+              page: { url: pageUrl, statusCode: pageResponse.status, title: null },
+              facts: null,
+              unparsedDocument: { url: pageUrl, reason: "too-large" },
+            };
+          }
+
+          // response.text() (the HTML path below) would UTF-8-decode raw PDF
+          // bytes and corrupt them before any parser saw them — arrayBuffer()
+          // preserves them, on this same already-fetched Response.
+          const bytes = await pageResponse.arrayBuffer();
+          if (bytes.byteLength > MAX_PDF_BYTES) {
+            return {
+              page: { url: pageUrl, statusCode: pageResponse.status, title: null },
+              facts: null,
+              unparsedDocument: { url: pageUrl, reason: "too-large" },
+            };
+          }
+
+          const extraction = await extractPdfText(bytes);
+          if ("error" in extraction) {
+            return {
+              page: { url: pageUrl, statusCode: pageResponse.status, title: null },
+              facts: null,
+              unparsedDocument: { url: pageUrl, reason: extraction.error },
+            };
+          }
+
+          const menu = findMenuItemsInPdfText(extraction.text, pageUrl);
+          return {
+            page: { url: pageUrl, statusCode: pageResponse.status, title: null },
+            facts: { ...emptyStructuredFacts(), menu },
+          };
+        }
+
         const pageHtml = await pageResponse.text();
         const page$ = cheerio.load(pageHtml);
         const pageTitle = page$("title").first().text().trim() || null;
@@ -1859,6 +1906,9 @@ export async function runCrawlAdapter(targetUrl: string): Promise<CrawlRawResult
   );
 
   const pages: CrawlPage[] = subPageResults.map((r) => r.page);
+  const unparsedDocuments: UnparsedDocument[] = subPageResults
+    .map((r) => r.unparsedDocument)
+    .filter((d): d is UnparsedDocument => !!d);
 
   const [robotsCheck, sitemapCheck] = await Promise.all([
     fetchWithTimeout(new URL("/robots.txt", origin).toString()).catch(() => null),
@@ -1895,5 +1945,6 @@ export async function runCrawlAdapter(targetUrl: string): Promise<CrawlRawResult
     sitemapFound: sitemapCheck?.ok ?? false,
     htmlByteSize: Buffer.byteLength(html, "utf8"),
     ...structuredFacts,
+    unparsedDocuments,
   };
 }

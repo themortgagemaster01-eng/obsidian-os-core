@@ -31,6 +31,7 @@ function fullCrawl(): CrawlRawResult {
     menu: [],
     forms: [],
     maps: [],
+    unparsedDocuments: [],
   };
 }
 
@@ -119,5 +120,19 @@ describe("normalizeCrawlRawResult", () => {
     raw.contact.phoneEvidence = [{ phone: "555-000-1111", normalized: "+15550001111", sourceUrl: "https://acme.test/", source: "tel-link" }];
     const normalized = normalizeCrawlRawResult(raw);
     assert.deepEqual(normalized.contact.phoneEvidence, raw.contact.phoneEvidence);
+  });
+
+  test("Phase 13: unparsedDocuments missing entirely (an older persisted row, predating this field) defaults to an honest empty array, never throws", () => {
+    const raw = fullCrawl() as unknown as Record<string, unknown>;
+    delete raw.unparsedDocuments;
+    const normalized = normalizeCrawlRawResult(raw);
+    assert.deepEqual(normalized.unparsedDocuments, []);
+  });
+
+  test("Phase 13: unparsedDocuments present passes through untouched", () => {
+    const raw = fullCrawl();
+    raw.unparsedDocuments = [{ url: "https://acme.test/menu.pdf", reason: "no-text-layer" }];
+    const normalized = normalizeCrawlRawResult(raw);
+    assert.deepEqual(normalized.unparsedDocuments, raw.unparsedDocuments);
   });
 });

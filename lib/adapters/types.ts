@@ -144,6 +144,24 @@ export interface MenuCategory {
   items: MenuItem[];
 }
 
+/**
+ * Phase 13 — a same-origin document the crawler discovered and fetched (HTTP
+ * succeeded) but could not turn into evidence, named honestly rather than
+ * silently collapsing into the same empty result a business with no such
+ * document at all produces. `"no-text-layer"`: the document parsed but
+ * yielded no extractable text (a scanned/image-only PDF — OCR is out of
+ * scope, see docs/PHASE_13_PDF_EVIDENCE_SCOPE.md §3). `"extraction-failed"`:
+ * the document itself was corrupt/malformed and the extractor threw.
+ * `"too-large"`: skipped before extraction was attempted, over the adapter's
+ * own size guard (lib/adapters/pdf-evidence.ts). Never populated for a
+ * document that parsed fine and simply contained no menu-shaped structure —
+ * that is an honest, ordinary empty result, not a failure.
+ */
+export interface UnparsedDocument {
+  url: string;
+  reason: "no-text-layer" | "extraction-failed" | "too-large";
+}
+
 export interface FormInfo {
   action: string | null;
   method: string | null;
@@ -186,6 +204,8 @@ export interface CrawlRawResult {
   menu: MenuCategory[];
   forms: FormInfo[];
   maps: MapEmbed[];
+  /** Phase 13 — same-origin PDFs discovered and fetched but not turned into evidence; see UnparsedDocument's own doc comment. Optional for the same reason ContactInfo's own later-added fields are (types.ts:250-253): an older persisted row, or a hand-built fixture predating this field, has no opinion on it — normalizeCrawlRawResult still defaults it to an honest empty array below. The real producer (runCrawlAdapter) always sets it. */
+  unparsedDocuments?: UnparsedDocument[];
   fetchError?: string;
 }
 
@@ -277,6 +297,7 @@ export function normalizeCrawlRawResult(raw: unknown): CrawlRawResult {
     menu: r.menu ?? [],
     forms: r.forms ?? [],
     maps: r.maps ?? [],
+    unparsedDocuments: r.unparsedDocuments ?? [],
     ...(r.fetchError !== undefined ? { fetchError: r.fetchError } : {}),
   };
 }

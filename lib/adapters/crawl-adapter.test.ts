@@ -1,8 +1,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import * as cheerio from "cheerio";
+import fs from "node:fs";
+import path from "node:path";
 
-import { extractStructuredFacts, mergeStructuredFacts, prioritizeSampleUrls } from "@/lib/adapters/crawl-adapter";
+import { extractStructuredFacts, mergeStructuredFacts, prioritizeSampleUrls, runCrawlAdapter } from "@/lib/adapters/crawl-adapter";
 import { resolveIndustryBucket } from "@/lib/design-references/reference-library";
 
 const JSON_LD_HTML = `
@@ -1696,5 +1698,163 @@ describe("crawl-adapter: promotional/banner imagery rejection (Phase 5.5, real C
     const $ = cheerio.load(html);
     const facts = extractStructuredFacts($, "https://example.test/");
     assert.equal(facts.gallery.length, 1, "mentioning a small sign/label in a real description is not the same as the image BEING a promotional banner");
+  });
+});
+
+// ===========================================================================
+// Phase 13 (docs/PHASE_13_PDF_EVIDENCE_SCOPE.md, docs/PHASE_13_IMPLEMENTATION_PLAN.md)
+// — full runCrawlAdapter integration with a mocked global fetch, proving the
+// Content-Type branch actually wires into the real crawl flow end to end:
+// PDF detection happens before any HTML parsing is attempted, real menu
+// evidence reaches the same CrawlRawResult.menu field an HTML sub-page's
+// menu would, a corrupt/blank PDF is recorded honestly in
+// unparsedDocuments, and ordinary HTML sub-page handling is byte-for-byte
+// unaffected by any of this. Uses the real Carriage House Mahopac PDF
+// fixture (lib/adapters/__fixtures__/mahopac-menu.pdf) as the "real PDF"
+// case, not a synthetic stand-in.
+// ===========================================================================
+describe("crawl-adapter: Phase 13 PDF evidence integration (runCrawlAdapter, mocked fetch)", () => {
+  const REAL_MENU_PDF = fs.readFileSync(path.join(process.cwd(), "lib/adapters/__fixtures__/mahopac-menu.pdf"));
+  const BLANK_PDF = Buffer.from(
+    ["%PDF-1.1", "1 0 obj", "<< /Type /Catalog /Pages 2 0 R >>", "endobj", "2 0 obj", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "endobj", "3 0 obj", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>", "endobj", "trailer", "<< /Size 4 /Root 1 0 R >>", "%%EOF"].join("\n")
+  );
+  const CORRUPT_PDF = Buffer.from("%PDF-1.4\nnot a real pdf body, just garbage bytes after the header");
+
+  function fakeResponse(opts: { status: number; contentType?: string; body: Buffer | string; url?: string }) {
+    const bodyBuffer = typeof opts.body === "string" ? Buffer.from(opts.body) : opts.body;
+    return {
+      status: opts.status,
+      ok: opts.status >= 200 && opts.status < 300,
+      url: opts.url ?? "",
+      headers: {
+        get: (name: string) => {
+          if (name.toLowerCase() === "content-type") return opts.contentType ?? "text/html";
+          if (name.toLowerCase() === "content-length") return String(bodyBuffer.byteLength);
+          return null;
+        },
+      },
+      text: async () => bodyBuffer.toString("utf8"),
+      arrayBuffer: async () => bodyBuffer.buffer.slice(bodyBuffer.byteOffset, bodyBuffer.byteOffset + bodyBuffer.byteLength),
+    };
+  }
+
+  test("PDF detected via Content-Type before HTML parsing is attempted; real menu evidence reaches CrawlRawResult.menu unchanged from how HTML menu evidence already does; a corrupt and a blank PDF are both recorded honestly; ordinary HTML sub-pages are unaffected", async (t) => {
+    const homepageHtml = `
+      <html><head><title>Test Restaurant</title></head><body>
+        <a href="/page.html">Our Story</a>
+        <a href="/menu.pdf">Menu for This Location</a>
+        <a href="/broken.pdf">Download Our Brochure</a>
+        <a href="/blank.pdf">Catering Menu</a>
+      </body></html>
+    `;
+    const pageHtml = `<html><head><title>Our Story</title></head><body><p>A real local business, established 1990.</p></body></html>`;
+
+    const originalFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = input.toString();
+      if (url === "https://example.test/") {
+        return fakeResponse({ status: 200, body: homepageHtml, url });
+      }
+      if (url === "https://example.test/page.html") {
+        return fakeResponse({ status: 200, body: pageHtml, url });
+      }
+      if (url === "https://example.test/menu.pdf") {
+        return fakeResponse({ status: 200, contentType: "application/pdf", body: REAL_MENU_PDF, url });
+      }
+      if (url === "https://example.test/broken.pdf") {
+        return fakeResponse({ status: 200, contentType: "application/pdf", body: CORRUPT_PDF, url });
+      }
+      if (url === "https://example.test/blank.pdf") {
+        return fakeResponse({ status: 200, contentType: "application/pdf", body: BLANK_PDF, url });
+      }
+      // robots.txt / sitemap.xml — genuinely absent, matching the existing
+      // `.catch(() => null)` handling at both call sites.
+      throw new Error(`not found: ${url}`);
+    }) as typeof fetch;
+
+    const result = await runCrawlAdapter("https://example.test/");
+
+    // Real menu evidence from the real PDF reached the exact same field HTML
+    // menu evidence already uses — no new/parallel evidence path.
+    const allMenuItems = result.menu.flatMap((c) => c.items);
+    assert.ok(
+      allMenuItems.some((i) => i.name === "FRENCH ONION SOUP" && i.price === "8"),
+      "real Carriage House Mahopac menu item should reach CrawlRawResult.menu"
+    );
+    assert.ok(
+      allMenuItems.every((i) => i.sourceUrl !== "https://example.test/page.html"),
+      "no menu item should be misattributed to the HTML sub-page"
+    );
+    assert.ok(
+      allMenuItems.some((i) => i.sourceUrl === "https://example.test/menu.pdf"),
+      "real menu items must carry the PDF's own URL as sourceUrl (provenance)"
+    );
+
+    // Ordinary HTML sub-page handling is completely unaffected — this exact
+    // page's title is still read the normal way.
+    const pageEntry = result.pages.find((p) => p.url === "https://example.test/page.html");
+    assert.equal(pageEntry?.title, "Our Story");
+    assert.equal(pageEntry?.statusCode, 200);
+
+    // Both non-real PDFs recorded honestly, never silently collapsed into
+    // the same empty result a business with no PDF at all produces.
+    const reasonsByUrl = Object.fromEntries((result.unparsedDocuments ?? []).map((d) => [d.url, d.reason]));
+    assert.equal(reasonsByUrl["https://example.test/broken.pdf"], "extraction-failed");
+    assert.equal(reasonsByUrl["https://example.test/blank.pdf"], "no-text-layer");
+    // The real, successfully-parsed PDF must NOT appear in unparsedDocuments.
+    assert.equal(reasonsByUrl["https://example.test/menu.pdf"], undefined);
+  });
+
+  test("a PDF whose link text says nothing like 'menu' is still detected and extracted — Content-Type drives detection, not anchor text or URL extension", async (t) => {
+    const homepageHtml = `<html><body><a href="/download?id=4471">View Our Fall Offerings</a></body></html>`;
+
+    const originalFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = input.toString();
+      if (url === "https://example2.test/") return fakeResponse({ status: 200, body: homepageHtml, url });
+      if (url === "https://example2.test/download?id=4471") {
+        return fakeResponse({ status: 200, contentType: "application/pdf", body: REAL_MENU_PDF, url });
+      }
+      throw new Error(`not found: ${url}`);
+    }) as typeof fetch;
+
+    const result = await runCrawlAdapter("https://example2.test/");
+    assert.ok(result.menu.flatMap((c) => c.items).some((i) => i.name === "FRENCH ONION SOUP"));
+  });
+
+  test("a PDF over the size guard is skipped before extraction is attempted, recorded as too-large", async (t) => {
+    const homepageHtml = `<html><body><a href="/huge.pdf">Full Catalog</a></body></html>`;
+    const originalFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = input.toString();
+      if (url === "https://example3.test/") return fakeResponse({ status: 200, body: homepageHtml, url });
+      if (url === "https://example3.test/huge.pdf") {
+        return {
+          status: 200,
+          ok: true,
+          url,
+          headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? "application/pdf" : name.toLowerCase() === "content-length" ? "30000000" : null) },
+          text: async () => "",
+          arrayBuffer: async () => new ArrayBuffer(0),
+        };
+      }
+      throw new Error(`not found: ${url}`);
+    }) as typeof fetch;
+
+    const result = await runCrawlAdapter("https://example3.test/");
+    const reasonsByUrl = Object.fromEntries((result.unparsedDocuments ?? []).map((d) => [d.url, d.reason]));
+    assert.equal(reasonsByUrl["https://example3.test/huge.pdf"], "too-large");
   });
 });
