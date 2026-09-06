@@ -1,9 +1,11 @@
 import type { TypeRole } from "@/lib/design-intelligence/types";
 import {
-  DEFAULT_TYPE_SCALE,
+  TYPE_SCALE_VARIANTS,
+  resolveTypeScaleIntent,
   MAX_TYPE_FAMILIES,
   validateTypeScaleOrdering,
   validateTypographyChoice,
+  type TypeScaleIntent,
 } from "@/lib/design-intelligence/typography-rules";
 import { DEFAULT_SPACING_SCALE, validateSpacingScale, type SpacingScale } from "@/lib/design-intelligence/design-rules";
 import {
@@ -81,6 +83,13 @@ export interface TypographyRefinement {
   bodyLineLengthChars: number;
   bodyLineHeight: number;
   violations: string[];
+  /**
+   * Phase 15 (Design Intelligence Gap Map, Fix #1) — which of the closed
+   * TYPE_SCALE_VARIANTS this scale came from, and why. Never itself a new
+   * decision point for a caller to branch on beyond transparency/QA/
+   * reporting — the scale array above is still the one real output.
+   */
+  scaleIntent: TypeScaleIntent;
 }
 
 /** Body role's concrete pixel size — every other role's size is derived from DEFAULT_TYPE_SCALE's proportions relative to this. */
@@ -116,7 +125,17 @@ export function refineTypography(memory?: Pick<DesignMemory, "typography"> | nul
     families = families.slice(0, MAX_TYPE_FAMILIES);
   }
 
-  const scale: TypeRoleValue[] = DEFAULT_TYPE_SCALE.map((spec) => ({
+  // Phase 15 (Design Intelligence Gap Map, Fix #1): select among a small,
+  // closed set of pre-authored, pre-validated scale tables using a bounded
+  // keyword signal read from Design Memory's own already-generated
+  // typography reasoning — never a number parsed out of that prose. Falls
+  // back to "editorial" (== DEFAULT_TYPE_SCALE, this pass's own unchanged
+  // pre-Phase-15 behavior) whenever the signal is absent, ambiguous, or
+  // memory itself is null/undefined — see resolveTypeScaleIntent's own
+  // doc comment for the exact symmetry rule.
+  const scaleIntent = resolveTypeScaleIntent(memory?.typography);
+  const scaleSpec = TYPE_SCALE_VARIANTS[scaleIntent];
+  const scale: TypeRoleValue[] = scaleSpec.map((spec) => ({
     role: spec.role,
     sizePx: Math.round(BASE_BODY_SIZE_PX * spec.relativeSize),
     weight: spec.relativeWeight,
@@ -132,7 +151,7 @@ export function refineTypography(memory?: Pick<DesignMemory, "typography"> | nul
   const bodyLineHeight = DEFAULT_BODY_LINE_HEIGHT;
   violations.push(...validateTypographyChoice({ families, bodyLineLengthChars, bodyLineHeight }));
 
-  return { families, scale, bodyLineLengthChars, bodyLineHeight, violations };
+  return { families, scale, bodyLineLengthChars, bodyLineHeight, violations, scaleIntent };
 }
 
 // ===========================================================================

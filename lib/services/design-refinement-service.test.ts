@@ -12,7 +12,7 @@ import {
 import { generateWireframe, type Wireframe } from "@/lib/services/design-generation-service";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
-import { MAX_TYPE_FAMILIES, TYPE_ROLE_ORDER } from "@/lib/design-intelligence/typography-rules";
+import { MAX_TYPE_FAMILIES, TYPE_ROLE_ORDER, DEFAULT_TYPE_SCALE } from "@/lib/design-intelligence/typography-rules";
 import { MOTION_DURATION_BAND_MS, BANNED_EASING_KEYWORDS } from "@/lib/design-intelligence/motion-rules";
 import { GENERIC_SAAS_TEMPLATE_SECTION_ORDER } from "@/lib/design-intelligence/layout-rules";
 import { MIN_TOUCH_TARGET_PX, MOBILE_BODY_FONT_FLOOR_PX } from "@/lib/design-intelligence/mobile-rules";
@@ -120,6 +120,61 @@ describe("design-refinement-service: refineTypography", () => {
     const result = refineTypography(SAMPLE_DESIGN_MEMORY);
     assert.ok(result.bodyLineLengthChars >= 45 && result.bodyLineLengthChars <= 75);
     assert.ok(result.bodyLineHeight >= 1.4 && result.bodyLineHeight <= 1.6);
+  });
+
+  // ==========================================================================
+  // Phase 15 — Design Intelligence Gap Map, Fix #1. Required regression
+  // proof: (a) two missions with genuinely different, real-shaped
+  // typography reasoning produce genuinely different scale output; (b) a
+  // mission with no signal (or the exact same generic signal every mission
+  // produced before this phase) produces output BYTE-IDENTICAL to
+  // pre-Phase-15 behavior — proven by comparing directly against
+  // DEFAULT_TYPE_SCALE's own raw values, not merely asserting "no errors."
+  // ==========================================================================
+
+  test("Fix #1 (a): two fixtures with different real-shaped scale signals produce genuinely different TypographyRefinement.scale", () => {
+    const compactMemory: DesignMemory = {
+      ...SAMPLE_DESIGN_MEMORY,
+      typography: {
+        headingFamily: "A clean, understated sans",
+        bodyFamily: "Inter",
+        scaleNotes: "A compact, space-efficient hierarchy given how much real menu content needs to fit per section.",
+      },
+    };
+    const displayLedMemory: DesignMemory = {
+      ...SAMPLE_DESIGN_MEMORY,
+      typography: {
+        headingFamily: "A bold serif display face for headlines",
+        bodyFamily: "Inter",
+        scaleNotes: "A striking, commanding display headline given the strength of the real photography.",
+      },
+    };
+
+    const compactResult = refineTypography(compactMemory);
+    const displayLedResult = refineTypography(displayLedMemory);
+
+    assert.equal(compactResult.scaleIntent, "compact");
+    assert.equal(displayLedResult.scaleIntent, "display-led");
+    assert.notDeepEqual(compactResult.scale, displayLedResult.scale);
+    // Both remain individually valid — different is not the same as broken.
+    assert.deepEqual(compactResult.violations, []);
+    assert.deepEqual(displayLedResult.violations, []);
+  });
+
+  test("Fix #1 (b): missing/generic signal produces output byte-identical to the pre-Phase-15 DEFAULT_TYPE_SCALE behavior", () => {
+    const expectedLegacyScale = DEFAULT_TYPE_SCALE.map((spec) => ({
+      role: spec.role,
+      sizePx: Math.round(16 * spec.relativeSize),
+      weight: spec.relativeWeight,
+    }));
+
+    const noMemoryResult = refineTypography(undefined);
+    const genericMemoryResult = refineTypography(SAMPLE_DESIGN_MEMORY); // scaleNotes: "test notes" — the exact generic shape every mission produced before this phase existed
+
+    assert.equal(noMemoryResult.scaleIntent, "editorial");
+    assert.equal(genericMemoryResult.scaleIntent, "editorial");
+    assert.deepEqual(noMemoryResult.scale, expectedLegacyScale);
+    assert.deepEqual(genericMemoryResult.scale, expectedLegacyScale);
   });
 });
 

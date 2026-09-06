@@ -31,6 +31,13 @@ export interface TypeRoleSpec {
  * A reasonable default scale expressing §3's required contrast between
  * roles — a starting point for design-brief-service.ts to adapt per
  * mission, not a fixed value every generated site must use verbatim.
+ *
+ * Phase 15 (Design Intelligence Gap Map, Fix #1): this is now specifically
+ * the "editorial" member of TYPE_SCALE_VARIANTS below, and the mandatory
+ * fallback whenever resolveTypeScaleIntent can't confidently pick one of
+ * the other two — its own values are UNCHANGED from before this phase, so
+ * every mission that resolves (or defaults) to "editorial" renders with
+ * byte-identical typography to pre-Phase-15 output.
  */
 export const DEFAULT_TYPE_SCALE: TypeRoleSpec[] = [
   { role: "display", relativeSize: 3, relativeWeight: "semibold" },
@@ -40,6 +47,118 @@ export const DEFAULT_TYPE_SCALE: TypeRoleSpec[] = [
   { role: "body", relativeSize: 1, relativeWeight: "regular" },
   { role: "caption", relativeSize: 0.8125, relativeWeight: "medium" },
 ];
+
+/**
+ * A tighter, denser scale — smaller jumps between roles — for a mission
+ * whose own AI-generated typography reasoning (DesignMemory.typography)
+ * describes a compact/quiet/understated register. Still passes
+ * validateTypeScaleOrdering (strictly descending) and, once multiplied by
+ * a real body px size, still lands well inside READABILITY's band (that
+ * band governs line-length/line-height, not role-to-role ratio, so it is
+ * unaffected by which variant is chosen).
+ */
+export const COMPACT_TYPE_SCALE: TypeRoleSpec[] = [
+  { role: "display", relativeSize: 2.5, relativeWeight: "semibold" },
+  { role: "heading1", relativeSize: 2, relativeWeight: "semibold" },
+  { role: "heading2", relativeSize: 1.5, relativeWeight: "medium" },
+  { role: "heading3", relativeSize: 1.25, relativeWeight: "medium" },
+  { role: "body", relativeSize: 1, relativeWeight: "regular" },
+  { role: "caption", relativeSize: 0.85, relativeWeight: "medium" },
+];
+
+/**
+ * A bolder, higher-contrast scale — a larger display jump — for a mission
+ * whose own AI-generated typography reasoning explicitly describes a
+ * display-led/dramatic/statement register (e.g. names a real "display"
+ * typeface category, not just "a serif"). Same ordering/readability
+ * guarantee as COMPACT_TYPE_SCALE above.
+ */
+export const DISPLAY_LED_TYPE_SCALE: TypeRoleSpec[] = [
+  { role: "display", relativeSize: 3.5, relativeWeight: "bold" },
+  { role: "heading1", relativeSize: 2.5, relativeWeight: "semibold" },
+  { role: "heading2", relativeSize: 1.875, relativeWeight: "semibold" },
+  { role: "heading3", relativeSize: 1.4375, relativeWeight: "medium" },
+  { role: "body", relativeSize: 1, relativeWeight: "regular" },
+  { role: "caption", relativeSize: 0.8125, relativeWeight: "medium" },
+];
+
+/**
+ * The closed, bounded vocabulary Fix #1 selects among — never a free
+ * numeric value derived from AI prose. "editorial" (== DEFAULT_TYPE_SCALE)
+ * is both a real member of this set and the mandatory safe fallback.
+ */
+export type TypeScaleIntent = "editorial" | "compact" | "display-led";
+
+export const TYPE_SCALE_VARIANTS: Record<TypeScaleIntent, TypeRoleSpec[]> = {
+  editorial: DEFAULT_TYPE_SCALE,
+  compact: COMPACT_TYPE_SCALE,
+  "display-led": DISPLAY_LED_TYPE_SCALE,
+};
+
+/**
+ * A small, closed keyword vocabulary — the same "bounded, deterministic,
+ * never-free-text-derived" discipline composition-variants.ts's own
+ * matchesAnyToneKeyword/personalityPaddingBias already established for a
+ * different field (brandPersonality/contentTone). Applied here to
+ * DesignMemory.typography's own text (headingFamily + bodyFamily +
+ * scaleNotes combined) — real, mission-specific reasoning the LLM already
+ * produces today, never parsed for literal numbers or instructions, only
+ * matched against these fixed word lists.
+ *
+ * Deliberately multi-word phrases for the display-led set, not a bare
+ * "display" — a real, confirmed false positive during this fix's own
+ * testing: "Playfair Display" (a real, common Google Font's own proper
+ * name) contains the bare word "display" with no descriptive meaning at
+ * all, and would otherwise false-trigger for any mission whose LLM-chosen
+ * heading family simply happens to include a font named that. Phrases like
+ * "serif display"/"display headline" are how the real Carriage House
+ * Mahopac mission's own text ("Warm serif display... like Fraunces or
+ * Freight Display") actually reads when the intent IS genuinely
+ * descriptive, and don't match a bare proper-noun font name.
+ */
+const COMPACT_SCALE_KEYWORDS = ["compact", "tight", "dense", "condensed", "space-efficient", "understated"];
+const DISPLAY_LED_SCALE_KEYWORDS = [
+  "serif display",
+  "sans display",
+  "display headline",
+  "display typography",
+  "display type",
+  "display font",
+  "dramatic",
+  "bold statement",
+  "oversized",
+  "striking",
+  "commanding",
+  "expressive",
+];
+
+function textContainsAnyKeyword(haystack: string, keywords: string[]): boolean {
+  const lower = haystack.toLowerCase();
+  return keywords.some((k) => lower.includes(k));
+}
+
+/**
+ * resolveTypeScaleIntent — Fix #1's own resolver. Reads real, already-
+ * generated, already-persisted DesignMemory.typography text and maps it to
+ * one of the three closed TYPE_SCALE_VARIANTS entries. Mirrors
+ * personalityPaddingBias's own "matched-and-not-the-other" symmetry: both
+ * keyword sets matching (ambiguous) resolves the same as neither matching
+ * (absent/unclear) — "editorial", the safe default, never a guess between
+ * two real signals.
+ */
+export function resolveTypeScaleIntent(typography?: { headingFamily?: string; bodyFamily?: string; scaleNotes?: string } | null): TypeScaleIntent {
+  const text = [typography?.headingFamily, typography?.bodyFamily, typography?.scaleNotes]
+    .filter((v): v is string => !!v && v.trim().length > 0)
+    .join(" ");
+  if (!text) return "editorial";
+
+  const compact = textContainsAnyKeyword(text, COMPACT_SCALE_KEYWORDS);
+  const displayLed = textContainsAnyKeyword(text, DISPLAY_LED_SCALE_KEYWORDS);
+
+  if (compact && !displayLed) return "compact";
+  if (displayLed && !compact) return "display-led";
+  return "editorial";
+}
 
 /** §3's readability standard — a range, not a single value, because it's a long-studied reasonable band rather than one exact number. */
 export const READABILITY = {
