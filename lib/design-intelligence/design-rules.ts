@@ -104,6 +104,89 @@ export const DEFAULT_SPACING_SCALE: SpacingScale = {
   steps: [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8],
 };
 
+/**
+ * A tighter scale — smaller absolute rem values at every step from index 1
+ * onward — for a mission whose own AI-generated spacing reasoning
+ * (DesignMemory.spacingScale) describes a compact/dense/space-efficient
+ * register. Phase 16 (Design Intelligence Gap Map, Fix #4): the first
+ * variant where the SCALE ITSELF differs, not just which index of
+ * DEFAULT_SPACING_SCALE gets picked (that lever, paddingBiasSteps, already
+ * existed and is unchanged by this fix). Still passes validateSpacingScale
+ * (10 strictly-ascending, positive, distinct steps).
+ */
+export const COMPACT_SPACING_SCALE: SpacingScale = {
+  steps: [0.2, 0.4, 0.6, 0.8, 1.1, 1.5, 2.25, 3, 4.25, 5.5],
+};
+
+/**
+ * A more generous scale — larger absolute rem values at every step from
+ * index 1 onward — for a mission whose own AI-generated spacing reasoning
+ * explicitly describes generous/airy/spacious whitespace, room for
+ * photography to breathe, etc. Same ordering/validity guarantee as
+ * COMPACT_SPACING_SCALE above.
+ */
+export const GENEROUS_SPACING_SCALE: SpacingScale = {
+  steps: [0.375, 0.75, 1.125, 1.5, 2.25, 3, 4.5, 6, 8.5, 11],
+};
+
+/**
+ * The closed, bounded vocabulary Fix #4 selects among — never a free
+ * numeric value derived from AI prose. "standard" (== DEFAULT_SPACING_SCALE)
+ * is both a real member of this set and the mandatory safe fallback.
+ */
+export type SpacingScaleIntent = "standard" | "compact" | "generous";
+
+export const SPACING_SCALE_VARIANTS: Record<SpacingScaleIntent, SpacingScale> = {
+  standard: DEFAULT_SPACING_SCALE,
+  compact: COMPACT_SPACING_SCALE,
+  generous: GENEROUS_SPACING_SCALE,
+};
+
+/**
+ * A small, closed keyword vocabulary — the same bounded, word-boundary-
+ * anchored, never-parse-for-numbers discipline typography-rules.ts's
+ * resolveTypeScaleIntent and composition-variants.ts's
+ * matchesAnyToneKeyword/personalityPaddingBias already established for
+ * other DesignMemory fields. Applied here to DesignMemory.spacingScale's own
+ * text (baseUnit + notes combined) — real, mission-specific reasoning the
+ * LLM already produces today, never parsed for literal numbers or
+ * instructions, only matched against these fixed word lists. A local helper
+ * rather than importing one from typography-rules.ts/composition-
+ * variants.ts — each rules file owns its own small matcher, the same
+ * "no new cross-file dependency" discipline those two files already hold to
+ * with each other.
+ */
+const COMPACT_SPACING_KEYWORDS = ["compact", "tight", "dense", "condensed", "space-efficient", "efficient use of space"];
+const GENEROUS_SPACING_KEYWORDS = ["generous", "room to breathe", "breathing room", "airy", "spacious"];
+
+function textContainsAnySpacingKeyword(haystack: string, keywords: string[]): boolean {
+  return keywords.some((kw) => new RegExp(`\\b${kw}`).test(haystack));
+}
+
+/**
+ * resolveSpacingScaleIntent — Fix #4's own resolver. Reads real, already-
+ * generated, already-persisted DesignMemory.spacingScale text and maps it to
+ * one of the three closed SPACING_SCALE_VARIANTS entries. Mirrors
+ * resolveTypeScaleIntent's own "matched-and-not-the-other" symmetry: both
+ * keyword sets matching (ambiguous) resolves the same as neither matching
+ * (absent/unclear) — "standard", the safe default, never a guess between two
+ * real signals.
+ */
+export function resolveSpacingScaleIntent(spacingScale?: { baseUnit?: string; notes?: string } | null): SpacingScaleIntent {
+  const text = [spacingScale?.baseUnit, spacingScale?.notes]
+    .filter((v): v is string => !!v && v.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+  if (!text) return "standard";
+
+  const compact = textContainsAnySpacingKeyword(text, COMPACT_SPACING_KEYWORDS);
+  const generous = textContainsAnySpacingKeyword(text, GENEROUS_SPACING_KEYWORDS);
+
+  if (compact && !generous) return "compact";
+  if (generous && !compact) return "generous";
+  return "standard";
+}
+
 /** Minimum distinct steps a scale needs to express inline, component, and section spacing as genuinely different things (§4's card/component vs. section distinction). */
 export const MIN_SPACING_SCALE_STEPS = 4;
 

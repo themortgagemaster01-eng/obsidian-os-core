@@ -7,7 +7,13 @@ import {
   validateTypographyChoice,
   type TypeScaleIntent,
 } from "@/lib/design-intelligence/typography-rules";
-import { DEFAULT_SPACING_SCALE, validateSpacingScale, type SpacingScale } from "@/lib/design-intelligence/design-rules";
+import {
+  SPACING_SCALE_VARIANTS,
+  resolveSpacingScaleIntent,
+  validateSpacingScale,
+  type SpacingScale,
+  type SpacingScaleIntent,
+} from "@/lib/design-intelligence/design-rules";
 import {
   DEFAULT_GRID_RHYTHM,
   matchesGenericSaasTemplate,
@@ -171,6 +177,13 @@ export interface SpacingRefinement {
   scale: SpacingScale;
   sectionSpacing: SectionSpacingValue[];
   violations: string[];
+  /**
+   * Phase 16 (Design Intelligence Gap Map, Fix #4) — which of the closed
+   * SPACING_SCALE_VARIANTS this scale came from, and why. Never itself a new
+   * decision point for a caller to branch on beyond transparency/QA/
+   * reporting — the scale field above is still the one real output.
+   */
+  scaleIntent: SpacingScaleIntent;
 }
 
 /** Exported for design-qa-service.ts's independent re-verification of section-spacing role-proportionality (defense in depth, §4.2) — never for a caller to derive a *new* spacing decision from. */
@@ -207,19 +220,29 @@ function clampStepIndex(index: number, scaleLength: number): number {
 
 /**
  * refineSpacing — assigns section- and component-level spacing per §4's
- * role-proportional standard, derived from the one sitewide scale (§9's
- * "reuse Obsidian's own numeric scale as a starting default"). When the
+ * role-proportional standard, derived from one sitewide scale. When the
  * wireframe carries a real compositionVariant (lib/design-intelligence/
  * composition-variants.ts), its paddingBiasSteps shifts every role's step
  * index up or down — Luxury Minimal's real evidence-driven bias toward more
  * generous whitespace, Bold Commerce's toward tighter, denser rhythm — always
- * clamped into the one sitewide scale's actual index range, never an invented
- * off-scale value (§4). Absent for a wireframe predating compositionVariant,
- * which is exactly equivalent to a zero bias (today's existing behavior,
- * unchanged).
+ * clamped into the scale's actual index range, never an invented off-scale
+ * value (§4). Absent for a wireframe predating compositionVariant, which is
+ * exactly equivalent to a zero bias (today's existing behavior, unchanged).
+ *
+ * Phase 16 (Fix #4): WHICH scale that index is read from is now itself
+ * resolved from Design Memory's own real, already-persisted spacingScale
+ * reasoning (resolveSpacingScaleIntent) — §9's "reuse Obsidian's own numeric
+ * scale as a starting default" stays true for the "standard" member of
+ * SPACING_SCALE_VARIANTS (== DEFAULT_SPACING_SCALE, byte-identical), which is
+ * also the mandatory fallback whenever `memory` is absent, empty, or
+ * ambiguous. `memory` is optional for the same reason `refineTypography`'s
+ * own `memory` parameter is: a Design Brief predating design_memory (or a
+ * test fixture) still gets a safe, valid default rather than this pass
+ * throwing.
  */
-export function refineSpacing(wireframe: Wireframe): SpacingRefinement {
-  const scale = DEFAULT_SPACING_SCALE;
+export function refineSpacing(wireframe: Wireframe, memory?: Pick<DesignMemory, "spacingScale"> | null): SpacingRefinement {
+  const scaleIntent = resolveSpacingScaleIntent(memory?.spacingScale);
+  const scale = SPACING_SCALE_VARIANTS[scaleIntent];
   const violations = [...validateSpacingScale(scale)];
   const bias = wireframe.compositionVariant?.paddingBiasSteps ?? 0;
 
@@ -233,7 +256,7 @@ export function refineSpacing(wireframe: Wireframe): SpacingRefinement {
     };
   });
 
-  return { scale, sectionSpacing, violations };
+  return { scale, sectionSpacing, violations, scaleIntent };
 }
 
 // ===========================================================================
@@ -636,7 +659,7 @@ export function refineDesign(
   designMemory?: DesignMemory | null
 ): RefinedDesign {
   const typography = refineTypography(designMemory);
-  const spacing = refineSpacing(structure.wireframe);
+  const spacing = refineSpacing(structure.wireframe, designMemory);
   const layout = refineLayout(structure.wireframe);
   const motion = refineMotion(structure.wireframe, brief.direction.motionIntensity);
   const mobile = refineMobile(structure.wireframe, typography);

@@ -13,6 +13,7 @@ import { generateWireframe, type Wireframe } from "@/lib/services/design-generat
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
 import { MAX_TYPE_FAMILIES, TYPE_ROLE_ORDER, DEFAULT_TYPE_SCALE } from "@/lib/design-intelligence/typography-rules";
+import { DEFAULT_SPACING_SCALE } from "@/lib/design-intelligence/design-rules";
 import { MOTION_DURATION_BAND_MS, BANNED_EASING_KEYWORDS } from "@/lib/design-intelligence/motion-rules";
 import { GENERIC_SAAS_TEMPLATE_SECTION_ORDER } from "@/lib/design-intelligence/layout-rules";
 import { MIN_TOUCH_TARGET_PX, MOBILE_BODY_FONT_FLOOR_PX } from "@/lib/design-intelligence/mobile-rules";
@@ -207,6 +208,75 @@ describe("design-refinement-service: refineSpacing", () => {
         assert.equal(s.role, "content");
       }
     }
+  });
+
+  // ==========================================================================
+  // Phase 16 — Design Intelligence Gap Map, Fix #4. Required regression
+  // proof, same shape as Fix #1's own: (a) two missions with genuinely
+  // different, real-shaped spacing reasoning produce a genuinely different
+  // SCALE (not just a different index into the same scale); (b) a mission
+  // with no signal (or the exact same generic signal every mission produced
+  // before this phase) produces output BYTE-IDENTICAL to pre-Phase-16
+  // behavior — proven against DEFAULT_SPACING_SCALE's own raw values.
+  // ==========================================================================
+
+  test("Fix #4 (a): two fixtures with different real-shaped spacing signals produce a genuinely different SpacingRefinement.scale", () => {
+    const wireframe = wireframeFor();
+    const compactMemory: DesignMemory = {
+      ...SAMPLE_DESIGN_MEMORY,
+      spacingScale: { baseUnit: "4px", notes: "A compact, space-efficient rhythm given how much real menu content needs to fit per section." },
+    };
+    const generousMemory: DesignMemory = {
+      ...SAMPLE_DESIGN_MEMORY,
+      spacingScale: { baseUnit: "8px", notes: "Generous section spacing so photography has room to breathe." },
+    };
+
+    const compactResult = refineSpacing(wireframe, compactMemory);
+    const generousResult = refineSpacing(wireframe, generousMemory);
+
+    assert.equal(compactResult.scaleIntent, "compact");
+    assert.equal(generousResult.scaleIntent, "generous");
+    assert.notDeepEqual(compactResult.scale, generousResult.scale);
+    // The actual rendered rhythm differs, not just which member of the scale
+    // was picked — hero section padding (the most visible spacing value) is
+    // genuinely smaller for compact and genuinely larger for generous.
+    const compactHero = compactResult.sectionSpacing.find((s) => s.section === "hero")!;
+    const generousHero = generousResult.sectionSpacing.find((s) => s.section === "hero")!;
+    assert.ok(compactHero.sectionPaddingRem < generousHero.sectionPaddingRem);
+    // Both remain individually valid — different is not the same as broken.
+    assert.deepEqual(compactResult.violations, []);
+    assert.deepEqual(generousResult.violations, []);
+  });
+
+  test("Fix #4 (b): missing/generic signal produces output byte-identical to the pre-Phase-16 DEFAULT_SPACING_SCALE behavior", () => {
+    const wireframe = wireframeFor();
+    const noMemoryResult = refineSpacing(wireframe, undefined);
+    const genericMemoryResult = refineSpacing(wireframe, SAMPLE_DESIGN_MEMORY); // spacingScale.notes: "" — the exact generic shape every mission produced before this phase existed
+    const legacyResult = refineSpacing(wireframe); // the pre-Fix-#4 call shape (no second argument at all)
+
+    assert.equal(noMemoryResult.scaleIntent, "standard");
+    assert.equal(genericMemoryResult.scaleIntent, "standard");
+    assert.deepEqual(noMemoryResult.scale, DEFAULT_SPACING_SCALE);
+    assert.deepEqual(genericMemoryResult.scale, DEFAULT_SPACING_SCALE);
+    assert.deepEqual(noMemoryResult.sectionSpacing, legacyResult.sectionSpacing);
+    assert.deepEqual(genericMemoryResult.sectionSpacing, legacyResult.sectionSpacing);
+  });
+
+  test("Fix #4: malformed/ambiguous spacing reasoning safely falls back to legacy behavior, never a broken or forced substitution", () => {
+    const wireframe = wireframeFor();
+    const ambiguousMemory: DesignMemory = {
+      ...SAMPLE_DESIGN_MEMORY,
+      spacingScale: { baseUnit: "8px", notes: "A compact layout in most places but generous around the hero photograph." },
+    };
+    const malformedMemory = { ...SAMPLE_DESIGN_MEMORY, spacingScale: null as unknown as DesignMemory["spacingScale"] };
+
+    const ambiguousResult = refineSpacing(wireframe, ambiguousMemory);
+    const malformedResult = refineSpacing(wireframe, malformedMemory);
+
+    assert.equal(ambiguousResult.scaleIntent, "standard");
+    assert.equal(malformedResult.scaleIntent, "standard");
+    assert.deepEqual(ambiguousResult.scale, DEFAULT_SPACING_SCALE);
+    assert.deepEqual(malformedResult.scale, DEFAULT_SPACING_SCALE);
   });
 });
 
