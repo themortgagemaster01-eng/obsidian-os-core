@@ -111,7 +111,7 @@ export const PHOTO_DEPENDENT_HERO_PATTERNS = new Set<HeroPatternId>(["centered-c
  * separate change touching WIREFRAME_TEMPLATE_BY_BUCKET and the reference
  * library — out of scope for this pass) and are intentionally not mapped.
  */
-const INDUSTRY_HERO_PREFERENCE: Record<IndustryBucket, HeroPatternId[]> = {
+export const INDUSTRY_HERO_PREFERENCE: Record<IndustryBucket, HeroPatternId[]> = {
   // CTO: "Restaurant -> Editorial/Local Story/Cinematic"
   restaurant: ["editorial-typographic", "split-media-text", "centered-cinematic"],
   // CTO: "Law Firm -> Editorial/Luxury Minimal"

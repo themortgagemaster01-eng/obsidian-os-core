@@ -1,5 +1,10 @@
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
-import { resolveHeroPattern, type HeroPatternId } from "@/lib/design-intelligence/section-patterns";
+import {
+  resolveHeroPattern,
+  INDUSTRY_HERO_PREFERENCE,
+  PHOTO_DEPENDENT_HERO_PATTERNS,
+  type HeroPatternId,
+} from "@/lib/design-intelligence/section-patterns";
 
 /**
  * lib/design-intelligence/composition-variants.ts — the structural
@@ -408,6 +413,71 @@ export function resolveCompositionArchetype(
 }
 
 /**
+ * Gap Map Fix #3 (hero pattern override via composition archetype) — each
+ * archetype's own candidate hero patterns, derived directly from
+ * ARCHETYPE_BY_HERO_PATTERN's own entries (grouped by value) rather than a
+ * hand-typed second list — so this can never drift out of sync with, or
+ * invent a hero-pattern/archetype association beyond, what
+ * ARCHETYPE_BY_HERO_PATTERN already declares. Order is exactly
+ * ARCHETYPE_BY_HERO_PATTERN's own declaration order (editorial-typographic,
+ * centered-cinematic, split-media-text, image-full-bleed,
+ * oversized-typographic, offset-overlap) — fixed and deterministic, never
+ * randomized.
+ */
+const ARCHETYPE_HERO_CANDIDATES: Record<CompositionArchetype, HeroPatternId[]> = (() => {
+  const result: Record<CompositionArchetype, HeroPatternId[]> = {
+    editorial: [],
+    "split-focus": [],
+    "photo-led": [],
+    "minimal-formal": [],
+  };
+  for (const heroPattern of Object.keys(ARCHETYPE_BY_HERO_PATTERN) as HeroPatternId[]) {
+    result[ARCHETYPE_BY_HERO_PATTERN[heroPattern]].push(heroPattern);
+  }
+  return result;
+})();
+
+/**
+ * resolveHeroPatternArchetypeOverride — Gap Map Fix #3. Lets a business's own
+ * real, unambiguous composition-archetype signal (resolveCompositionArchetype
+ * above) move the ACTUAL rendered hero geometry, not just the peripheral nav/
+ * CTA/footer chrome Fix #2 already wired up — while never picking a hero
+ * pattern resolveHeroPattern's own real evidence/industry logic wouldn't
+ * otherwise permit. Exact precedence, most restrictive first:
+ *
+ *   1. Evidence gate: PHOTO_DEPENDENT_HERO_PATTERNS still applies unchanged —
+ *      a photo-dependent candidate is only eligible with hasRealImagery.
+ *   2. Industry gate: candidates are narrowed to hero patterns already
+ *      present in THIS business's own INDUSTRY_HERO_PREFERENCE list — never
+ *      a pattern that industry's table wouldn't otherwise sanction.
+ *   3. Signal gate: only a genuinely different archetype than the one
+ *      defaultHeroPattern already implies (ARCHETYPE_BY_HERO_PATTERN) counts
+ *      as a real override — the ambiguous/absent/matches-the-default case
+ *      resolveCompositionArchetype already collapses to "no override" by
+ *      construction (it returns that same implied archetype in all three
+ *      cases), so this one comparison covers "unambiguous AND different."
+ *   4. Deterministic pick: the first industry-sanctioned, evidence-eligible
+ *      candidate for the resolved archetype, in ARCHETYPE_HERO_CANDIDATES'
+ *      fixed order — never random.
+ *   5. No step above finds an eligible candidate -> defaultHeroPattern,
+ *      byte-identical to today's resolveHeroPattern() result.
+ */
+export function resolveHeroPatternArchetypeOverride(
+  defaultHeroPattern: HeroPatternId,
+  archetype: CompositionArchetype,
+  industryBucket: IndustryBucket,
+  hasRealImagery: boolean
+): HeroPatternId {
+  if (archetype === ARCHETYPE_BY_HERO_PATTERN[defaultHeroPattern]) return defaultHeroPattern;
+
+  const industryPool = INDUSTRY_HERO_PREFERENCE[industryBucket] ?? INDUSTRY_HERO_PREFERENCE.general;
+  const candidates = ARCHETYPE_HERO_CANDIDATES[archetype].filter((candidate) => industryPool.includes(candidate));
+  const eligible = candidates.find((candidate) => !PHOTO_DEPENDENT_HERO_PATTERNS.has(candidate) || hasRealImagery);
+
+  return eligible ?? defaultHeroPattern;
+}
+
+/**
  * resolveCompositionVariant — one deterministic composition decision per
  * mission, propagating resolveHeroPattern's real visual-strategy choice
  * across every structural axis this pass now controls, then narrowing two of
@@ -422,17 +492,22 @@ export function resolveCompositionArchetype(
  * rather than a direct BASE_VARIANT_BY_HERO_PATTERN[heroPattern] lookup —
  * still hero-pattern-implied by default (byte-identical fallback), but
  * genuinely overridable by a business's own real, unambiguous
- * photographyStyle/componentVariants/preferredLayouts reasoning. heroPattern
- * itself is untouched — still resolveHeroPattern's own real choice, carried
- * on the returned CompositionVariant exactly as before.
+ * photographyStyle/componentVariants/preferredLayouts reasoning.
+ *
+ * Gap Map Fix #3: heroPattern itself can now also move, via
+ * resolveHeroPatternArchetypeOverride above, when that same archetype signal
+ * is a genuine override AND an industry-sanctioned, evidence-eligible hero
+ * pattern exists for it — otherwise heroPattern stays exactly
+ * resolveHeroPattern's own real choice, byte-identical to before this fix.
  */
 export function resolveCompositionVariant(input: ResolveCompositionVariantInput): CompositionVariant {
-  const heroPattern = resolveHeroPattern(input.industryBucket, input.hasRealImagery, input.evidence.galleryCount ?? 0);
-  const archetype = resolveCompositionArchetype(heroPattern, {
+  const defaultHeroPattern = resolveHeroPattern(input.industryBucket, input.hasRealImagery, input.evidence.galleryCount ?? 0);
+  const archetype = resolveCompositionArchetype(defaultHeroPattern, {
     photographyStyle: input.photographyStyle,
     componentVariants: input.componentVariants,
     preferredLayouts: input.preferredLayouts,
   });
+  const heroPattern = resolveHeroPatternArchetypeOverride(defaultHeroPattern, archetype, input.industryBucket, input.hasRealImagery);
   const base = ARCHETYPE_BUNDLE[archetype];
 
   const servicesPattern: ServicesPattern =

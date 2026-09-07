@@ -4,9 +4,11 @@ import assert from "node:assert/strict";
 import {
   resolveCompositionVariant,
   resolveCompositionArchetype,
+  resolveHeroPatternArchetypeOverride,
   personalityPaddingBias,
   isMotionRestrainedTone,
 } from "@/lib/design-intelligence/composition-variants";
+import { resolveHeroPattern } from "@/lib/design-intelligence/section-patterns";
 
 const NO_EVIDENCE = { services: 0, certifications: 0, hasReviews: false };
 
@@ -252,6 +254,103 @@ describe("composition-variants: resolveCompositionArchetype / archetype-driven c
       preferredLayouts: ["A perfectly normal layout with cards and buttons"],
     });
     assert.deepEqual(blank, legacy);
+  });
+});
+
+/**
+ * Gap Map Fix #3 (hero pattern override via composition archetype). A
+ * genuine, unambiguous archetype signal can now move heroPattern itself, not
+ * just the peripheral nav/CTA/footer chrome — but only to a hero pattern
+ * that's both industry-sanctioned (already present in that industryBucket's
+ * own INDUSTRY_HERO_PREFERENCE list) and evidence-eligible
+ * (PHOTO_DEPENDENT_HERO_PATTERNS unchanged). Every other case preserves
+ * today's exact resolveHeroPattern() result.
+ */
+describe("composition-variants: resolveHeroPatternArchetypeOverride (Gap Map Fix #3)", () => {
+  test("unambiguous signal + industry-sanctioned + evidence-eligible candidate -> hero pattern actually changes", () => {
+    const defaultHeroPattern = resolveHeroPattern("homeService", true, 0);
+    assert.equal(defaultHeroPattern, "image-full-bleed"); // today's real default for this input
+
+    const variant = resolveCompositionVariant({
+      industryBucket: "homeService",
+      hasRealImagery: true,
+      evidence: NO_EVIDENCE,
+      componentVariants: ["A side-by-side split-screen layout for the story section"],
+    });
+    assert.equal(variant.heroPattern, "centered-cinematic");
+    assert.notEqual(variant.heroPattern, defaultHeroPattern);
+
+    // Same result via the resolver directly, at the exact seam.
+    assert.equal(
+      resolveHeroPatternArchetypeOverride(defaultHeroPattern, "split-focus", "homeService", true),
+      "centered-cinematic"
+    );
+  });
+
+  test("the same input resolves to the identical hero pattern every time — deterministic, never random", () => {
+    const input = {
+      industryBucket: "homeService" as const,
+      hasRealImagery: true,
+      evidence: NO_EVIDENCE,
+      componentVariants: ["A side-by-side split-screen layout for the story section"],
+    };
+    const first = resolveCompositionVariant(input);
+    const second = resolveCompositionVariant({ ...input });
+    assert.equal(first.heroPattern, "centered-cinematic");
+    assert.equal(first.heroPattern, second.heroPattern);
+  });
+
+  test("missing archetype signal resolves to byte-identical resolveHeroPattern() output", () => {
+    const legacy = resolveHeroPattern("homeService", true, 0);
+    const variant = resolveCompositionVariant({ industryBucket: "homeService", hasRealImagery: true, evidence: NO_EVIDENCE });
+    assert.equal(variant.heroPattern, legacy);
+  });
+
+  test("ambiguous signal (matches 2+ archetypes) -> today's hero pattern wins, no override", () => {
+    const legacy = resolveHeroPattern("homeService", true, 0);
+    const variant = resolveCompositionVariant({
+      industryBucket: "homeService",
+      hasRealImagery: true,
+      evidence: NO_EVIDENCE,
+      componentVariants: ["A full-bleed photo hero paired with an editorial layout for the story section"],
+    });
+    assert.equal(variant.heroPattern, legacy);
+  });
+
+  test("no industry-sanctioned candidate for the resolved archetype -> today's hero pattern wins", () => {
+    // restaurant's own INDUSTRY_HERO_PREFERENCE never ranks image-full-bleed
+    // or offset-overlap (photo-led's only candidates) at all — a real signal
+    // toward photo-led must not introduce either pattern for this industry.
+    const legacy = resolveHeroPattern("restaurant", false, 0);
+    assert.equal(legacy, "editorial-typographic");
+
+    const variant = resolveCompositionVariant({
+      industryBucket: "restaurant",
+      hasRealImagery: false,
+      evidence: NO_EVIDENCE,
+      componentVariants: ["Full-bleed photography carries the hero"],
+    });
+    assert.equal(variant.heroPattern, legacy);
+
+    assert.equal(resolveHeroPatternArchetypeOverride(legacy, "photo-led", "restaurant", false), legacy);
+  });
+
+  test("industry-sanctioned candidate exists but fails the evidence gate -> today's hero pattern wins, never a forced/broken substitution", () => {
+    // realEstate ranks both of split-focus's candidates (centered-cinematic,
+    // split-media-text) but BOTH are photo-dependent — with no real imagery,
+    // neither is eligible, so the override must not fire at all.
+    const legacy = resolveHeroPattern("realEstate", false, 0);
+    assert.equal(legacy, "editorial-typographic"); // resolveHeroPattern's own final fallback once every real-estate candidate is photo-gated out
+
+    const variant = resolveCompositionVariant({
+      industryBucket: "realEstate",
+      hasRealImagery: false,
+      evidence: NO_EVIDENCE,
+      componentVariants: ["A side-by-side split-screen layout for listings"],
+    });
+    assert.equal(variant.heroPattern, legacy);
+
+    assert.equal(resolveHeroPatternArchetypeOverride(legacy, "split-focus", "realEstate", false), legacy);
   });
 });
 
