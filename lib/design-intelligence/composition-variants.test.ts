@@ -1,7 +1,12 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveCompositionVariant, personalityPaddingBias, isMotionRestrainedTone } from "@/lib/design-intelligence/composition-variants";
+import {
+  resolveCompositionVariant,
+  resolveCompositionArchetype,
+  personalityPaddingBias,
+  isMotionRestrainedTone,
+} from "@/lib/design-intelligence/composition-variants";
 
 const NO_EVIDENCE = { services: 0, certifications: 0, hasReviews: false };
 
@@ -144,6 +149,109 @@ describe("composition-variants: personalityPaddingBias", () => {
     assert.equal(personalityPaddingBias(undefined, "an understated, elegant space"), 1);
     assert.equal(personalityPaddingBias(["calm"], undefined), 1);
     assert.equal(personalityPaddingBias(undefined, "calmly confident"), 1);
+  });
+});
+
+/**
+ * Gap Map Fix #2 (composition-variant differentiation). Real,
+ * already-persisted DesignMemory.photographyStyle/componentVariants/
+ * preferredLayouts text — confirmed unused anywhere in the pipeline before
+ * this fix — can now pull a mission's composition toward one of 4 closed
+ * archetypes, independent of (never changing) resolveHeroPattern's own real
+ * hero-pattern choice.
+ */
+describe("composition-variants: resolveCompositionArchetype / archetype-driven composition (Gap Map Fix #2)", () => {
+  test("different real reasoning produces genuinely different composition (nav/CTA/width/spacing), never just color", () => {
+    const withoutSignal = resolveCompositionVariant({
+      industryBucket: "homeService",
+      hasRealImagery: true,
+      evidence: NO_EVIDENCE,
+    });
+    const withEditorialSignal = resolveCompositionVariant({
+      industryBucket: "homeService",
+      hasRealImagery: true,
+      evidence: NO_EVIDENCE,
+      componentVariants: ["An editorial layout built on an asymmetric grid for the story sections"],
+    });
+
+    // heroPattern itself is untouched by Fix #2 — only the resolveHeroPattern
+    // seam owns that decision, exactly as before.
+    assert.equal(withoutSignal.heroPattern, withEditorialSignal.heroPattern);
+
+    // But the structural composition axes genuinely diverge.
+    assert.notEqual(withoutSignal.navStyle, withEditorialSignal.navStyle);
+    assert.notEqual(withoutSignal.ctaVariant, withEditorialSignal.ctaVariant);
+    assert.notEqual(withoutSignal.contentWidthRem, withEditorialSignal.contentWidthRem);
+    assert.equal(withEditorialSignal.navStyle, "minimal");
+    assert.equal(withEditorialSignal.ctaVariant, "outline");
+    assert.equal(withEditorialSignal.contentWidthRem, 60);
+  });
+
+  test("the same real reasoning resolves to the identical composition every time — deterministic, never random or ID-keyed", () => {
+    const input = {
+      industryBucket: "restaurant" as const,
+      hasRealImagery: true,
+      evidence: { services: 5, certifications: 1, hasReviews: true },
+      photographyStyle: "Full-bleed photography carries the hero and the gallery",
+    };
+    const first = resolveCompositionVariant(input);
+    const second = resolveCompositionVariant(input);
+    const third = resolveCompositionVariant({ ...input });
+    assert.deepEqual(first, second);
+    assert.deepEqual(first, third);
+  });
+
+  test("missing reasoning resolves to today's exact legacy composition — the mandatory safe fallback", () => {
+    const legacy = resolveCompositionVariant({ industryBucket: "homeService", hasRealImagery: true, evidence: NO_EVIDENCE });
+    const explicitlyAbsent = resolveCompositionVariant({
+      industryBucket: "homeService",
+      hasRealImagery: true,
+      evidence: NO_EVIDENCE,
+      photographyStyle: undefined,
+      componentVariants: undefined,
+      preferredLayouts: undefined,
+    });
+    const explicitlyEmpty = resolveCompositionVariant({
+      industryBucket: "homeService",
+      hasRealImagery: true,
+      evidence: NO_EVIDENCE,
+      photographyStyle: "",
+      componentVariants: [],
+      preferredLayouts: [],
+    });
+    assert.deepEqual(legacy, explicitlyAbsent);
+    assert.deepEqual(legacy, explicitlyEmpty);
+    assert.equal(legacy.navStyle, "cta-prominent");
+    assert.equal(legacy.ctaVariant, "filled");
+    assert.equal(legacy.contentWidthRem, 72);
+
+    assert.equal(resolveCompositionArchetype("editorial-typographic", null), "editorial");
+    assert.equal(resolveCompositionArchetype("oversized-typographic", undefined), "minimal-formal");
+  });
+
+  test("malformed/ambiguous reasoning resolves to today's exact legacy composition, never a guess", () => {
+    const legacy = resolveCompositionVariant({ industryBucket: "homeService", hasRealImagery: true, evidence: NO_EVIDENCE });
+
+    // Matches BOTH photo-led ("full-bleed") and editorial ("editorial layout")
+    // keyword sets at once — genuinely ambiguous, must not pick either.
+    const ambiguous = resolveCompositionVariant({
+      industryBucket: "homeService",
+      hasRealImagery: true,
+      evidence: NO_EVIDENCE,
+      componentVariants: ["A full-bleed photo hero paired with an editorial layout for the story section"],
+    });
+    assert.deepEqual(ambiguous, legacy);
+
+    // Whitespace-only / non-matching text carries no real signal either.
+    const blank = resolveCompositionVariant({
+      industryBucket: "homeService",
+      hasRealImagery: true,
+      evidence: NO_EVIDENCE,
+      photographyStyle: "   ",
+      componentVariants: ["", "   "],
+      preferredLayouts: ["A perfectly normal layout with cards and buttons"],
+    });
+    assert.deepEqual(blank, legacy);
   });
 });
 

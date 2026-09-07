@@ -264,6 +264,147 @@ export interface ResolveCompositionVariantInput {
   evidence: CompositionEvidenceDensity;
   brandPersonality?: string[];
   contentTone?: string;
+  /**
+   * Gap Map Fix #2 (composition-variant differentiation): DesignMemory's own
+   * real, already-persisted, previously-unread photographyStyle/
+   * componentVariants/preferredLayouts text — see resolveCompositionArchetype
+   * below. All optional; absent on every call site that predates Fix #2 and
+   * on any legacy DesignMemory row that never populated them, which resolves
+   * to today's exact pre-Fix-#2 composition (see ARCHETYPE_BY_HERO_PATTERN).
+   */
+  photographyStyle?: string;
+  componentVariants?: string[];
+  preferredLayouts?: string[];
+}
+
+/**
+ * Gap Map Fix #2 — the closed set of genuinely-structural composition
+ * archetypes a business's own real design reasoning can select among. Named
+ * after, and built from, the 4 truly-distinct structural bundles
+ * BASE_VARIANT_BY_HERO_PATTERN's 6 hero patterns already collapse into
+ * (verified field-by-field: centered-cinematic/split-media-text are
+ * identical to each other; image-full-bleed/offset-overlap are identical to
+ * each other) — no new structural values are invented, only an additional,
+ * business-reasoning-driven path to the same 4 bundles resolveHeroPattern's
+ * own choice already implies today.
+ */
+export type CompositionArchetype = "editorial" | "split-focus" | "photo-led" | "minimal-formal";
+
+/**
+ * Each archetype's bundle is a direct reference into
+ * BASE_VARIANT_BY_HERO_PATTERN, not a copy — so ARCHETYPE_BY_HERO_PATTERN's
+ * default mapping below is provably, structurally identical to today's
+ * pre-Fix-#2 BASE_VARIANT_BY_HERO_PATTERN[heroPattern] lookup, not merely
+ * expected to match by careful transcription.
+ */
+const ARCHETYPE_BUNDLE: Record<CompositionArchetype, Omit<CompositionVariant, "heroPattern">> = {
+  editorial: BASE_VARIANT_BY_HERO_PATTERN["editorial-typographic"],
+  "split-focus": BASE_VARIANT_BY_HERO_PATTERN["centered-cinematic"],
+  "photo-led": BASE_VARIANT_BY_HERO_PATTERN["image-full-bleed"],
+  "minimal-formal": BASE_VARIANT_BY_HERO_PATTERN["oversized-typographic"],
+};
+
+/**
+ * The archetype each hero pattern implies by default — reproducing today's
+ * exact BASE_VARIANT_BY_HERO_PATTERN grouping (the safe fallback
+ * resolveCompositionArchetype always returns when no clear override signal
+ * exists).
+ */
+const ARCHETYPE_BY_HERO_PATTERN: Record<HeroPatternId, CompositionArchetype> = {
+  "editorial-typographic": "editorial",
+  "centered-cinematic": "split-focus",
+  "split-media-text": "split-focus",
+  "image-full-bleed": "photo-led",
+  "oversized-typographic": "minimal-formal",
+  "offset-overlap": "photo-led",
+};
+
+/**
+ * A small, closed keyword vocabulary per archetype — the same bounded,
+ * word-boundary-anchored, never-parse-for-numbers discipline
+ * typography-rules.ts's resolveTypeScaleIntent already established for a
+ * different DesignMemory field. Deliberately multi-word phrases throughout
+ * (mirroring that fix's own "Playfair Display" false-positive lesson): a
+ * bare "editorial" or "minimal" could describe tone/voice rather than
+ * layout, but "editorial layout"/"minimalist layout" can't plausibly mean
+ * anything else.
+ */
+const EDITORIAL_ARCHETYPE_KEYWORDS = [
+  "editorial layout",
+  "editorial composition",
+  "editorial grid",
+  "magazine-style",
+  "magazine layout",
+  "asymmetric grid",
+  "asymmetric layout",
+  "type-led composition",
+  "display-led layout",
+];
+const SPLIT_FOCUS_ARCHETYPE_KEYWORDS = [
+  "split-screen",
+  "split screen",
+  "dual-focus",
+  "dual focus",
+  "side-by-side",
+  "side by side",
+  "two-column feature",
+  "text-and-image split",
+  "image-and-text split",
+];
+const PHOTO_LED_ARCHETYPE_KEYWORDS = [
+  "full-bleed",
+  "full bleed",
+  "photo-led",
+  "photo-forward",
+  "photography-forward",
+  "image-dominant",
+  "image-led layout",
+];
+const MINIMAL_FORMAL_ARCHETYPE_KEYWORDS = [
+  "generous whitespace",
+  "minimalist layout",
+  "restrained composition",
+  "formal simplicity",
+  "understated layout",
+  "quiet composition",
+  "spacious minimal",
+];
+
+const ARCHETYPE_KEYWORDS: Record<CompositionArchetype, string[]> = {
+  editorial: EDITORIAL_ARCHETYPE_KEYWORDS,
+  "split-focus": SPLIT_FOCUS_ARCHETYPE_KEYWORDS,
+  "photo-led": PHOTO_LED_ARCHETYPE_KEYWORDS,
+  "minimal-formal": MINIMAL_FORMAL_ARCHETYPE_KEYWORDS,
+};
+
+/**
+ * resolveCompositionArchetype — Gap Map Fix #2's own resolver. Reads real,
+ * already-generated, already-persisted DesignMemory text
+ * (photographyStyle/componentVariants/preferredLayouts — confirmed unused
+ * anywhere in the pipeline before this fix) and maps it to one of the 4
+ * closed CompositionArchetype values, falling back to heroPattern's own
+ * implied archetype (== today's exact behavior) whenever the signal is
+ * missing, or matches more than one archetype's keyword set (ambiguous —
+ * never a guess between two real signals, the same "matched-and-not-the-
+ * other" symmetry resolveTypeScaleIntent/personalityPaddingBias already use,
+ * generalized to more than two candidates).
+ */
+export function resolveCompositionArchetype(
+  heroPattern: HeroPatternId,
+  signal?: { photographyStyle?: string; componentVariants?: string[]; preferredLayouts?: string[] } | null
+): CompositionArchetype {
+  const defaultArchetype = ARCHETYPE_BY_HERO_PATTERN[heroPattern];
+  const text = [signal?.photographyStyle, ...(signal?.componentVariants ?? []), ...(signal?.preferredLayouts ?? [])]
+    .filter((v): v is string => !!v && v.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+  if (!text) return defaultArchetype;
+
+  const matched = (Object.keys(ARCHETYPE_KEYWORDS) as CompositionArchetype[]).filter((id) =>
+    matchesAnyToneKeyword(text, ARCHETYPE_KEYWORDS[id])
+  );
+  if (matched.length === 1) return matched[0];
+  return defaultArchetype;
 }
 
 /**
@@ -275,10 +416,24 @@ export interface ResolveCompositionVariantInput {
  * spacing rhythm from Design Memory's own real brandPersonality/contentTone.
  * Never partial/undefined — every branch returns a complete, renderable
  * variant, matching resolveHeroPattern's own "always a real answer" contract.
+ *
+ * Gap Map Fix #2: the structural bundle (nav/CTA/width/padding/services/
+ * credibility/footer pattern) now traces to resolveCompositionArchetype
+ * rather than a direct BASE_VARIANT_BY_HERO_PATTERN[heroPattern] lookup —
+ * still hero-pattern-implied by default (byte-identical fallback), but
+ * genuinely overridable by a business's own real, unambiguous
+ * photographyStyle/componentVariants/preferredLayouts reasoning. heroPattern
+ * itself is untouched — still resolveHeroPattern's own real choice, carried
+ * on the returned CompositionVariant exactly as before.
  */
 export function resolveCompositionVariant(input: ResolveCompositionVariantInput): CompositionVariant {
   const heroPattern = resolveHeroPattern(input.industryBucket, input.hasRealImagery, input.evidence.galleryCount ?? 0);
-  const base = BASE_VARIANT_BY_HERO_PATTERN[heroPattern];
+  const archetype = resolveCompositionArchetype(heroPattern, {
+    photographyStyle: input.photographyStyle,
+    componentVariants: input.componentVariants,
+    preferredLayouts: input.preferredLayouts,
+  });
+  const base = ARCHETYPE_BUNDLE[archetype];
 
   const servicesPattern: ServicesPattern =
     base.servicesPattern === "grid-cards" && input.evidence.services < MIN_SERVICES_FOR_GRID_CARDS

@@ -288,6 +288,10 @@ export interface GenerateWireframeOptions {
   /** Design Intelligence's own real brandPersonality/contentTone output (design-intelligence-service.ts's DesignMemory) — feeds resolveCompositionVariant's spacing-rhythm nudge, making these previously-recorded-but-unused fields genuinely load-bearing (CTO Design Intelligence Remediation directive's brand-fit gap). */
   brandPersonality?: string[];
   contentTone?: string;
+  /** Design Intelligence's own real photographyStyle/componentVariants/preferredLayouts output (DesignMemory) — feeds resolveCompositionVariant's archetype resolution (Gap Map Fix #2), making these previously-recorded-but-unused fields genuinely load-bearing. Optional; absent resolves to today's exact pre-Fix-#2 composition. */
+  photographyStyle?: string;
+  componentVariants?: string[];
+  preferredLayouts?: string[];
 }
 
 /**
@@ -371,6 +375,9 @@ export function generateWireframe(brief: DesignBrief, options: GenerateWireframe
     },
     brandPersonality: options.brandPersonality,
     contentTone: options.contentTone,
+    photographyStyle: options.photographyStyle,
+    componentVariants: options.componentVariants,
+    preferredLayouts: options.preferredLayouts,
   });
 
   // Phase 6.1: built from the SAME evidence-density counts and the SAME
@@ -1161,6 +1168,9 @@ export function generateWebsiteStructure(
     },
     brandPersonality: options.designMemory?.brandPersonality,
     contentTone: options.designMemory?.contentTone,
+    photographyStyle: options.designMemory?.photographyStyle,
+    componentVariants: options.designMemory?.componentVariants,
+    preferredLayouts: options.designMemory?.preferredLayouts,
   };
   const wireframe = generateWireframe(brief, wireframeOptions);
   const assembleContext: AssembleComponentsContext = {
