@@ -9,6 +9,9 @@ import { Label } from "@/components/ui/label";
 
 const BUCKETS = ["restaurant", "lawFirm", "dentistMedical", "homeService", "realEstate", "fitness", "luxuryServices", "general"] as const;
 
+/** Temporary safety cap (Phase 5.3) — matches MAX_SCAN_SIZE in app/api/leads/scan/route.ts, which enforces this server-side regardless of what this input allows. */
+const MAX_SCAN_SIZE = 5;
+
 /**
  * Lead Hunter scan trigger — deliberately plain (CTO Lead Hunter directive
  * §15: "Do NOT spend this iteration making the dashboard prettier — current
@@ -22,7 +25,7 @@ export function ScanForm() {
   const router = useRouter();
   const [location, setLocation] = useState("");
   const [buckets, setBuckets] = useState<Set<string>>(new Set(["restaurant"]));
-  const [scanSize, setScanSize] = useState(60);
+  const [scanSize, setScanSize] = useState(MAX_SCAN_SIZE);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,9 +109,9 @@ export function ScanForm() {
           id="lead-hunter-scan-size"
           type="number"
           min={1}
-          max={200}
+          max={MAX_SCAN_SIZE}
           value={scanSize}
-          onChange={(e) => setScanSize(Number(e.target.value) || 60)}
+          onChange={(e) => setScanSize(Math.min(Number(e.target.value) || MAX_SCAN_SIZE, MAX_SCAN_SIZE))}
         />
       </div>
 

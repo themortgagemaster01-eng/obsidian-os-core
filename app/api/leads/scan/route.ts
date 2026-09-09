@@ -29,6 +29,9 @@ interface ScanBody {
  */
 export const maxDuration = 60;
 
+/** Temporary safety cap on scanSize (Phase 5.3) — see the comment at its one call site below. */
+const MAX_SCAN_SIZE = 5;
+
 const VALID_BUCKETS: IndustryBucket[] = [
   "restaurant",
   "lawFirm",
@@ -103,7 +106,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `industryBuckets must include at least one of: ${VALID_BUCKETS.join(", ")}` }, { status: 400 });
   }
 
-  const scanSize = typeof body.scanSize === "number" && body.scanSize > 0 ? body.scanSize : undefined;
+  // Temporary safety cap (Phase 5.3) while the waitUntil + maxDuration fix
+  // above proves out at scale — clamped here, server-side, so a caller can't
+  // bypass the scan-size input's own client-only max by posting a bigger
+  // number directly. Raise or remove once larger scans are known-reliable.
+  const requestedScanSize = typeof body.scanSize === "number" && body.scanSize > 0 ? body.scanSize : MAX_SCAN_SIZE;
+  const scanSize = Math.min(requestedScanSize, MAX_SCAN_SIZE);
 
   // Fire-and-forget from the request/response cycle's point of view — the
   // caller doesn't await this — but waitUntil() keeps the underlying
@@ -118,5 +126,5 @@ export async function POST(request: NextRequest) {
     })
   );
 
-  return NextResponse.json({ status: "scan_started", location, industryBuckets, scanSize: scanSize ?? "default" }, { status: 202 });
+  return NextResponse.json({ status: "scan_started", location, industryBuckets, scanSize }, { status: 202 });
 }
