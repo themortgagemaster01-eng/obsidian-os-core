@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
-import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { createSecretKeyClient } from "@/lib/supabase/service-role";
 import { profileRepository } from "@/lib/repositories/profile-repository";
 import { runLeadHunterScan, createLeadHunterServiceDeps } from "@/lib/services/lead-hunter-service";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
 
   // Fire-and-forget: intentionally not awaited, same "session/cookies are
   // gone before this finishes" reasoning as the Analysis Engine's own route.
-  const backgroundDeps = createLeadHunterServiceDeps(createServiceRoleClient());
+  const backgroundDeps = createLeadHunterServiceDeps(createSecretKeyClient());
   void runLeadHunterScan(backgroundDeps, { organizationId, location, industryBuckets, scanSize }).catch((err) => {
     // eslint-disable-next-line no-console
     console.error(`[lead-hunter scan] organization ${organizationId}, location "${location}" failed:`, err);

@@ -33,3 +33,30 @@ export function createServiceRoleClient() {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 }
+
+/**
+ * Service-role-equivalent Supabase client using Supabase's newer, independently
+ * rotatable `secret` key type instead of the legacy `service_role` key.
+ *
+ * The legacy `service_role` key on this project shares its JWT signing secret
+ * with the `anon` key used client-side by every page of the live app, so
+ * rotating it would also invalidate `anon` and break the live site. The
+ * `secret` key type is a separate credential that can be rotated independently
+ * with no effect on `anon`/`publishable`, which makes it the safer choice for
+ * any new server-only call site going forward.
+ *
+ * Currently used only by POST /api/leads/scan — every other server-only call
+ * site still uses createServiceRoleClient() above with the legacy key.
+ */
+export function createSecretKeyClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const secretKey = process.env.SUPABASE_SECRET_KEY;
+
+  if (!url || !secretKey) {
+    throw new Error("SUPABASE_SECRET_KEY and NEXT_PUBLIC_SUPABASE_URL must be set to run the Lead Hunter scan.");
+  }
+
+  return createSupabaseClient<Database>(url, secretKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
