@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { waitUntil } from "@vercel/functions";
 
 import { createClient } from "@/lib/supabase/server";
 import { createSecretKeyClient } from "@/lib/supabase/service-role";
@@ -11,6 +12,22 @@ interface ScanBody {
   industryBuckets?: string[];
   scanSize?: number;
 }
+
+/**
+ * Phase 5.2 fix: without this, Vercel is free to freeze/kill this function's
+ * execution context the instant the 202 response below is sent, since the
+ * scan promise is otherwise untracked background work — confirmed live via
+ * lead_scan_runs rows (scan_size 1 and 4, seconds of real work) stuck at
+ * "running" for 35+ minutes with no possible code path (success or the
+ * catch block in lead-hunter-service.ts) able to run and mark them
+ * complete/failed. waitUntil() below tells the platform to keep the
+ * function alive until the scan settles; maxDuration raises the execution
+ * budget to this Hobby-plan route's max so that extension has real time to
+ * use. This does not fully close the gap for very large scans (~100
+ * candidates, sequential real crawls) that could still exceed 60s — that
+ * needs a real background job/queue, not a route-level change.
+ */
+export const maxDuration = 60;
 
 const VALID_BUCKETS: IndustryBucket[] = [
   "restaurant",
@@ -32,12 +49,11 @@ const VALID_BUCKETS: IndustryBucket[] = [
  * synchronous request's reasonable timeout, so this returns 202 immediately
  * and the scan keeps running via a service-role client.
  *
- * No progress-tracking row exists yet (Phase 1 scope) — GET /api/leads
- * (or the Lead Hunter dashboard page) is how a caller checks the outcome,
- * by re-listing what's in the `leads` table once the scan has had time to
- * run. A future phase could add a `lead_scans` run-status row mirroring
- * website_analyses' own pending/running/complete/failed shape, if a real
- * need for live progress shows up.
+ * runLeadHunterScan itself writes and updates the scan's own progress row
+ * (lib/repositories/lead-scan-repository.ts, table `lead_scan_runs`) —
+ * GET /api/leads (or the Lead Hunter dashboard page) is how a caller checks
+ * the outcome, by re-listing what's in the `leads` table and/or reading
+ * that run's row once the scan has had time to run.
  */
 export async function POST(request: NextRequest) {
   const supabase = createClient();
@@ -89,13 +105,18 @@ export async function POST(request: NextRequest) {
 
   const scanSize = typeof body.scanSize === "number" && body.scanSize > 0 ? body.scanSize : undefined;
 
-  // Fire-and-forget: intentionally not awaited, same "session/cookies are
-  // gone before this finishes" reasoning as the Analysis Engine's own route.
+  // Fire-and-forget from the request/response cycle's point of view — the
+  // caller doesn't await this — but waitUntil() keeps the underlying
+  // function alive until it settles, up to maxDuration above, rather than
+  // leaving it to the platform's discretion. Same "session/cookies are gone
+  // before this finishes" reasoning as the Analysis Engine's own route.
   const backgroundDeps = createLeadHunterServiceDeps(createSecretKeyClient());
-  void runLeadHunterScan(backgroundDeps, { organizationId, location, industryBuckets, scanSize }).catch((err) => {
-    // eslint-disable-next-line no-console
-    console.error(`[lead-hunter scan] organization ${organizationId}, location "${location}" failed:`, err);
-  });
+  waitUntil(
+    runLeadHunterScan(backgroundDeps, { organizationId, location, industryBuckets, scanSize }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(`[lead-hunter scan] organization ${organizationId}, location "${location}" failed:`, err);
+    })
+  );
 
   return NextResponse.json({ status: "scan_started", location, industryBuckets, scanSize: scanSize ?? "default" }, { status: 202 });
 }
