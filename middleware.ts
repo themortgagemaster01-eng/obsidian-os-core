@@ -24,6 +24,20 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
+  // Phase 5.4 fix: the Lead Hunter dashboard (app/leads/page.tsx) renders
+  // live `leads`/`lead_scan_runs` state that must reflect a just-completed
+  // scan on a normal reload. The page is already forced dynamic (root
+  // layout's `dynamic = "force-dynamic"`), but without an explicit header
+  // this route still falls back to Vercel's own default Cache-Control for a
+  // dynamic response (`public, max-age=0, must-revalidate`), which still
+  // permits a shared/edge cache to serve a conditionally-revalidated copy on
+  // a plain reload — the likely reason a normal reload showed stale results
+  // and only Ctrl+Shift+R (which forces every intermediary to skip its
+  // cache) reliably worked. no-store rules that out unconditionally.
+  if (pathname === "/leads") {
+    response.headers.set("Cache-Control", "no-store");
+  }
+
   return response;
 }
 
