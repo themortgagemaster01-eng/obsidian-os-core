@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
-import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { createSecretKeyClient } from "@/lib/supabase/service-role";
 import { missionRepository } from "@/lib/repositories/mission-repository";
 import {
   createAnalysisRun,
@@ -38,10 +38,17 @@ interface RouteParams {
 export async function POST(_request: NextRequest, { params }: RouteParams) {
   const supabase = createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  let user;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/analyze] supabase.auth.getUser() threw:`, err);
+    return NextResponse.json({ error: "Could not verify your session — please try again." }, { status: 500 });
+  }
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -49,7 +56,14 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   // RLS-scoped: findById only returns a row if the caller is a member of
   // the mission's organization, so a successful fetch here doubles as the
   // authorization check — no separate org-membership query needed.
-  const mission = await missionRepository.findById(supabase, params.id);
+  let mission;
+  try {
+    mission = await missionRepository.findById(supabase, params.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/analyze] mission lookup failed:`, err);
+    return NextResponse.json({ error: "Could not look up this mission — please try again." }, { status: 500 });
+  }
   if (!mission) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
   }
@@ -66,10 +80,15 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
-  // Fire-and-forget: intentionally not awaited. A service-role client is
-  // used because this promise keeps running after the 202 response below
-  // is sent, when there's no user session left to read cookies from.
-  const backgroundDeps = createAnalysisServiceDeps(createServiceRoleClient());
+  // Fire-and-forget: intentionally not awaited. A service-role-equivalent
+  // client is used because this promise keeps running after the 202
+  // response below is sent, when there's no user session left to read
+  // cookies from. Uses the independently-rotatable secret key (see the
+  // matching fix in app/api/leads/scan/route.ts, commit 3023a36) rather
+  // than the legacy service_role key — the same createServiceRoleClient()
+  // call here previously crashed this route unhandled, confirmed live via
+  // a website_analyses row stuck at status: 'pending' with no error_message.
+  const backgroundDeps = createAnalysisServiceDeps(createSecretKeyClient());
   void runAnalysis(backgroundDeps, analysis.id).catch((err) => {
     // Last-resort log: runAnalysis already persists failures to the
     // website_analyses row itself (status: 'failed' + error_message) and
