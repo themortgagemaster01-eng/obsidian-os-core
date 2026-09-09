@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
-import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { createSecretKeyClient } from "@/lib/supabase/service-role";
 import { profileRepository } from "@/lib/repositories/profile-repository";
 import { runMissionBatch, createMissionBatchServiceDeps } from "@/lib/services/mission-batch-service";
 
@@ -29,14 +29,29 @@ interface BatchBody {
 export async function POST(request: NextRequest) {
   const supabase = createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[POST /api/mission-batches] supabase.auth.getUser() threw:", err);
+    return NextResponse.json({ error: "Could not verify your session — please try again." }, { status: 500 });
+  }
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const profile = await profileRepository.findById(supabase, user.id);
+  let profile;
+  try {
+    profile = await profileRepository.findById(supabase, user.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/mission-batches] profile lookup failed for user ${user.id}:`, err);
+    return NextResponse.json({ error: "Could not look up your profile — please try again." }, { status: 500 });
+  }
   const organizationId = profile?.default_organization_id;
   if (!organizationId) {
     return NextResponse.json({ error: "No default organization found for this user." }, { status: 400 });
@@ -63,8 +78,10 @@ export async function POST(request: NextRequest) {
 
   // Fire-and-forget: intentionally not awaited, same "session/cookies are
   // gone before this finishes" reasoning as POST /api/leads/scan and every
-  // other long-running mission-pipeline route.
-  const backgroundDeps = createMissionBatchServiceDeps(createServiceRoleClient());
+  // other long-running mission-pipeline route. Uses the independently-
+  // rotatable secret key (see app/api/leads/scan/route.ts, commit 3023a36)
+  // rather than the legacy service_role key.
+  const backgroundDeps = createMissionBatchServiceDeps(createSecretKeyClient());
   void runMissionBatch(backgroundDeps, { organizationId, location, requestedCount, maxAttempts, ownerId: user.id }).catch((err) => {
     // eslint-disable-next-line no-console
     console.error(`[mission-batch] organization ${organizationId}, location "${location}" failed:`, err);

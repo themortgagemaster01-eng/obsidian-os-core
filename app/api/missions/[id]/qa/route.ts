@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
-import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { createSecretKeyClient } from "@/lib/supabase/service-role";
 import { missionRepository } from "@/lib/repositories/mission-repository";
 import { websiteDesignRepository } from "@/lib/repositories/website-design-repository";
 import {
@@ -32,16 +32,30 @@ interface RouteParams {
 export async function POST(_request: NextRequest, { params }: RouteParams) {
   const supabase = createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  let user;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/qa] supabase.auth.getUser() threw:`, err);
+    return NextResponse.json({ error: "Could not verify your session — please try again." }, { status: 500 });
+  }
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // RLS-scoped: doubles as the authorization check, same pattern as the other mission-scoped POST routes.
-  const mission = await missionRepository.findById(supabase, params.id);
+  let mission;
+  try {
+    mission = await missionRepository.findById(supabase, params.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/qa] mission lookup failed:`, err);
+    return NextResponse.json({ error: "Could not look up this mission — please try again." }, { status: 500 });
+  }
   if (!mission) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
   }
@@ -62,8 +76,10 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
-  // Fire-and-forget: intentionally not awaited (ADR-012).
-  const backgroundDeps = createDesignQaServiceDeps(createServiceRoleClient());
+  // Fire-and-forget: intentionally not awaited (ADR-012). Uses the
+  // independently-rotatable secret key (see app/api/leads/scan/route.ts,
+  // commit 3023a36) rather than the legacy service_role key.
+  const backgroundDeps = createDesignQaServiceDeps(createSecretKeyClient());
   void runDesignQa(backgroundDeps, run.id).catch((err) => {
     // eslint-disable-next-line no-console
     console.error(`[design-qa ${run!.id}] background run failed unexpectedly:`, err);
