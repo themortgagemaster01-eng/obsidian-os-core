@@ -64,6 +64,28 @@ export const designBriefRepository = {
     return data;
   },
 
+  /**
+   * The overlap guard's own "is a design brief already in flight for this
+   * mission" question — same shape and reasoning as
+   * websiteAnalysisRepository.findInFlightByMission: 'pending' (set by
+   * createDesignBriefRun) and 'running' (set later by runDesignBrief, in
+   * the background job the route never awaits) both count as in-flight.
+   * At most one row can ever match, since the DB-level partial unique
+   * index (design_briefs_one_inflight_per_mission) is the real authority
+   * that guarantees it.
+   */
+  async findInFlightByMission(client: TypedClient, missionId: string): Promise<DesignBriefRow | null> {
+    const { data, error } = await client
+      .from("design_briefs")
+      .select("*")
+      .eq("mission_id", missionId)
+      .in("status", ["pending", "running"])
+      .maybeSingle();
+
+    if (error) throw error;
+    return data;
+  },
+
   /** Mirrors websiteDesignRepository.listCompletedByOrganization — design-qa-service.ts's cross-mission genericity checks (heroThesis/signatureElement duplication) need every other completed mission's brief in this organization, the same way findDuplicateSectionStructures already needs every other mission's wireframe. */
   async listCompletedByOrganization(client: TypedClient, organizationId: string): Promise<DesignBriefRow[]> {
     const { data, error } = await client

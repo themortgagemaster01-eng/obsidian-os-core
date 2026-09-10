@@ -269,6 +269,70 @@ export interface CreateDesignBriefRunInput {
 }
 
 /**
+ * How long a pending/running design brief is trusted before it's treated
+ * as abandoned — mirrors analysis-service.ts's own reasoning, scaled to
+ * this pipeline's real duration (a real Design Brief run took ~56s end to
+ * end this week's own live verification). 15 minutes is comfortably
+ * generous while still catching a genuinely stuck row quickly.
+ */
+const DEFAULT_MAX_DESIGN_BRIEF_INFLIGHT_DURATION_MS = 15 * 60 * 1000;
+
+export type DesignBriefOverlapGuardAction =
+  | { kind: "proceed" }
+  | { kind: "reap_stale_then_proceed"; staleRunId: string }
+  | { kind: "already_running"; runningRun: DesignBriefRow };
+
+/**
+ * decideDesignBriefOverlapGuardAction — "is it safe to start a new Design
+ * Brief for this mission," mirroring analysis-service.ts's own
+ * decideAnalysisOverlapGuardAction shape exactly, including a 'pending'
+ * row counting as in-flight and age measured from started_at when
+ * present, created_at otherwise (a 'pending' row has no started_at yet).
+ */
+export function decideDesignBriefOverlapGuardAction(
+  currentlyInFlightRun: DesignBriefRow | null,
+  nowMs: number,
+  maxInFlightDurationMs: number
+): DesignBriefOverlapGuardAction {
+  if (!currentlyInFlightRun || (currentlyInFlightRun.status !== "pending" && currentlyInFlightRun.status !== "running")) {
+    return { kind: "proceed" };
+  }
+  const referenceMs = new Date(currentlyInFlightRun.started_at ?? currentlyInFlightRun.created_at).getTime();
+  const ageMs = nowMs - referenceMs;
+  if (ageMs > maxInFlightDurationMs) {
+    return { kind: "reap_stale_then_proceed", staleRunId: currentlyInFlightRun.id };
+  }
+  return { kind: "already_running", runningRun: currentlyInFlightRun };
+}
+
+/**
+ * checkDesignBriefOverlap — the route-facing half: resolves the mission's
+ * currently in-flight design brief (if any), decides what to do, and reaps
+ * a stale one (marks it failed) before returning "proceed" — the caller
+ * (POST /api/missions/:id/design-brief) calls this BEFORE creating a new
+ * row, so it can return a real 409 instead of creating a duplicate.
+ */
+export async function checkDesignBriefOverlap(
+  deps: Pick<DesignBriefServiceDeps, "client" | "designBriefRepository">,
+  missionId: string
+): Promise<{ kind: "proceed" } | { kind: "already_running"; runningRun: DesignBriefRow }> {
+  const inFlightRun = await deps.designBriefRepository.findInFlightByMission(deps.client, missionId);
+  const action = decideDesignBriefOverlapGuardAction(inFlightRun, Date.now(), DEFAULT_MAX_DESIGN_BRIEF_INFLIGHT_DURATION_MS);
+
+  if (action.kind === "reap_stale_then_proceed") {
+    await deps.designBriefRepository.update(deps.client, action.staleRunId, {
+      status: "failed",
+      error_message:
+        "Design Brief generation considered abandoned — exceeded its maximum expected duration, likely due to a process restart, cancellation, or crash before it could reach a real terminal status.",
+      completed_at: new Date().toISOString(),
+    });
+    return { kind: "proceed" };
+  }
+
+  return action;
+}
+
+/**
  * The fast, synchronous half: creates the `design_briefs` row at
  * `status: 'pending'` and returns immediately, exactly mirroring
  * createAnalysisRun. Called by POST /api/missions/:id/design-brief; the

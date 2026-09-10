@@ -6,12 +6,15 @@ import {
   findWeakestMeasuredCategory,
   applyDesignBriefEdits,
   runDesignBrief,
+  decideDesignBriefOverlapGuardAction,
+  checkDesignBriefOverlap,
   type DesignBrief,
   type DesignBriefServiceDeps,
 } from "@/lib/services/design-brief-service";
 import type { NormalizedAnalysis } from "@/lib/services/analysis-types";
 import type { Insight } from "@/lib/services/insight-service";
 import type { WebsiteAnalysisRow } from "@/lib/repositories/website-analysis-repository";
+import type { DesignBriefRow } from "@/lib/repositories/design-brief-repository";
 import type { LlmProvider } from "@/lib/llm/provider";
 
 const CLEAN_ANALYSIS: NormalizedAnalysis = {
@@ -530,5 +533,138 @@ describe("design-brief-service: runDesignBrief — Phase 14 identity verificatio
     assert.equal(identityInserts[0].verdict, "uncertain");
     const brief = (result as unknown as { brief: DesignBrief }).brief;
     assert.deepEqual(brief.gallery, [], "gallery must be cleared — the business-name mismatch signal maps to suppressing it");
+  });
+});
+
+const FIFTEEN_MIN_MS = 15 * 60 * 1000;
+
+function fakeDesignBriefRun(overrides: Partial<DesignBriefRow> = {}): DesignBriefRow {
+  const now = new Date().toISOString();
+  return {
+    id: "brief-1",
+    mission_id: "mission-1",
+    organization_id: "org-1",
+    company_id: null,
+    status: "running",
+    industry_bucket: null,
+    brief: null,
+    design_memory: null,
+    reasoning: null,
+    self_critique: null,
+    error_message: null,
+    started_at: now,
+    completed_at: null,
+    created_at: now,
+    reviewed_at: null,
+    reviewed_by: null,
+    ...overrides,
+  } as unknown as DesignBriefRow;
+}
+
+describe("design-brief-service: decideDesignBriefOverlapGuardAction (overlap protection, mirrors analysis-service's own guard)", () => {
+  test("no in-flight brief for this mission — proceed", () => {
+    assert.deepEqual(decideDesignBriefOverlapGuardAction(null, Date.now(), FIFTEEN_MIN_MS), { kind: "proceed" });
+  });
+
+  test("the mission's latest brief already reached a terminal status — proceed, regardless of which one", () => {
+    const now = Date.now();
+    assert.deepEqual(decideDesignBriefOverlapGuardAction(fakeDesignBriefRun({ status: "complete" }), now, FIFTEEN_MIN_MS), {
+      kind: "proceed",
+    });
+    assert.deepEqual(decideDesignBriefOverlapGuardAction(fakeDesignBriefRun({ status: "failed" }), now, FIFTEEN_MIN_MS), {
+      kind: "proceed",
+    });
+  });
+
+  test("a 'pending' row (not yet flipped to running) counts as in-flight too — already_running, not proceed", () => {
+    const now = Date.now();
+    const pendingRun = fakeDesignBriefRun({ status: "pending", started_at: null, created_at: new Date(now - 60_000).toISOString() });
+    const result = decideDesignBriefOverlapGuardAction(pendingRun, now, FIFTEEN_MIN_MS);
+    assert.deepEqual(result, { kind: "already_running", runningRun: pendingRun });
+  });
+
+  test("a fresh running brief (well within the duration bound) — already_running, never a duplicate", () => {
+    const now = Date.now();
+    const freshRun = fakeDesignBriefRun({ status: "running", started_at: new Date(now - 60_000).toISOString() });
+    const result = decideDesignBriefOverlapGuardAction(freshRun, now, FIFTEEN_MIN_MS);
+    assert.deepEqual(result, { kind: "already_running", runningRun: freshRun });
+  });
+
+  test("a running brief older than the max duration bound — reap it, then allow a new one to proceed", () => {
+    const now = Date.now();
+    const staleRun = fakeDesignBriefRun({ id: "stale-brief-1", status: "running", started_at: new Date(now - 20 * 60 * 1000).toISOString() });
+    const result = decideDesignBriefOverlapGuardAction(staleRun, now, FIFTEEN_MIN_MS);
+    assert.deepEqual(result, { kind: "reap_stale_then_proceed", staleRunId: "stale-brief-1" });
+  });
+
+  test("exactly at the boundary is treated as still-fresh, not stale (age must exceed, not merely equal, the bound)", () => {
+    const now = Date.now();
+    const boundaryRun = fakeDesignBriefRun({ status: "running", started_at: new Date(now - FIFTEEN_MIN_MS).toISOString() });
+    assert.equal(decideDesignBriefOverlapGuardAction(boundaryRun, now, FIFTEEN_MIN_MS).kind, "already_running");
+  });
+
+  test("one millisecond past the bound is stale", () => {
+    const now = Date.now();
+    const justPastRun = fakeDesignBriefRun({ status: "running", started_at: new Date(now - FIFTEEN_MIN_MS - 1).toISOString() });
+    assert.equal(decideDesignBriefOverlapGuardAction(justPastRun, now, FIFTEEN_MIN_MS).kind, "reap_stale_then_proceed");
+  });
+});
+
+describe("design-brief-service: checkDesignBriefOverlap (the route-facing guard)", () => {
+  function fakeOverlapDeps(runs: DesignBriefRow[]) {
+    const updated: { id: string; values: unknown }[] = [];
+    const designBriefRepository = {
+      async findInFlightByMission(_client: unknown, missionId: string) {
+        return runs.find((r) => r.mission_id === missionId && (r.status === "pending" || r.status === "running")) ?? null;
+      },
+      async update(_client: unknown, id: string, values: Record<string, unknown>) {
+        updated.push({ id, values });
+        const index = runs.findIndex((r) => r.id === id);
+        runs[index] = { ...runs[index], ...values } as DesignBriefRow;
+        return runs[index];
+      },
+    };
+    return {
+      deps: { client: {}, designBriefRepository } as unknown as Pick<DesignBriefServiceDeps, "client" | "designBriefRepository">,
+      updated,
+      runs,
+    };
+  }
+
+  test("no in-flight brief — proceed, nothing reaped", async () => {
+    const { deps, updated } = fakeOverlapDeps([]);
+    const result = await checkDesignBriefOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "proceed" });
+    assert.equal(updated.length, 0);
+  });
+
+  test("a fresh in-flight brief for the same mission — already_running, the real row is returned", async () => {
+    const freshRun = fakeDesignBriefRun({ mission_id: "mission-1", started_at: new Date().toISOString() });
+    const { deps } = fakeOverlapDeps([freshRun]);
+    const result = await checkDesignBriefOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "already_running", runningRun: freshRun });
+  });
+
+  test("an in-flight brief for a DIFFERENT mission never blocks this one", async () => {
+    const otherMissionRun = fakeDesignBriefRun({ mission_id: "mission-2", started_at: new Date().toISOString() });
+    const { deps } = fakeOverlapDeps([otherMissionRun]);
+    const result = await checkDesignBriefOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "proceed" });
+  });
+
+  test("a stale in-flight brief is actually reaped (marked failed, real error_message, completed_at set) before proceeding", async () => {
+    const staleRun = fakeDesignBriefRun({
+      id: "stale-brief-2",
+      mission_id: "mission-1",
+      started_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    });
+    const { deps, updated, runs } = fakeOverlapDeps([staleRun]);
+    const result = await checkDesignBriefOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "proceed" });
+    assert.equal(updated.length, 1);
+    assert.equal(updated[0].id, "stale-brief-2");
+    assert.equal(runs[0].status, "failed");
+    assert.ok(runs[0].completed_at);
+    assert.match(runs[0].error_message ?? "", /abandoned/);
   });
 });
