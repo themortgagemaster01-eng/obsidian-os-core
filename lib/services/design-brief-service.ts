@@ -597,7 +597,25 @@ export async function runDesignBrief(
       payload: { industryBucket: brief.industryBucket, citationCount: brief.citedInsights.length },
     });
 
-    await transitionMissionState(deps.workflowDeps, mission.id, "reviewing");
+    // Only advance to reviewing for a mission that hadn't already made it
+    // there — a re-run (regenerating a design brief after an earlier one
+    // already succeeded) leaves the mission at `reviewing` or later, and
+    // attempting a second, now-invalid transition throws ("reviewing" ->
+    // "reviewing" isn't NEXT_STATE's expected move). Checked against
+    // `mission.state` as fetched at the top of this function (never
+    // reassigned after the analyzing -> researching transition above, the
+    // same object identity that guard's own condition relies on) — so a
+    // normal first-ever run, which starts at `analyzing` or `researching`,
+    // still correctly reads as "hasn't reached reviewing yet" even though
+    // the mission has already moved on to `researching` in the database by
+    // this point in the same run. Same guard discipline as the
+    // analyzing -> researching transition above — confirmed live: Station
+    // Plaza Wine (Sep 10 2026) had already reached `reviewing` from its
+    // first successful run; a second, successful regenerate still crashed
+    // here because this call was unconditional.
+    if (mission.state === "analyzing" || mission.state === "researching") {
+      await transitionMissionState(deps.workflowDeps, mission.id, "reviewing");
+    }
 
     return updated;
   } catch (err) {

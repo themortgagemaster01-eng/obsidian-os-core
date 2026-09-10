@@ -755,3 +755,35 @@ describe("design-brief-service: runDesignBrief under the real worst-case shape (
     assert.ok(elapsedMs >= 240, `expected the three real delays to be genuinely awaited in sequence (>=240ms), got ${elapsedMs}ms`);
   });
 });
+
+describe("design-brief-service: runDesignBrief regenerated after the mission already reached 'reviewing'", () => {
+  test("a second successful run for a mission already at 'reviewing' completes cleanly — never attempts the now-invalid reviewing->reviewing transition", async () => {
+    // The real live scenario (Station Plaza Wine, Sep 10 2026): a first
+    // design brief already succeeded and moved the mission researching ->
+    // reviewing; regenerating a second one crashed on an unconditional
+    // transitionMissionState(..., "reviewing") call, even though the LLM
+    // work itself completed successfully.
+    const { deps, mission, llmProvider } = buildTestDeps({
+      lead: { location: "Springfield, IL", discovery_phone: null, discovery_address: null },
+      missionState: "reviewing",
+    });
+
+    const result = await runDesignBrief(deps, "brief-1");
+
+    assert.equal(result.status, "complete", "the real LLM work succeeding must not be thrown away by an unrelated state-transition error");
+    assert.equal(llmProvider.callCount, 2, "same 2-call shape as any other successful run — this fix only touches the transition at the end");
+    assert.equal(mission.current.state, "reviewing", "must stay at reviewing — no transition attempted, and definitely not left partway through one");
+  });
+
+  test("a first-ever successful run (mission still at 'researching') still transitions to 'reviewing' exactly as before this fix — no regression to the normal path", async () => {
+    const { deps, mission } = buildTestDeps({
+      lead: { location: "Springfield, IL", discovery_phone: null, discovery_address: null },
+      missionState: "researching",
+    });
+
+    const result = await runDesignBrief(deps, "brief-1");
+
+    assert.equal(result.status, "complete");
+    assert.equal(mission.current.state, "reviewing", "the normal, first-run transition must still happen");
+  });
+});
