@@ -47,8 +47,8 @@ export interface LeadHunterServiceDeps {
   /** Narrowed to exactly what this orchestration calls — a smaller, more honest test-mock surface than the full repository. */
   leadRepository: Pick<typeof leadRepository, "insert" | "update" | "findBySourceAndExternalId">;
   companyRepository: Pick<typeof companyRepository, "findByOrgAndUrl">;
-  /** Phase 3: the scan's own funnel-progress record (supabase/migrations/0021_lead_scan_runs.sql) — narrowed the same way, insert/update only. */
-  leadScanRepository: Pick<typeof leadScanRepository, "insert" | "update">;
+  /** Phase 3: the scan's own funnel-progress record (supabase/migrations/0021_lead_scan_runs.sql) — narrowed the same way; findRunningByOrganization added for the overlap guard (checkScanOverlap). */
+  leadScanRepository: Pick<typeof leadScanRepository, "insert" | "update" | "findRunningByOrganization">;
   /**
    * Real network calls, injected rather than imported-and-called directly —
    * the same "the LLM provider is a port, injected via deps" precedent
@@ -84,6 +84,77 @@ export interface RunLeadHunterScanInput {
 /** CTO Phase 3 directive: "ranking-by-opportunity-then-confidence." A qualified lead counts as a real confidence prospect once its confidence score clears this bar — a v1 threshold (see lead-scoring-service.ts's own "v1, not a final answer" disclosure), not a researched final cutoff. */
 const HIGH_CONFIDENCE_MIN_SCORE = 50;
 const DEFAULT_QUEUE_SIZE = 5;
+
+/**
+ * How long a "running" scan is trusted before it's treated as abandoned (a
+ * killed/crashed process — never a thrown error, which runLeadHunterScan's
+ * own catch already turns into a real "failed" status). Real scans complete
+ * in well under a minute (scanSize is capped at 5 — app/api/leads/scan/
+ * route.ts's own MAX_SCAN_SIZE — and each candidate is one sequential
+ * crawl), so 15 minutes is comfortably generous while still catching a
+ * genuinely stuck scan quickly, unlike mission_batch_runs' 4-hour window,
+ * which covers several full mission pipelines per run.
+ */
+const DEFAULT_MAX_SCAN_RUNNING_DURATION_MS = 15 * 60 * 1000;
+
+export type ScanOverlapGuardAction =
+  | { kind: "proceed" }
+  | { kind: "reap_stale_then_proceed"; staleRunId: string }
+  | { kind: "already_running"; runningRun: LeadScanRunRow };
+
+/**
+ * decideScanOverlapGuardAction — "is it safe to start a new scan for this
+ * organization," mirroring mission-batch-service.ts's own
+ * decideOverlapGuardAction exactly (same three-way decision, same pure/
+ * directly-unit-testable shape). The caller must resolve currentlyRunningRun
+ * via a direct status-filtered query (findRunningByOrganization), never
+ * findLatestByOrganization's "most recently started regardless of status."
+ */
+export function decideScanOverlapGuardAction(
+  currentlyRunningRun: LeadScanRunRow | null,
+  nowMs: number,
+  maxRunningDurationMs: number
+): ScanOverlapGuardAction {
+  if (!currentlyRunningRun || currentlyRunningRun.status !== "running") {
+    return { kind: "proceed" };
+  }
+  const startedAtMs = new Date(currentlyRunningRun.started_at).getTime();
+  const ageMs = nowMs - startedAtMs;
+  if (ageMs > maxRunningDurationMs) {
+    return { kind: "reap_stale_then_proceed", staleRunId: currentlyRunningRun.id };
+  }
+  return { kind: "already_running", runningRun: currentlyRunningRun };
+}
+
+/**
+ * checkScanOverlap — the route-facing half of the guard: resolves the
+ * organization's currently-running scan (if any), decides what to do, and
+ * — unlike mission-batch-service.ts's own guard, which lives inside its
+ * fire-and-forget function and is invisible to the HTTP caller — performs
+ * this check BEFORE the route responds, so a caller gets a real, distinct
+ * 409 instead of an always-"scan_started" 202 that silently did nothing.
+ * A stale run is reaped (marked failed) here, synchronously, before
+ * returning "proceed" — the caller never needs to know reaping happened.
+ */
+export async function checkScanOverlap(
+  deps: Pick<LeadHunterServiceDeps, "client" | "leadScanRepository">,
+  organizationId: string
+): Promise<{ kind: "proceed" } | { kind: "already_running"; runningRun: LeadScanRunRow }> {
+  const runningRun = await deps.leadScanRepository.findRunningByOrganization(deps.client, organizationId);
+  const action = decideScanOverlapGuardAction(runningRun, Date.now(), DEFAULT_MAX_SCAN_RUNNING_DURATION_MS);
+
+  if (action.kind === "reap_stale_then_proceed") {
+    await deps.leadScanRepository.update(deps.client, action.staleRunId, {
+      status: "failed",
+      error_message:
+        "Scan considered abandoned — exceeded its maximum expected duration, likely due to a process restart, cancellation, or crash before it could reach a real terminal status.",
+      completed_at: new Date().toISOString(),
+    });
+    return { kind: "proceed" };
+  }
+
+  return action;
+}
 
 export interface LeadHunterScanResult {
   location: string;

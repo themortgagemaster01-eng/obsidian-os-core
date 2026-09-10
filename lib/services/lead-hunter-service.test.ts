@@ -1,7 +1,12 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { runLeadHunterScan, type LeadHunterServiceDeps } from "@/lib/services/lead-hunter-service";
+import {
+  runLeadHunterScan,
+  decideScanOverlapGuardAction,
+  checkScanOverlap,
+  type LeadHunterServiceDeps,
+} from "@/lib/services/lead-hunter-service";
 import type { GeocodedArea, DiscoverBusinessesInput, DiscoveredBusiness } from "@/lib/adapters/discovery-adapter";
 import type { CrawlRawResult } from "@/lib/adapters/types";
 import type { LeadRow, LeadInsert, LeadUpdate } from "@/lib/repositories/lead-repository";
@@ -88,6 +93,9 @@ function createFakeDeps(overrides: {
       scanRuns[index] = updated;
       return updated;
     },
+    async findRunningByOrganization(_client, organizationId) {
+      return scanRuns.find((r) => r.organization_id === organizationId && r.status === "running") ?? null;
+    },
   };
 
   const leadRepository: LeadHunterServiceDeps["leadRepository"] = {
@@ -129,6 +137,125 @@ function createFakeDeps(overrides: {
     scanRuns,
   };
 }
+
+const FIFTEEN_MIN_MS = 15 * 60 * 1000;
+
+function fakeScanRun(overrides: Partial<LeadScanRunRow> = {}): LeadScanRunRow {
+  const now = new Date().toISOString();
+  return {
+    id: "scan-run-1",
+    organization_id: "org-1",
+    location: "Mahopac, NY",
+    industry_buckets: ["general"],
+    scan_size: 5,
+    status: "running",
+    discovered_count: null,
+    qualified_count: null,
+    rejected_count: null,
+    meaningful_opportunity_count: null,
+    high_confidence_count: null,
+    queued_count: null,
+    error_message: null,
+    started_at: now,
+    completed_at: null,
+    created_at: now,
+    updated_at: now,
+    ...overrides,
+  } as unknown as LeadScanRunRow;
+}
+
+describe("lead-hunter-service: decideScanOverlapGuardAction (overlap protection, mirrors mission-batch-service's own guard)", () => {
+  test("no running scan for this organization — proceed", () => {
+    assert.deepEqual(decideScanOverlapGuardAction(null, Date.now(), FIFTEEN_MIN_MS), { kind: "proceed" });
+  });
+
+  test("the organization's latest scan already reached a terminal status — proceed, regardless of which one", () => {
+    const now = Date.now();
+    assert.deepEqual(decideScanOverlapGuardAction(fakeScanRun({ status: "complete" }), now, FIFTEEN_MIN_MS), { kind: "proceed" });
+    assert.deepEqual(decideScanOverlapGuardAction(fakeScanRun({ status: "failed" }), now, FIFTEEN_MIN_MS), { kind: "proceed" });
+  });
+
+  test("a fresh running scan (well within the duration bound) — already_running, never a second concurrent scan", () => {
+    const now = Date.now();
+    const freshRun = fakeScanRun({ status: "running", started_at: new Date(now - 2 * 60 * 1000).toISOString() });
+    const result = decideScanOverlapGuardAction(freshRun, now, FIFTEEN_MIN_MS);
+    assert.deepEqual(result, { kind: "already_running", runningRun: freshRun });
+  });
+
+  test("a running scan older than the max duration bound — reap it, then allow a new one to proceed", () => {
+    const now = Date.now();
+    const staleRun = fakeScanRun({ id: "stale-scan-1", status: "running", started_at: new Date(now - 20 * 60 * 1000).toISOString() });
+    const result = decideScanOverlapGuardAction(staleRun, now, FIFTEEN_MIN_MS);
+    assert.deepEqual(result, { kind: "reap_stale_then_proceed", staleRunId: "stale-scan-1" });
+  });
+
+  test("exactly at the boundary is treated as still-fresh, not stale (age must exceed, not merely equal, the bound)", () => {
+    const now = Date.now();
+    const boundaryRun = fakeScanRun({ status: "running", started_at: new Date(now - FIFTEEN_MIN_MS).toISOString() });
+    assert.equal(decideScanOverlapGuardAction(boundaryRun, now, FIFTEEN_MIN_MS).kind, "already_running");
+  });
+
+  test("one millisecond past the bound is stale", () => {
+    const now = Date.now();
+    const justPastRun = fakeScanRun({ status: "running", started_at: new Date(now - FIFTEEN_MIN_MS - 1).toISOString() });
+    assert.equal(decideScanOverlapGuardAction(justPastRun, now, FIFTEEN_MIN_MS).kind, "reap_stale_then_proceed");
+  });
+});
+
+describe("lead-hunter-service: checkScanOverlap (the route-facing guard, wired for a real DB round-trip)", () => {
+  function fakeOverlapDeps(runs: LeadScanRunRow[]) {
+    const updated: { id: string; values: unknown }[] = [];
+    const leadScanRepository = {
+      async findRunningByOrganization(_client: unknown, organizationId: string) {
+        return runs.find((r) => r.organization_id === organizationId && r.status === "running") ?? null;
+      },
+      async update(_client: unknown, id: string, values: Record<string, unknown>) {
+        updated.push({ id, values });
+        const index = runs.findIndex((r) => r.id === id);
+        runs[index] = { ...runs[index], ...values } as LeadScanRunRow;
+        return runs[index];
+      },
+    };
+    return { deps: { client: {}, leadScanRepository } as Parameters<typeof checkScanOverlap>[0], updated, runs };
+  }
+
+  test("no running scan — proceed, nothing reaped", async () => {
+    const { deps, updated } = fakeOverlapDeps([]);
+    const result = await checkScanOverlap(deps, "org-1");
+    assert.deepEqual(result, { kind: "proceed" });
+    assert.equal(updated.length, 0);
+  });
+
+  test("a fresh running scan for the same organization — already_running, the real running row is returned", async () => {
+    const freshRun = fakeScanRun({ organization_id: "org-1", started_at: new Date().toISOString() });
+    const { deps } = fakeOverlapDeps([freshRun]);
+    const result = await checkScanOverlap(deps, "org-1");
+    assert.deepEqual(result, { kind: "already_running", runningRun: freshRun });
+  });
+
+  test("a running scan for a DIFFERENT organization never blocks this one", async () => {
+    const otherOrgRun = fakeScanRun({ organization_id: "org-2", started_at: new Date().toISOString() });
+    const { deps } = fakeOverlapDeps([otherOrgRun]);
+    const result = await checkScanOverlap(deps, "org-1");
+    assert.deepEqual(result, { kind: "proceed" });
+  });
+
+  test("a stale running scan is actually reaped (marked failed, real error_message, completed_at set) before proceeding", async () => {
+    const staleRun = fakeScanRun({
+      id: "stale-scan-2",
+      organization_id: "org-1",
+      started_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    });
+    const { deps, updated, runs } = fakeOverlapDeps([staleRun]);
+    const result = await checkScanOverlap(deps, "org-1");
+    assert.deepEqual(result, { kind: "proceed" });
+    assert.equal(updated.length, 1);
+    assert.equal(updated[0].id, "stale-scan-2");
+    assert.equal(runs[0].status, "failed");
+    assert.ok(runs[0].completed_at);
+    assert.match(runs[0].error_message ?? "", /abandoned/);
+  });
+});
 
 const REAL_SHAPED_CANDIDATE: DiscoveredBusiness = {
   externalId: "node/421138265",

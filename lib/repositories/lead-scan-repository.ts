@@ -47,4 +47,25 @@ export const leadScanRepository = {
     if (error) throw error;
     return data;
   },
+
+  /**
+   * The overlap guard's own "is a scan currently in progress" question —
+   * a direct status-filtered query, not derived from findLatestByOrganization
+   * (a different question that only coincides with this one when nothing
+   * has altered a row's started_at after the fact), same precedent as
+   * mission-batch-run-repository.ts::findRunningByOrganization. At most one
+   * row can ever match, since the DB-level partial unique index
+   * (lead_scan_runs_one_running_per_org) is the real authority that
+   * guarantees it.
+   */
+  async findRunningByOrganization(client: TypedClient, organizationId: string): Promise<LeadScanRunRow | null> {
+    const { data, error } = await client
+      .from("lead_scan_runs")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .eq("status", "running")
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
 };

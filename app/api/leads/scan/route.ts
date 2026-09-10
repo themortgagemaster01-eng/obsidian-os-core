@@ -4,7 +4,8 @@ import { waitUntil } from "@vercel/functions";
 import { createClient } from "@/lib/supabase/server";
 import { createSecretKeyClient } from "@/lib/supabase/service-role";
 import { profileRepository } from "@/lib/repositories/profile-repository";
-import { runLeadHunterScan, createLeadHunterServiceDeps } from "@/lib/services/lead-hunter-service";
+import { leadScanRepository } from "@/lib/repositories/lead-scan-repository";
+import { runLeadHunterScan, createLeadHunterServiceDeps, checkScanOverlap } from "@/lib/services/lead-hunter-service";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
 
 interface ScanBody {
@@ -113,12 +114,32 @@ export async function POST(request: NextRequest) {
   const requestedScanSize = typeof body.scanSize === "number" && body.scanSize > 0 ? body.scanSize : MAX_SCAN_SIZE;
   const scanSize = Math.min(requestedScanSize, MAX_SCAN_SIZE);
 
+  const secretKeyClient = createSecretKeyClient();
+
+  // Overlap guard: checked synchronously, before this responds, so a
+  // caller gets a real 409 instead of an always-"scan_started" 202 that
+  // silently did nothing (see checkScanOverlap's own doc comment for why
+  // this differs from mission-batches' own guard placement). The DB's own
+  // partial unique index (lead_scan_runs_one_running_per_org) remains the
+  // real, final authority against a genuine race between this check and
+  // the insert below.
+  const overlap = await checkScanOverlap({ client: secretKeyClient, leadScanRepository }, organizationId);
+  if (overlap.kind === "already_running") {
+    return NextResponse.json(
+      {
+        error: `A scan for "${overlap.runningRun.location}" is already running for your organization — wait for it to finish before starting another.`,
+        runningScan: overlap.runningRun,
+      },
+      { status: 409 }
+    );
+  }
+
   // Fire-and-forget from the request/response cycle's point of view — the
   // caller doesn't await this — but waitUntil() keeps the underlying
   // function alive until it settles, up to maxDuration above, rather than
   // leaving it to the platform's discretion. Same "session/cookies are gone
   // before this finishes" reasoning as the Analysis Engine's own route.
-  const backgroundDeps = createLeadHunterServiceDeps(createSecretKeyClient());
+  const backgroundDeps = createLeadHunterServiceDeps(secretKeyClient);
   waitUntil(
     runLeadHunterScan(backgroundDeps, { organizationId, location, industryBuckets, scanSize }).catch((err) => {
       // eslint-disable-next-line no-console
