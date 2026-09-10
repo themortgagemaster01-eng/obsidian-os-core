@@ -83,6 +83,72 @@ export interface CreateAnalysisRunInput {
 }
 
 /**
+ * How long a pending/running analysis is trusted before it's treated as
+ * abandoned — mirrors mission-batch-service.ts's own reasoning, scaled to
+ * this pipeline's real duration (a full seven-adapter analysis, including
+ * Lighthouse, completes in well under two minutes per this week's own live
+ * verification runs). 15 minutes is comfortably generous while still
+ * catching a genuinely stuck row quickly.
+ */
+const DEFAULT_MAX_ANALYSIS_INFLIGHT_DURATION_MS = 15 * 60 * 1000;
+
+export type AnalysisOverlapGuardAction =
+  | { kind: "proceed" }
+  | { kind: "reap_stale_then_proceed"; staleRunId: string }
+  | { kind: "already_running"; runningRun: WebsiteAnalysisRow };
+
+/**
+ * decideAnalysisOverlapGuardAction — "is it safe to start a new analysis
+ * for this mission," mirroring mission-batch-service.ts's own
+ * decideOverlapGuardAction shape exactly. A 'pending' row (not yet flipped
+ * to 'running' by runAnalysis) is treated identically to a running one —
+ * both are genuinely in flight. Age is measured from created_at, not
+ * started_at, since a 'pending' row has no started_at yet.
+ */
+export function decideAnalysisOverlapGuardAction(
+  currentlyInFlightRun: WebsiteAnalysisRow | null,
+  nowMs: number,
+  maxInFlightDurationMs: number
+): AnalysisOverlapGuardAction {
+  if (!currentlyInFlightRun || (currentlyInFlightRun.status !== "pending" && currentlyInFlightRun.status !== "running")) {
+    return { kind: "proceed" };
+  }
+  const referenceMs = new Date(currentlyInFlightRun.started_at ?? currentlyInFlightRun.created_at).getTime();
+  const ageMs = nowMs - referenceMs;
+  if (ageMs > maxInFlightDurationMs) {
+    return { kind: "reap_stale_then_proceed", staleRunId: currentlyInFlightRun.id };
+  }
+  return { kind: "already_running", runningRun: currentlyInFlightRun };
+}
+
+/**
+ * checkAnalysisOverlap — the route-facing half: resolves the mission's
+ * currently in-flight analysis (if any), decides what to do, and reaps a
+ * stale one (marks it failed) before returning "proceed" — the caller
+ * (POST /api/missions/:id/analyze) calls this BEFORE creating a new row,
+ * so it can return a real 409 instead of creating a duplicate.
+ */
+export async function checkAnalysisOverlap(
+  deps: Pick<AnalysisServiceDeps, "client" | "websiteAnalysisRepository">,
+  missionId: string
+): Promise<{ kind: "proceed" } | { kind: "already_running"; runningRun: WebsiteAnalysisRow }> {
+  const inFlightRun = await deps.websiteAnalysisRepository.findInFlightByMission(deps.client, missionId);
+  const action = decideAnalysisOverlapGuardAction(inFlightRun, Date.now(), DEFAULT_MAX_ANALYSIS_INFLIGHT_DURATION_MS);
+
+  if (action.kind === "reap_stale_then_proceed") {
+    await deps.websiteAnalysisRepository.update(deps.client, action.staleRunId, {
+      status: "failed",
+      error_message:
+        "Analysis considered abandoned — exceeded its maximum expected duration, likely due to a process restart, cancellation, or crash before it could reach a real terminal status.",
+      completed_at: new Date().toISOString(),
+    });
+    return { kind: "proceed" };
+  }
+
+  return action;
+}
+
+/**
  * The fast, synchronous half of §2's flow: creates the `website_analyses`
  * row at `status: 'pending'` and returns immediately. Called directly by
  * POST /api/missions/:id/analyze (app/api/missions/[id]/analyze/route.ts)

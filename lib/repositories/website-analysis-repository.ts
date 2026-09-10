@@ -86,6 +86,29 @@ export const websiteAnalysisRepository = {
     if (error) throw error;
     return data;
   },
+
+  /**
+   * The overlap guard's own "is an analysis already in flight for this
+   * mission" question — a direct status-filtered query, not derived from
+   * findLatestByMission (a different question: the most recent row
+   * regardless of status). createAnalysisRun() inserts at 'pending' and
+   * runAnalysis() later flips it to 'running', so both count as in-flight
+   * — a row is never briefly uncovered by this check between those two
+   * states. At most one row can ever match, since the DB-level partial
+   * unique index (website_analyses_one_inflight_per_mission) is the real
+   * authority that guarantees it.
+   */
+  async findInFlightByMission(client: TypedClient, missionId: string): Promise<WebsiteAnalysisRow | null> {
+    const { data, error } = await client
+      .from("website_analyses")
+      .select("*")
+      .eq("mission_id", missionId)
+      .in("status", ["pending", "running"])
+      .maybeSingle();
+
+    if (error) throw error;
+    return data;
+  },
 };
 
 export type { AnalysisStatus };

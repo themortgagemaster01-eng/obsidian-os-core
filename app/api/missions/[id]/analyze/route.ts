@@ -8,6 +8,7 @@ import {
   createAnalysisRun,
   createAnalysisServiceDeps,
   runAnalysis,
+  checkAnalysisOverlap,
 } from "@/lib/services/analysis-service";
 
 interface RouteParams {
@@ -77,6 +78,22 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   }
   if (!mission) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
+  }
+
+  // Overlap guard: checked before creating a new row, so a caller gets a
+  // real 409 instead of a duplicate analysis racing the one already in
+  // flight for this mission. The DB's own partial unique index
+  // (website_analyses_one_inflight_per_mission) is the real, final
+  // authority against a genuine race between this check and the insert.
+  const overlap = await checkAnalysisOverlap(createAnalysisServiceDeps(supabase), mission.id);
+  if (overlap.kind === "already_running") {
+    return NextResponse.json(
+      {
+        error: `An analysis is already ${overlap.runningRun.status} for this mission — wait for it to finish before starting another.`,
+        runningAnalysis: overlap.runningRun,
+      },
+      { status: 409 }
+    );
   }
 
   let analysis;
