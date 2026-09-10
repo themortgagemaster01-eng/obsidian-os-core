@@ -145,9 +145,22 @@ function textContainsAnyKeyword(haystack: string, keywords: string[]): boolean {
  * keyword sets matching (ambiguous) resolves the same as neither matching
  * (absent/unclear) — "editorial", the safe default, never a guess between
  * two real signals.
+ *
+ * Fix #6 (Design Intelligence Gap Map): `typographicMood` — DesignBrief.
+ * direction.typographicMood, produced in the SAME LLM response as
+ * DesignMemory.typography but never previously read by this resolver — is
+ * now folded into the same haystack as a fourth string. It can only ever
+ * ADD a true-positive keyword match this function didn't previously see;
+ * it never removes or overrides a match the other three fields already
+ * produced, and an absent/empty value is exactly today's pre-Fix-#6 input
+ * (optional, defaults to undefined, filtered out the same way the other
+ * three fields already are when blank).
  */
-export function resolveTypeScaleIntent(typography?: { headingFamily?: string; bodyFamily?: string; scaleNotes?: string } | null): TypeScaleIntent {
-  const text = [typography?.headingFamily, typography?.bodyFamily, typography?.scaleNotes]
+export function resolveTypeScaleIntent(
+  typography?: { headingFamily?: string; bodyFamily?: string; scaleNotes?: string } | null,
+  typographicMood?: string
+): TypeScaleIntent {
+  const text = [typography?.headingFamily, typography?.bodyFamily, typography?.scaleNotes, typographicMood]
     .filter((v): v is string => !!v && v.trim().length > 0)
     .join(" ");
   if (!text) return "editorial";

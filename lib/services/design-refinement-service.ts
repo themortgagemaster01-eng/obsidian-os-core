@@ -112,8 +112,16 @@ const DEFAULT_BODY_LINE_HEIGHT = 1.5;
  * a concrete, validated scale. `memory` is optional: a Design Brief
  * predating design_memory (or a test fixture) still gets a safe, valid
  * default rather than this pass throwing.
+ *
+ * Fix #6 (Design Intelligence Gap Map): `typographicMood` — DesignBrief.
+ * direction.typographicMood — is optional and, when given, passed straight
+ * through to resolveTypeScaleIntent alongside memory.typography's own text.
+ * Omitted, it's exactly today's pre-Fix-#6 call shape.
  */
-export function refineTypography(memory?: Pick<DesignMemory, "typography"> | null): TypographyRefinement {
+export function refineTypography(
+  memory?: Pick<DesignMemory, "typography"> | null,
+  typographicMood?: string
+): TypographyRefinement {
   const violations: string[] = [];
 
   const requestedFamilies = [memory?.typography?.headingFamily, memory?.typography?.bodyFamily].filter(
@@ -141,7 +149,7 @@ export function refineTypography(memory?: Pick<DesignMemory, "typography"> | nul
   // pre-Phase-15 behavior) whenever the signal is absent, ambiguous, or
   // memory itself is null/undefined — see resolveTypeScaleIntent's own
   // doc comment for the exact symmetry rule.
-  const scaleIntent = resolveTypeScaleIntent(memory?.typography);
+  const scaleIntent = resolveTypeScaleIntent(memory?.typography, typographicMood);
   const scaleSpec = TYPE_SCALE_VARIANTS[scaleIntent];
   const scale: TypeRoleValue[] = scaleSpec.map((spec) => ({
     role: spec.role,
@@ -763,7 +771,7 @@ export function refineDesign(
   brief: Pick<DesignBrief, "direction" | "services" | "certifications" | "reviews" | "gallery">,
   designMemory?: DesignMemory | null
 ): RefinedDesign {
-  const typography = refineTypography(designMemory);
+  const typography = refineTypography(designMemory, brief.direction.typographicMood);
   const narrativeArc = computeNarrativeArcForSpacing(structure.wireframe, brief);
   const spacing = refineSpacing(structure.wireframe, designMemory, narrativeArc);
   const layout = refineLayout(structure.wireframe);

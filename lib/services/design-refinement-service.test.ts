@@ -178,6 +178,34 @@ describe("design-refinement-service: refineTypography", () => {
     assert.deepEqual(noMemoryResult.scale, expectedLegacyScale);
     assert.deepEqual(genericMemoryResult.scale, expectedLegacyScale);
   });
+
+  // ==========================================================================
+  // Phase 18 — Design Intelligence Gap Map, Fix #6: wires DesignBrief.
+  // direction.typographicMood into resolveTypeScaleIntent alongside
+  // DesignMemory.typography. refineTypography-level proof that the wiring
+  // reaches this far, mirroring resolveTypeScaleIntent's own unit tests one
+  // layer up.
+  // ==========================================================================
+
+  test("Fix #6 (a): typographicMood passed to refineTypography can add a match memory.typography alone doesn't carry", () => {
+    const memory: DesignMemory = {
+      ...SAMPLE_DESIGN_MEMORY,
+      typography: { headingFamily: "A warm humanist serif", bodyFamily: "A clean sans", scaleNotes: "Clear hierarchy." },
+    };
+    const withoutMood = refineTypography(memory);
+    const withMood = refineTypography(memory, "A striking, commanding display headline treatment.");
+
+    assert.equal(withoutMood.scaleIntent, "editorial");
+    assert.equal(withMood.scaleIntent, "display-led");
+    assert.notDeepEqual(withoutMood.scale, withMood.scale);
+    assert.deepEqual(withMood.violations, []);
+  });
+
+  test("Fix #6 (b)/(c): omitted typographicMood is byte-identical to the pre-Fix-#6 call shape", () => {
+    const legacyResult = refineTypography(SAMPLE_DESIGN_MEMORY);
+    const explicitUndefinedResult = refineTypography(SAMPLE_DESIGN_MEMORY, undefined);
+    assert.deepEqual(legacyResult, explicitUndefinedResult);
+  });
 });
 
 describe("design-refinement-service: refineSpacing", () => {
@@ -704,5 +732,25 @@ describe("design-refinement-service: refineDesign (composition)", () => {
     const brief = briefFor({ motionIntensity: "energetic" });
     const result = refineDesign(structure, brief, SAMPLE_DESIGN_MEMORY);
     assert.equal(result.motion.intensity, "energetic");
+  });
+
+  test("Fix #6: end-to-end — brief.direction.typographicMood reaches resolveTypeScaleIntent through refineDesign's internal wiring", () => {
+    const wireframe = wireframeFor();
+    const structure = { wireframe, components: [] };
+    const memory: DesignMemory = {
+      ...SAMPLE_DESIGN_MEMORY,
+      typography: { headingFamily: "A warm humanist serif", bodyFamily: "A clean sans", scaleNotes: "Clear hierarchy." },
+    };
+    const briefWithoutMoodSignal = briefFor({ typographicMood: "A warm, confident serif for headings." });
+    const briefWithMoodSignal = briefFor({
+      typographicMood: "A striking, commanding display headline treatment for this business's real photography.",
+    });
+
+    const withoutSignal = refineDesign(structure, briefWithoutMoodSignal, memory);
+    const withSignal = refineDesign(structure, briefWithMoodSignal, memory);
+
+    assert.equal(withoutSignal.typography.scaleIntent, "editorial");
+    assert.equal(withSignal.typography.scaleIntent, "display-led");
+    assert.deepEqual(withSignal.violations, []);
   });
 });
