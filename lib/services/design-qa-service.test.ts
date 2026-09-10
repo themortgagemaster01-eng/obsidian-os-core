@@ -223,6 +223,35 @@ describe("design-qa-service: qaSpacing", () => {
     const result = qaSpacing(input);
     assert.equal(result.verdict, "PASS");
   });
+
+  test("Fix #5 (7): PASS for a real generated design whose Narrative Arc genuinely assigns different stages to different sections — this independent re-check must apply the identical NARRATIVE_STAGE_PADDING_BIAS refineSpacing did, not compare against the pre-Fix-#5 unbiased expectation", () => {
+    const brief = briefFor(undefined, {
+      services: [{ heading: "Catering", excerpt: "Full-service catering for events.", sourceUrl: "https://acme.test/catering" }],
+      certifications: [{ heading: "ServSafe Certified", excerpt: "State-certified food safety training.", sourceUrl: "https://acme.test/about" }],
+      reviews: { count: 42, averageRating: 4.8, source: "schema.org structured data" },
+    });
+    const wireframe = generateWireframe(brief, {
+      hasRealTestimonials: false,
+      compositionEvidence: { services: 1, certifications: 1, hasReviews: true, galleryCount: 0 },
+    });
+    assert.ok(wireframe.experiencePlan, "fixture should carry a real ExperiencePlan for this test to be meaningful");
+    const refinedDesign = refineDesign({ wireframe }, brief, SAMPLE_DESIGN_MEMORY);
+    // Confirm the fixture actually exercises real, non-uniform narrative
+    // stages before trusting the PASS verdict below to mean anything —
+    // credibility (validate, +1 bias) vs. menu (reveal, +0 bias). This
+    // fixture's brief defaults to industryBucket "restaurant"
+    // (WIREFRAME_TEMPLATE_BY_BUCKET), whose template has menu/gallery/
+    // credibility but no "services" section.
+    const credibilitySpacing = refinedDesign.spacing.sectionSpacing.find((s) => s.section === "credibility");
+    const menuSpacing = refinedDesign.spacing.sectionSpacing.find((s) => s.section === "menu");
+    assert.equal(credibilitySpacing?.narrativeStage, "validate");
+    assert.equal(menuSpacing?.narrativeStage, "reveal");
+    assert.notEqual(credibilitySpacing?.sectionPaddingRem, menuSpacing?.sectionPaddingRem);
+
+    const input = buildValidInput({ wireframe, refinedDesign, designBrief: brief });
+    const result = qaSpacing(input);
+    assert.equal(result.verdict, "PASS");
+  });
 });
 
 describe("design-qa-service: qaLayout", () => {

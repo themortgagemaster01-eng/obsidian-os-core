@@ -17,6 +17,7 @@ import { DEFAULT_SPACING_SCALE } from "@/lib/design-intelligence/design-rules";
 import { MOTION_DURATION_BAND_MS, BANNED_EASING_KEYWORDS } from "@/lib/design-intelligence/motion-rules";
 import { GENERIC_SAAS_TEMPLATE_SECTION_ORDER } from "@/lib/design-intelligence/layout-rules";
 import { MIN_TOUCH_TARGET_PX, MOBILE_BODY_FONT_FLOOR_PX } from "@/lib/design-intelligence/mobile-rules";
+import { resolveNarrativeArc, type NarrativeArcPlan } from "@/lib/design-intelligence/narrative-arc-planner";
 
 function briefFor(overrides: Partial<DesignBrief["direction"]> = {}): DesignBrief {
   return {
@@ -277,6 +278,139 @@ describe("design-refinement-service: refineSpacing", () => {
     assert.equal(malformedResult.scaleIntent, "standard");
     assert.deepEqual(ambiguousResult.scale, DEFAULT_SPACING_SCALE);
     assert.deepEqual(malformedResult.scale, DEFAULT_SPACING_SCALE);
+  });
+
+  // ==========================================================================
+  // Phase 17 — Design Intelligence Gap Map, Fix #5: wiring Narrative Arc
+  // (lib/design-intelligence/narrative-arc-planner.ts) into a real production
+  // lever. Mirrors Fix #1/#4's own required-regression shape: (1) narrative
+  // reasoning can move a real rendered value, (2) different valid arcs move
+  // it differently, (3) deterministic, (4)-(6) missing/null/unsupported
+  // narrative data all fall back to the exact pre-Fix-#5 scale untouched.
+  // ==========================================================================
+
+  function arcWithStages(
+    stageBySection: NarrativeArcPlan["stageBySection"],
+    arcToken: NarrativeArcPlan["arcToken"] = "editorial"
+  ): NarrativeArcPlan {
+    return { arcToken, confidence: "High", rationale: "test", stageBySection };
+  }
+
+  test("Fix #5 (1): narrative reasoning can affect production — a validate-stage section gets more breathing room than a reveal-stage section of the identical role/base index", () => {
+    const wireframe = wireframeFor(); // hero, services, credibility, faq, contact, footer
+    const arc = arcWithStages([
+      { section: "services", stage: "reveal" },
+      { section: "credibility", stage: "validate" },
+    ]);
+    const result = refineSpacing(wireframe, undefined, arc);
+    const services = result.sectionSpacing.find((s) => s.section === "services")!;
+    const credibility = result.sectionSpacing.find((s) => s.section === "credibility")!;
+
+    assert.equal(services.role, "content");
+    assert.equal(credibility.role, "content");
+    assert.ok(
+      credibility.sectionPaddingRem > services.sectionPaddingRem,
+      `expected credibility (validate, ${credibility.sectionPaddingRem}rem) > services (reveal, ${services.sectionPaddingRem}rem)`
+    );
+    assert.ok(credibility.componentPaddingRem > services.componentPaddingRem);
+    assert.equal(services.narrativeStage, "reveal");
+    assert.equal(credibility.narrativeStage, "validate");
+  });
+
+  test("Fix #5 (2): different valid narrative arcs produce genuinely different spacing decisions for the identical wireframe/section", () => {
+    const wireframe: Wireframe = {
+      layoutFamily: "imagery-led",
+      sections: [
+        { type: "hero", rationale: "test" },
+        { type: "gallery", rationale: "test" },
+        { type: "contact", rationale: "test" },
+        { type: "footer", rationale: "test" },
+      ],
+      signatureElement: { element: "authentic-photography-hero", justification: "test" },
+    };
+    // narrative-arc-planner.ts's own STAGE_OVERRIDE_BY_ARC: only the
+    // "sensory" arc promotes gallery from the default "reveal" to
+    // "demonstrate" — real, existing differentiation this fix now spends.
+    const editorialArc = arcWithStages([{ section: "gallery", stage: "reveal" }], "editorial");
+    const sensoryArc = arcWithStages([{ section: "gallery", stage: "demonstrate" }], "sensory");
+
+    const editorialResult = refineSpacing(wireframe, undefined, editorialArc);
+    const sensoryResult = refineSpacing(wireframe, undefined, sensoryArc);
+    const editorialGallery = editorialResult.sectionSpacing.find((s) => s.section === "gallery")!;
+    const sensoryGallery = sensoryResult.sectionSpacing.find((s) => s.section === "gallery")!;
+
+    assert.notEqual(editorialGallery.sectionPaddingRem, sensoryGallery.sectionPaddingRem);
+    assert.ok(sensoryGallery.sectionPaddingRem > editorialGallery.sectionPaddingRem);
+  });
+
+  test("Fix #5 (3): deterministic — identical wireframe/memory/arc produce byte-identical spacing across repeated calls", () => {
+    const wireframe = wireframeFor();
+    const arc = arcWithStages([{ section: "credibility", stage: "validate" }]);
+    const first = refineSpacing(wireframe, SAMPLE_DESIGN_MEMORY, arc);
+    const second = refineSpacing(wireframe, SAMPLE_DESIGN_MEMORY, arc);
+    assert.deepEqual(first, second);
+  });
+
+  test("Fix #5 (4): missing narrative arc (omitted third argument) falls back to exact pre-Fix-#5 legacy behavior", () => {
+    const wireframe = wireframeFor();
+    const legacyResult = refineSpacing(wireframe, SAMPLE_DESIGN_MEMORY);
+    const explicitUndefinedResult = refineSpacing(wireframe, SAMPLE_DESIGN_MEMORY, undefined);
+    assert.deepEqual(legacyResult, explicitUndefinedResult);
+    for (const entry of legacyResult.sectionSpacing) {
+      assert.equal(entry.narrativeStage, undefined);
+    }
+  });
+
+  test("Fix #5 (5): null/malformed narrative arc falls back to exact pre-Fix-#5 legacy behavior, never a crash or forced substitution", () => {
+    const wireframe = wireframeFor();
+    const legacyResult = refineSpacing(wireframe, SAMPLE_DESIGN_MEMORY);
+    const nullArcResult = refineSpacing(wireframe, SAMPLE_DESIGN_MEMORY, null);
+    // An arc with zero stage entries at all (e.g. resolveNarrativeArc given
+    // an empty sections list) — every section's lookup misses, same as null.
+    const emptyStagesArc = arcWithStages([]);
+    const emptyStagesResult = refineSpacing(wireframe, SAMPLE_DESIGN_MEMORY, emptyStagesArc);
+    // A malformed plan (e.g. a persisted row that predates a vocabulary
+    // change) naming a stage this codebase's Record doesn't recognize.
+    const malformedStageArc = arcWithStages([
+      { section: "credibility", stage: "unrecognized-future-stage" as unknown as NarrativeArcPlan["stageBySection"][number]["stage"] },
+    ]);
+    const malformedResult = refineSpacing(wireframe, SAMPLE_DESIGN_MEMORY, malformedStageArc);
+
+    assert.deepEqual(nullArcResult, legacyResult);
+    assert.deepEqual(emptyStagesResult, legacyResult);
+    // The unrecognized stage safely contributes zero bias (never NaN, never
+    // a thrown error) — padding values match legacy exactly even though
+    // narrativeStage itself is still honestly recorded for transparency.
+    for (let i = 0; i < legacyResult.sectionSpacing.length; i++) {
+      assert.equal(malformedResult.sectionSpacing[i].sectionPaddingRem, legacyResult.sectionSpacing[i].sectionPaddingRem);
+      assert.equal(malformedResult.sectionSpacing[i].componentPaddingRem, legacyResult.sectionSpacing[i].componentPaddingRem);
+    }
+  });
+
+  test("Fix #5 (6): an arc naming a section this wireframe doesn't contain is safely ignored, never invented or crashed on", () => {
+    const wireframe = wireframeFor(); // has no "menu"/"gallery" section
+    const arc = arcWithStages([{ section: "menu", stage: "convert" }]);
+    const result = refineSpacing(wireframe, SAMPLE_DESIGN_MEMORY, arc);
+    assert.equal(result.sectionSpacing.length, wireframe.sections.length);
+    assert.ok(!result.sectionSpacing.some((s) => s.section === "menu"));
+  });
+
+  test("Fix #5: end-to-end through refineDesign — a real generated wireframe/brief with real evidence resolves its own narrative arc internally and applies it", () => {
+    const brief = briefFor();
+    const wireframe = generateWireframe(brief, { hasRealTestimonials: false });
+    assert.ok(wireframe.experiencePlan, "fixture should carry a real ExperiencePlan for this test to be meaningful");
+    const structure = { wireframe, components: [] };
+    const result = refineDesign(structure, brief, SAMPLE_DESIGN_MEMORY);
+
+    const expectedArc = resolveNarrativeArc({
+      experiencePlan: wireframe.experiencePlan!,
+      sections: wireframe.sections.map((s) => s.type),
+      evidence: { services: 0, certifications: 0, hasReviews: false, galleryCount: 0, hasRealTeam: false },
+    });
+    const credibilityStage = expectedArc.stageBySection.find((s) => s.section === "credibility")?.stage;
+    const credibility = result.spacing.sectionSpacing.find((s) => s.section === "credibility")!;
+    assert.equal(credibility.narrativeStage, credibilityStage);
+    assert.deepEqual(result.violations, []);
   });
 });
 

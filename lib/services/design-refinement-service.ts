@@ -33,6 +33,8 @@ import {
 } from "@/lib/design-intelligence/mobile-rules";
 import { PHOTO_DEPENDENT_HERO_PATTERNS } from "@/lib/design-intelligence/section-patterns";
 import type { ExperienceMode, ExperiencePlan, MotionBudget } from "@/shared/design-intelligence/types";
+import type { ExperiencePlanEvidenceDensity } from "@/lib/design-intelligence/experience-planner";
+import { resolveNarrativeArc, type NarrativeArcPlan, type NarrativeStageToken } from "@/lib/design-intelligence/narrative-arc-planner";
 
 import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { DesignMemory } from "@/lib/services/design-intelligence-service";
@@ -171,6 +173,15 @@ export interface SectionSpacingValue {
   role: SectionSpacingRole;
   sectionPaddingRem: number;
   componentPaddingRem: number;
+  /**
+   * Phase 17 (Design Intelligence Gap Map, Fix #5) — the Narrative Arc stage
+   * (lib/design-intelligence/narrative-arc-planner.ts) this section was
+   * assigned when this value was computed, when a narrative arc was
+   * available at all. Transparency only, mirroring scaleIntent's own
+   * precedent — never a second decision point for a caller to branch on;
+   * the padding values above are still the one real output.
+   */
+  narrativeStage?: NarrativeStageToken;
 }
 
 export interface SpacingRefinement {
@@ -219,6 +230,72 @@ function clampStepIndex(index: number, scaleLength: number): number {
 }
 
 /**
+ * Phase 17 (Design Intelligence Gap Map, Fix #5) — a small, bounded nudge
+ * driven by the Narrative Arc's own already-computed per-section stage
+ * (lib/design-intelligence/narrative-arc-planner.ts), composed additively
+ * with compositionVariant's own paddingBiasSteps bias below rather than
+ * replacing it — two independent, real signals, same as this file's own
+ * typography/spacing scale selection never replaces the OTHER axis's
+ * decision. "0" for every stage is exactly today's pre-Fix-#5 behavior; the
+ * three stages the founder's own Fix #5 spec names as production-worthy each
+ * earn one extra step of breathing room: DEMONSTRATE (showing real evidence
+ * deserves room to breathe), VALIDATE (trust reinforcement), and CONVERT
+ * (the CTA close). REVEAL/DEEPEN/ESTABLISH stay neutral — hero (always
+ * "establish") already has the largest base index in
+ * SECTION_PADDING_STEP_INDEX_BY_ROLE, and a plain "here is more information"
+ * stage doesn't need extra emphasis. Exported so design-qa-service.ts's
+ * independent qaSpacing re-check can apply the identical bias, the same "QA
+ * must know about every real bias source" discipline
+ * compositionVariant.paddingBiasSteps already established (Fix #4's own
+ * qaSpacing regression).
+ */
+export const NARRATIVE_STAGE_PADDING_BIAS: Record<NarrativeStageToken, number> = {
+  establish: 0,
+  reveal: 0,
+  demonstrate: 1,
+  validate: 1,
+  deepen: 0,
+  convert: 1,
+};
+
+/**
+ * computeNarrativeArcForSpacing — the exact evidence-density construction
+ * design-qa-service.ts's own narrativeEvidenceDensityFor already uses
+ * (services/certifications/reviews/gallery counted directly off the brief;
+ * hasRealTeam recovered from the wireframe's own real rendered section
+ * presence), mirrored field-for-field here rather than reinvented, so
+ * refineSpacing's arc resolution can never silently diverge from the real
+ * evidence density the rest of this pipeline already resolved against.
+ * Reads the wireframe's own UNFILTERED section list (never the
+ * post-OMIT_SECTION_IF_EMPTY rendered list QA's narrative-consistency checks
+ * use for their differently-scoped question) — refineSpacing already
+ * computes a SectionSpacingValue for every wireframe section regardless of
+ * whether it later renders, so the stage lookup below stays consistent with
+ * that existing, unfiltered scope. Returns null (byte-identical zero bias)
+ * whenever the wireframe carries no ExperiencePlan at all — a wireframe hand-
+ * built in a test fixture, or a `website_designs.wireframe` row persisted
+ * before Phase 6.1, renders exactly as before Fix #5.
+ */
+function computeNarrativeArcForSpacing(
+  wireframe: Wireframe,
+  brief: Pick<DesignBrief, "services" | "certifications" | "reviews" | "gallery">
+): NarrativeArcPlan | null {
+  if (!wireframe.experiencePlan) return null;
+  const evidence: ExperiencePlanEvidenceDensity = {
+    services: brief.services?.length ?? 0,
+    certifications: brief.certifications?.length ?? 0,
+    hasReviews: !!brief.reviews && brief.reviews.count !== null,
+    galleryCount: brief.gallery?.length ?? 0,
+    hasRealTeam: wireframe.sections.some((s) => s.type === "team"),
+  };
+  return resolveNarrativeArc({
+    experiencePlan: wireframe.experiencePlan,
+    sections: wireframe.sections.map((s) => s.type),
+    evidence,
+  });
+}
+
+/**
  * refineSpacing — assigns section- and component-level spacing per §4's
  * role-proportional standard, derived from one sitewide scale. When the
  * wireframe carries a real compositionVariant (lib/design-intelligence/
@@ -239,20 +316,37 @@ function clampStepIndex(index: number, scaleLength: number): number {
  * own `memory` parameter is: a Design Brief predating design_memory (or a
  * test fixture) still gets a safe, valid default rather than this pass
  * throwing.
+ *
+ * Phase 17 (Fix #5): `narrativeArc`, when given, adds NARRATIVE_STAGE_
+ * PADDING_BIAS's own per-section nudge on top of compositionVariant's bias
+ * above — additive, not a replacement, and clamped by the exact same
+ * clampStepIndex call. Optional and defaulting to null so every existing
+ * direct caller of this function (every test that calls refineSpacing with
+ * one or two arguments) keeps producing byte-identical output; refineDesign
+ * is the one real caller that resolves and passes a narrative arc.
  */
-export function refineSpacing(wireframe: Wireframe, memory?: Pick<DesignMemory, "spacingScale"> | null): SpacingRefinement {
+export function refineSpacing(
+  wireframe: Wireframe,
+  memory?: Pick<DesignMemory, "spacingScale"> | null,
+  narrativeArc?: NarrativeArcPlan | null
+): SpacingRefinement {
   const scaleIntent = resolveSpacingScaleIntent(memory?.spacingScale);
   const scale = SPACING_SCALE_VARIANTS[scaleIntent];
   const violations = [...validateSpacingScale(scale)];
-  const bias = wireframe.compositionVariant?.paddingBiasSteps ?? 0;
+  const compositionBias = wireframe.compositionVariant?.paddingBiasSteps ?? 0;
+  const narrativeStageBySection = new Map(narrativeArc?.stageBySection.map((s) => [s.section, s.stage]));
 
   const sectionSpacing: SectionSpacingValue[] = wireframe.sections.map(({ type }) => {
     const role = spacingRoleFor(type);
+    const narrativeStage = narrativeStageBySection.get(type);
+    const narrativeBias = narrativeStage ? NARRATIVE_STAGE_PADDING_BIAS[narrativeStage] ?? 0 : 0;
+    const bias = compositionBias + narrativeBias;
     return {
       section: type,
       role,
       sectionPaddingRem: scale.steps[clampStepIndex(SECTION_PADDING_STEP_INDEX_BY_ROLE[role] + bias, scale.steps.length)],
       componentPaddingRem: scale.steps[clampStepIndex(COMPONENT_PADDING_STEP_INDEX_BY_ROLE[role] + bias, scale.steps.length)],
+      ...(narrativeStage ? { narrativeStage } : {}),
     };
   });
 
@@ -652,14 +746,26 @@ export interface RefinementInput {
  * a RefinedDesign of concrete typography/spacing/layout/motion/mobile
  * values out. Pure; no Supabase, no LLM call — design-generation-service.ts
  * calls this the same way it already calls generateWebsiteStructure.
+ *
+ * Phase 17 (Fix #5): `brief`'s Pick widened to include services/
+ * certifications/reviews/gallery — the same real evidence-density fields
+ * design-qa-service.ts's own narrativeEvidenceDensityFor already reads off
+ * DesignBrief — so this composed entry point can resolve the Narrative Arc
+ * internally (computeNarrativeArcForSpacing) and feed it to refineSpacing.
+ * Type-only widening: both existing call sites (design-generation-
+ * service.ts's generateWebsiteStructure, experience-refinement-service.ts's
+ * resolveRefinedDesign) already pass the full DesignBrief object at runtime,
+ * so this is not a schema or persistence change and neither call site needs
+ * to change.
  */
 export function refineDesign(
   structure: RefinementInput,
-  brief: Pick<DesignBrief, "direction">,
+  brief: Pick<DesignBrief, "direction" | "services" | "certifications" | "reviews" | "gallery">,
   designMemory?: DesignMemory | null
 ): RefinedDesign {
   const typography = refineTypography(designMemory);
-  const spacing = refineSpacing(structure.wireframe, designMemory);
+  const narrativeArc = computeNarrativeArcForSpacing(structure.wireframe, brief);
+  const spacing = refineSpacing(structure.wireframe, designMemory, narrativeArc);
   const layout = refineLayout(structure.wireframe);
   const motion = refineMotion(structure.wireframe, brief.direction.motionIntensity);
   const mobile = refineMobile(structure.wireframe, typography);

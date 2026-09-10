@@ -5,6 +5,7 @@ import type { ComponentNode, SectionType, Wireframe } from "@/lib/services/desig
 import {
   COMPONENT_PADDING_STEP_INDEX_BY_ROLE,
   INTERACTIVE_SECTIONS,
+  NARRATIVE_STAGE_PADDING_BIAS,
   NO_MOTION_SECTIONS,
   SECTION_PADDING_STEP_INDEX_BY_ROLE,
   TOUCH_TARGET_NAME_BY_SECTION,
@@ -337,7 +338,27 @@ export function qaSpacing(input: QaStructuredInput): DeterministicCategoryResult
   // applied, or every biased mission would spuriously fail here regardless
   // of whether Refinement did its job correctly (0 for a wireframe predating
   // compositionVariant, an exact no-op match to pre-existing behavior).
-  const bias = input.wireframe.compositionVariant?.paddingBiasSteps ?? 0;
+  const compositionBias = input.wireframe.compositionVariant?.paddingBiasSteps ?? 0;
+
+  // Phase 17 (Design Intelligence Gap Map, Fix #5): refineSpacing now also
+  // applies NARRATIVE_STAGE_PADDING_BIAS on top of compositionVariant's own
+  // bias — this independent re-check must know about that second real bias
+  // source too, the same "QA must apply the identical bias Refinement did"
+  // discipline Fix #4's own qaSpacing regression already established for
+  // compositionVariant above. Uses the wireframe's own UNFILTERED section
+  // list — the same list refineSpacing itself iterates — never the
+  // rendered/filtered list qaNarrativeConsistency/qaConversion use below for
+  // their own, differently-scoped question (grading the actually-rendered
+  // page, not re-deriving what refineSpacing computed for every wireframe
+  // section regardless of whether it later renders).
+  const narrativeArc = input.wireframe.experiencePlan
+    ? resolveNarrativeArc({
+        experiencePlan: input.wireframe.experiencePlan,
+        sections: input.wireframe.sections.map((s) => s.type),
+        evidence: narrativeEvidenceDensityFor(input.designBrief, input.wireframe),
+      })
+    : null;
+  const narrativeStageBySection = new Map(narrativeArc?.stageBySection.map((s) => [s.section, s.stage]));
 
   const roleViolations: string[] = [];
   for (const entry of spacing.sectionSpacing) {
@@ -348,13 +369,16 @@ export function qaSpacing(input: QaStructuredInput): DeterministicCategoryResult
       );
       continue;
     }
+    const narrativeStage = narrativeStageBySection.get(entry.section);
+    const narrativeBias = narrativeStage ? NARRATIVE_STAGE_PADDING_BIAS[narrativeStage] ?? 0 : 0;
+    const bias = compositionBias + narrativeBias;
     const expectedSectionPad =
       spacing.scale.steps[clampStepIndex(SECTION_PADDING_STEP_INDEX_BY_ROLE[expectedRole] + bias, spacing.scale.steps.length)];
     const expectedComponentPad =
       spacing.scale.steps[clampStepIndex(COMPONENT_PADDING_STEP_INDEX_BY_ROLE[expectedRole] + bias, spacing.scale.steps.length)];
     if (entry.sectionPaddingRem !== expectedSectionPad || entry.componentPaddingRem !== expectedComponentPad) {
       roleViolations.push(
-        `Section "${entry.section}" (role "${expectedRole}") padding is ${entry.sectionPaddingRem}rem/${entry.componentPaddingRem}rem, expected ${expectedSectionPad}rem/${expectedComponentPad}rem for this role per the sitewide scale${bias !== 0 ? ` (compositionVariant.paddingBiasSteps: ${bias})` : ""}.`
+        `Section "${entry.section}" (role "${expectedRole}") padding is ${entry.sectionPaddingRem}rem/${entry.componentPaddingRem}rem, expected ${expectedSectionPad}rem/${expectedComponentPad}rem for this role per the sitewide scale${bias !== 0 ? ` (compositionVariant.paddingBiasSteps: ${compositionBias}, narrative stage "${narrativeStage ?? "none"}" bias: ${narrativeBias})` : ""}.`
       );
     }
   }
