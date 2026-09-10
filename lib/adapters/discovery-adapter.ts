@@ -67,6 +67,47 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
   }
 }
 
+/**
+ * Both Nominatim and Overpass are public, keyless, rate-limited services —
+ * a 429/502/503/504 (or a timed-out/network-failed fetch) is an expected,
+ * transient condition for this kind of API, not a real failure, confirmed
+ * live: a real scan failed outright on a single Overpass 504 that a retry
+ * moments later would very likely have cleared. A genuine 4xx (400/406/etc)
+ * means this exact request is malformed and retrying it verbatim would just
+ * fail the same way again, so those are returned immediately for the
+ * caller's own existing !res.ok handling, unchanged.
+ */
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+const MAX_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(url: string, init?: RequestInit): Promise<Response> {
+  let lastResponse: Response | undefined;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetchWithTimeout(url, init);
+      if (res.ok || !RETRYABLE_STATUS_CODES.has(res.status)) {
+        return res;
+      }
+      lastResponse = res;
+    } catch (err) {
+      lastError = err;
+    }
+    if (attempt < MAX_RETRIES) {
+      await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
+    }
+  }
+
+  if (lastResponse) return lastResponse;
+  throw lastError;
+}
+
 export interface GeocodedArea {
   displayName: string;
   latitude: number;
@@ -83,7 +124,7 @@ export interface GeocodedArea {
  */
 export async function geocodeLocation(location: string): Promise<GeocodedArea | null> {
   const url = `${NOMINATIM_BASE_URL}/search?format=json&limit=1&q=${encodeURIComponent(location)}`;
-  const res = await fetchWithTimeout(url);
+  const res = await fetchWithRetry(url);
   if (!res.ok) return null;
   const results = (await res.json()) as Array<{
     display_name: string;
@@ -220,7 +261,7 @@ export async function discoverBusinesses(input: DiscoverBusinessesInput): Promis
   const uniqueTags = [...new Set(tags)];
 
   const query = buildOverpassQuery(input.area, uniqueTags, maxResults);
-  const res = await fetchWithTimeout(OVERPASS_BASE_URL, {
+  const res = await fetchWithRetry(OVERPASS_BASE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: `data=${encodeURIComponent(query)}`,

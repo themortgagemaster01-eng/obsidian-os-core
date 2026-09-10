@@ -1,7 +1,13 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseOverpassElements, OSM_TAGS_BY_INDUSTRY_BUCKET, type OverpassElement } from "@/lib/adapters/discovery-adapter";
+import {
+  parseOverpassElements,
+  OSM_TAGS_BY_INDUSTRY_BUCKET,
+  discoverBusinesses,
+  geocodeLocation,
+  type OverpassElement,
+} from "@/lib/adapters/discovery-adapter";
 
 // A real, captured shape from a live Overpass query against Kitchener, ON
 // (this adapter's own validation run) — restaurant/fast_food/cafe nodes
@@ -106,5 +112,95 @@ describe("discovery-adapter: OSM_TAGS_BY_INDUSTRY_BUCKET", () => {
         assert.match(tag, /^[a-z:]+=\S+$/, `${bucket}'s tag "${tag}" is not a valid key=value OSM tag`);
       }
     }
+  });
+});
+
+describe("discovery-adapter: retry/backoff on transient failures", () => {
+  const AREA = {
+    displayName: "Kitchener, Ontario",
+    latitude: 43.45,
+    longitude: -80.49,
+    boundingBox: [43.4, 43.5, -80.6, -80.4] as [number, number, number, number],
+  };
+
+  function fakeResponse(opts: { status: number; body: unknown }) {
+    return {
+      status: opts.status,
+      ok: opts.status >= 200 && opts.status < 300,
+      json: async () => opts.body,
+      text: async () => JSON.stringify(opts.body),
+      statusText: `status ${opts.status}`,
+    };
+  }
+
+  test("discoverBusinesses retries a transient Overpass 504 and succeeds on the next attempt — a real scan failure this closes (mahopac/carmel, NY, 2026-09-09)", async (t) => {
+    const originalFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (calls === 1) return fakeResponse({ status: 504, body: {} }) as unknown as Response;
+      return fakeResponse({ status: 200, body: { elements: REAL_SHAPE_ELEMENTS } }) as unknown as Response;
+    }) as typeof fetch;
+
+    const results = await discoverBusinesses({ area: AREA, osmTags: ["amenity=restaurant"] });
+    assert.equal(calls, 2, "expected exactly one retry after the first 504");
+    assert.ok(results.length > 0, "expected real parsed results after the retry succeeded, not an empty/thrown result");
+  });
+
+  test("discoverBusinesses does not retry a non-retryable 4xx — fails on the first attempt", async (t) => {
+    const originalFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return fakeResponse({ status: 400, body: { error: "bad query" } }) as unknown as Response;
+    }) as typeof fetch;
+
+    await assert.rejects(() => discoverBusinesses({ area: AREA, osmTags: ["amenity=restaurant"] }), /Overpass API request failed \(400\)/);
+    assert.equal(calls, 1, "a 4xx is a real client-error signal — retrying it verbatim would just fail identically");
+  });
+
+  test("discoverBusinesses gives up after exhausting retries against a persistent 504, with the same honest error shape as before this fix", async (t) => {
+    const originalFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return fakeResponse({ status: 504, body: {} }) as unknown as Response;
+    }) as typeof fetch;
+
+    await assert.rejects(() => discoverBusinesses({ area: AREA, osmTags: ["amenity=restaurant"] }), /Overpass API request failed \(504\)/);
+    assert.equal(calls, 3, "expected the initial attempt plus 2 retries, then giving up");
+  });
+
+  test("geocodeLocation also retries a transient Nominatim failure via the same shared helper", async (t) => {
+    const originalFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (calls === 1) return fakeResponse({ status: 503, body: [] }) as unknown as Response;
+      return fakeResponse({
+        status: 200,
+        body: [{ display_name: "Kitchener, Ontario", lat: "43.45", lon: "-80.49", boundingbox: ["43.4", "43.5", "-80.6", "-80.4"] }],
+      }) as unknown as Response;
+    }) as typeof fetch;
+
+    const area = await geocodeLocation("Kitchener, Ontario");
+    assert.equal(calls, 2, "expected exactly one retry after the first 503");
+    assert.ok(area && area.displayName === "Kitchener, Ontario", "expected the real geocoded area after the retry succeeded");
   });
 });
