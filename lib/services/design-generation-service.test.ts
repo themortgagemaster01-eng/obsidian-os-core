@@ -9,7 +9,10 @@ import {
   collectContentWarnings,
   resolveSignatureSection,
   hasUnrenderedEvidenceSection,
+  decideDesignGenerationOverlapGuardAction,
+  checkDesignGenerationOverlap,
   type SectionType,
+  type DesignGenerationServiceDeps,
 } from "@/lib/services/design-generation-service";
 import { matchesGenericSaasTemplate } from "@/lib/design-intelligence/layout-rules";
 import { refineMotion } from "@/lib/services/design-refinement-service";
@@ -17,6 +20,7 @@ import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { IndustryBucket } from "@/lib/design-references/reference-library";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 import type { ContactInfo, MenuCategory, GalleryImage } from "@/lib/adapters/types";
+import type { WebsiteDesignRow } from "@/lib/repositories/website-design-repository";
 
 const NO_CONTACT_EVIDENCE: ContactInfo = { phones: [], emails: [], address: null, hours: null };
 
@@ -1154,5 +1158,143 @@ describe("design-generation-service: collectContentWarnings (evidence conflict p
     const brief = briefFor("dentistMedical", "credibility-led");
     const { contentWarnings } = generateWebsiteStructure(brief, { hasRealTestimonials: false });
     assert.deepEqual(contentWarnings, []);
+  });
+});
+
+const FIFTEEN_MIN_MS = 15 * 60 * 1000;
+
+function fakeWebsiteDesignRun(overrides: Partial<WebsiteDesignRow> = {}): WebsiteDesignRow {
+  const now = new Date().toISOString();
+  return {
+    id: "design-1",
+    design_brief_id: "brief-1",
+    mission_id: "mission-1",
+    organization_id: "org-1",
+    status: "running",
+    wireframe: null,
+    components: null,
+    error_message: null,
+    started_at: now,
+    completed_at: null,
+    created_at: now,
+    refined_design: null,
+    qa_result: null,
+    preview_screenshot_desktop_path: null,
+    preview_screenshot_mobile_path: null,
+    preview_screenshot_captured_at: null,
+    preview_screenshot_error: null,
+    ...overrides,
+  } as unknown as WebsiteDesignRow;
+}
+
+describe("design-generation-service: decideDesignGenerationOverlapGuardAction (overlap protection, mirrors design-brief-service's own guard)", () => {
+  test("no in-flight generation for this mission — proceed", () => {
+    assert.deepEqual(decideDesignGenerationOverlapGuardAction(null, Date.now(), FIFTEEN_MIN_MS), { kind: "proceed" });
+  });
+
+  test("the mission's latest generation already reached a terminal status — proceed, regardless of which one", () => {
+    const now = Date.now();
+    assert.deepEqual(decideDesignGenerationOverlapGuardAction(fakeWebsiteDesignRun({ status: "complete" }), now, FIFTEEN_MIN_MS), {
+      kind: "proceed",
+    });
+    assert.deepEqual(decideDesignGenerationOverlapGuardAction(fakeWebsiteDesignRun({ status: "failed" }), now, FIFTEEN_MIN_MS), {
+      kind: "proceed",
+    });
+  });
+
+  test("a 'pending' row (not yet flipped to running) counts as in-flight too — already_running, not proceed", () => {
+    const now = Date.now();
+    const pendingRun = fakeWebsiteDesignRun({ status: "pending", started_at: null, created_at: new Date(now - 60_000).toISOString() });
+    const result = decideDesignGenerationOverlapGuardAction(pendingRun, now, FIFTEEN_MIN_MS);
+    assert.deepEqual(result, { kind: "already_running", runningRun: pendingRun });
+  });
+
+  test("a fresh running generation (well within the duration bound) — already_running, never a duplicate", () => {
+    const now = Date.now();
+    const freshRun = fakeWebsiteDesignRun({ status: "running", started_at: new Date(now - 60_000).toISOString() });
+    const result = decideDesignGenerationOverlapGuardAction(freshRun, now, FIFTEEN_MIN_MS);
+    assert.deepEqual(result, { kind: "already_running", runningRun: freshRun });
+  });
+
+  test("a running generation older than the max duration bound — reap it, then allow a new one to proceed", () => {
+    const now = Date.now();
+    const staleRun = fakeWebsiteDesignRun({
+      id: "stale-design-1",
+      status: "running",
+      started_at: new Date(now - 20 * 60 * 1000).toISOString(),
+    });
+    const result = decideDesignGenerationOverlapGuardAction(staleRun, now, FIFTEEN_MIN_MS);
+    assert.deepEqual(result, { kind: "reap_stale_then_proceed", staleRunId: "stale-design-1" });
+  });
+
+  test("exactly at the boundary is treated as still-fresh, not stale (age must exceed, not merely equal, the bound)", () => {
+    const now = Date.now();
+    const boundaryRun = fakeWebsiteDesignRun({ status: "running", started_at: new Date(now - FIFTEEN_MIN_MS).toISOString() });
+    assert.equal(decideDesignGenerationOverlapGuardAction(boundaryRun, now, FIFTEEN_MIN_MS).kind, "already_running");
+  });
+
+  test("one millisecond past the bound is stale", () => {
+    const now = Date.now();
+    const justPastRun = fakeWebsiteDesignRun({ status: "running", started_at: new Date(now - FIFTEEN_MIN_MS - 1).toISOString() });
+    assert.equal(decideDesignGenerationOverlapGuardAction(justPastRun, now, FIFTEEN_MIN_MS).kind, "reap_stale_then_proceed");
+  });
+});
+
+describe("design-generation-service: checkDesignGenerationOverlap (the route-facing guard)", () => {
+  function fakeOverlapDeps(runs: WebsiteDesignRow[]) {
+    const updated: { id: string; values: unknown }[] = [];
+    const websiteDesignRepository = {
+      async findInFlightByMission(_client: unknown, missionId: string) {
+        return runs.find((r) => r.mission_id === missionId && (r.status === "pending" || r.status === "running")) ?? null;
+      },
+      async update(_client: unknown, id: string, values: Record<string, unknown>) {
+        updated.push({ id, values });
+        const index = runs.findIndex((r) => r.id === id);
+        runs[index] = { ...runs[index], ...values } as WebsiteDesignRow;
+        return runs[index];
+      },
+    };
+    return {
+      deps: { client: {}, websiteDesignRepository } as unknown as Pick<DesignGenerationServiceDeps, "client" | "websiteDesignRepository">,
+      updated,
+      runs,
+    };
+  }
+
+  test("no in-flight generation — proceed, nothing reaped", async () => {
+    const { deps, updated } = fakeOverlapDeps([]);
+    const result = await checkDesignGenerationOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "proceed" });
+    assert.equal(updated.length, 0);
+  });
+
+  test("a fresh in-flight generation for the same mission — already_running, the real row is returned", async () => {
+    const freshRun = fakeWebsiteDesignRun({ mission_id: "mission-1", started_at: new Date().toISOString() });
+    const { deps } = fakeOverlapDeps([freshRun]);
+    const result = await checkDesignGenerationOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "already_running", runningRun: freshRun });
+  });
+
+  test("an in-flight generation for a DIFFERENT mission never blocks this one", async () => {
+    const otherMissionRun = fakeWebsiteDesignRun({ mission_id: "mission-2", started_at: new Date().toISOString() });
+    const { deps } = fakeOverlapDeps([otherMissionRun]);
+    const result = await checkDesignGenerationOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "proceed" });
+  });
+
+  test("a stale in-flight generation is actually reaped (marked failed, real error_message, completed_at set) before proceeding", async () => {
+    const staleRun = fakeWebsiteDesignRun({
+      id: "stale-design-2",
+      mission_id: "mission-1",
+      started_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    });
+    const { deps, updated, runs } = fakeOverlapDeps([staleRun]);
+    const result = await checkDesignGenerationOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "proceed" });
+    assert.equal(updated.length, 1);
+    assert.equal(updated[0].id, "stale-design-2");
+    assert.equal(runs[0].status, "failed");
+    assert.ok(runs[0].completed_at);
+    assert.match(runs[0].error_message ?? "", /abandoned/);
   });
 });

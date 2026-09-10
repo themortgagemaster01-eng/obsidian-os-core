@@ -1255,6 +1255,70 @@ export interface CreateDesignGenerationRunInput {
   organizationId: string;
 }
 
+/**
+ * How long a pending/running generation is trusted before it's treated as
+ * abandoned — same reasoning as analysis-service.ts/design-brief-service.ts's
+ * own guards. 15 minutes is comfortably generous while still catching a
+ * genuinely stuck row quickly.
+ */
+const DEFAULT_MAX_GENERATION_INFLIGHT_DURATION_MS = 15 * 60 * 1000;
+
+export type DesignGenerationOverlapGuardAction =
+  | { kind: "proceed" }
+  | { kind: "reap_stale_then_proceed"; staleRunId: string }
+  | { kind: "already_running"; runningRun: WebsiteDesignRow };
+
+/**
+ * decideDesignGenerationOverlapGuardAction — "is it safe to start a new
+ * generation for this mission," mirroring design-brief-service.ts's own
+ * decideDesignBriefOverlapGuardAction shape exactly, including a 'pending'
+ * row counting as in-flight and age measured from started_at when
+ * present, created_at otherwise (a 'pending' row has no started_at yet).
+ */
+export function decideDesignGenerationOverlapGuardAction(
+  currentlyInFlightRun: WebsiteDesignRow | null,
+  nowMs: number,
+  maxInFlightDurationMs: number
+): DesignGenerationOverlapGuardAction {
+  if (!currentlyInFlightRun || (currentlyInFlightRun.status !== "pending" && currentlyInFlightRun.status !== "running")) {
+    return { kind: "proceed" };
+  }
+  const referenceMs = new Date(currentlyInFlightRun.started_at ?? currentlyInFlightRun.created_at).getTime();
+  const ageMs = nowMs - referenceMs;
+  if (ageMs > maxInFlightDurationMs) {
+    return { kind: "reap_stale_then_proceed", staleRunId: currentlyInFlightRun.id };
+  }
+  return { kind: "already_running", runningRun: currentlyInFlightRun };
+}
+
+/**
+ * checkDesignGenerationOverlap — the route-facing half: resolves the
+ * mission's currently in-flight generation (if any), decides what to do,
+ * and reaps a stale one (marks it failed) before returning "proceed" — the
+ * caller (POST /api/missions/:id/generate-design) calls this BEFORE
+ * creating a new row, so it can return a real 409 instead of creating a
+ * duplicate.
+ */
+export async function checkDesignGenerationOverlap(
+  deps: Pick<DesignGenerationServiceDeps, "client" | "websiteDesignRepository">,
+  missionId: string
+): Promise<{ kind: "proceed" } | { kind: "already_running"; runningRun: WebsiteDesignRow }> {
+  const inFlightRun = await deps.websiteDesignRepository.findInFlightByMission(deps.client, missionId);
+  const action = decideDesignGenerationOverlapGuardAction(inFlightRun, Date.now(), DEFAULT_MAX_GENERATION_INFLIGHT_DURATION_MS);
+
+  if (action.kind === "reap_stale_then_proceed") {
+    await deps.websiteDesignRepository.update(deps.client, action.staleRunId, {
+      status: "failed",
+      error_message:
+        "Website generation considered abandoned — exceeded its maximum expected duration, likely due to a process restart, cancellation, or crash before it could reach a real terminal status.",
+      completed_at: new Date().toISOString(),
+    });
+    return { kind: "proceed" };
+  }
+
+  return action;
+}
+
 /** The fast, synchronous half: creates the `website_designs` row at `status: 'pending'` and returns immediately, mirroring createDesignBriefRun/createAnalysisRun. */
 export async function createDesignGenerationRun(
   deps: DesignGenerationServiceDeps,

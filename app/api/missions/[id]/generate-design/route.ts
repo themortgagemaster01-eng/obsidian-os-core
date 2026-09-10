@@ -11,6 +11,7 @@ import {
   createDesignGenerationRun,
   createDesignGenerationServiceDeps,
   runDesignGeneration,
+  checkDesignGenerationOverlap,
 } from "@/lib/services/design-generation-service";
 
 interface RouteParams {
@@ -134,6 +135,22 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   if (!designBrief || designBrief.status !== "complete") {
     return NextResponse.json(
       { error: "No completed Design Brief found for this mission — run POST /api/missions/:id/design-brief first." },
+      { status: 409 }
+    );
+  }
+
+  // Overlap guard: checked before creating a new row, so a caller gets a
+  // real 409 instead of a duplicate generation racing the one already in
+  // flight for this mission. The DB's own partial unique index
+  // (website_designs_one_inflight_per_mission) is the real, final
+  // authority against a genuine race between this check and the insert.
+  const overlap = await checkDesignGenerationOverlap(createDesignGenerationServiceDeps(supabase), mission.id);
+  if (overlap.kind === "already_running") {
+    return NextResponse.json(
+      {
+        error: `A website generation is already ${overlap.runningRun.status} for this mission — wait for it to finish before starting another.`,
+        runningWebsiteDesign: overlap.runningRun,
+      },
       { status: 409 }
     );
   }

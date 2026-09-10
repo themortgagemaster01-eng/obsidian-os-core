@@ -64,6 +64,28 @@ export const websiteDesignRepository = {
   },
 
   /**
+   * The overlap guard's own "is a generation already in flight for this
+   * mission" question — same shape and reasoning as
+   * designBriefRepository.findInFlightByMission: 'pending' (set by
+   * createDesignGenerationRun) and 'running' (set later by
+   * runDesignGeneration, in the background job the route never awaits)
+   * both count as in-flight. At most one row can ever match, since the
+   * DB-level partial unique index (website_designs_one_inflight_per_mission)
+   * is the real authority that guarantees it.
+   */
+  async findInFlightByMission(client: TypedClient, missionId: string): Promise<WebsiteDesignRow | null> {
+    const { data, error } = await client
+      .from("website_designs")
+      .select("*")
+      .eq("mission_id", missionId)
+      .in("status", ["pending", "running"])
+      .maybeSingle();
+
+    if (error) throw error;
+    return data;
+  },
+
+  /**
    * Every completed design run in an organization — design-qa-service.ts's
    * batch input for lib/design-intelligence/layout-rules.ts's
    * findDuplicateSectionStructures() (§4.3/§4.10/§4.11's cross-mission
