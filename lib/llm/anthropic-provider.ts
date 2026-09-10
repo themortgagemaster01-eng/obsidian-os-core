@@ -3,7 +3,18 @@ import type { LlmProvider, LlmMessageRequest } from "@/lib/llm/provider";
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_API_VERSION = "2023-06-01";
 const DEFAULT_MAX_TOKENS = 4096;
-const FETCH_TIMEOUT_MS = 45_000;
+/**
+ * Raised from 45s to 60s (Phase 5.5): design-intelligence-service.ts's own
+ * Pass 1 call (design-brief-service.ts's largest, DESIGN_INTELLIGENCE_MAX_TOKENS
+ * = 8192) was independently measured at ~51s for a real, successful,
+ * healthy completion — uncomfortably close to the old 45s abort threshold.
+ * A timeout that's too tight doesn't just risk a false-positive abort on a
+ * legitimately-slow-but-working request, it actively works against
+ * fetchAnthropicWithRetry below: aborting and retrying a call that was
+ * always going to succeed just adds latency without adding safety. 60s
+ * gives real headroom above the one real data point this codebase has.
+ */
+const FETCH_TIMEOUT_MS = 60_000;
 /** 429 (rate limit) and 529 (Anthropic's own "overloaded") are the two documented, expected-to-retry statuses for this API; 500/502/503/504 are the same generic transient-failure set every other adapter in this codebase retries. */
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504, 529]);
 const MAX_RETRIES = 2;

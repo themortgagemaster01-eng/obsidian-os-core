@@ -271,6 +271,23 @@ function validCritiqueResponseJson(): string {
   return JSON.stringify({ isGeneric: false, violatesContentBoundary: false, reasoning: "Traceable to real evidence.", recommendation: null });
 }
 
+/** Flags the Pass 1 result as generic — the one condition that triggers the third, bounded revision call in generateDesignIntelligence. */
+function genericCritiqueResponseJson(): string {
+  return JSON.stringify({
+    isGeneric: true,
+    violatesContentBoundary: false,
+    reasoning: "Reads like a template, not grounded in this business's real evidence.",
+    recommendation: "Ground heroThesis in the real photography and menu evidence.",
+  });
+}
+
+function revisedDesignIntelligenceResponseJson(): string {
+  const revised = JSON.parse(validDesignIntelligenceResponseJson());
+  revised.designBrief.heroThesis = "A real neighborhood diner, grounded in its own real photography.";
+  revised.reasoning = "Revised: heroThesis now specifically traceable to the real gallery evidence.";
+  return JSON.stringify(revised);
+}
+
 /** A minimal, real fake LlmProvider — the exact two-call (Pass 1 + Pass 2 critique) shape design-intelligence-service.test.ts's own fakeProvider already establishes. Tracks call count so tests can assert the LLM was (or, for IDENTITY_FAILED, was NOT) ever invoked. */
 function fakeLlmProvider(): LlmProvider & { callCount: number } {
   const provider = {
@@ -666,5 +683,75 @@ describe("design-brief-service: checkDesignBriefOverlap (the route-facing guard)
     assert.equal(runs[0].status, "failed");
     assert.ok(runs[0].completed_at);
     assert.match(runs[0].error_message ?? "", /abandoned/);
+  });
+});
+
+describe("design-brief-service: runDesignBrief under the real worst-case shape (Phase 5.5 — the maxDuration/timeout fix)", () => {
+  /**
+   * Exercises the exact worst-case Robert asked this fix to hold up under:
+   * the revision path triggered (3 sequential LLM calls, not 2) AND one of
+   * those calls needing what a real retry would look like (a slower
+   * response than the others). This can't reproduce the real wall-clock
+   * duration (fetchAnthropicWithRetry's own real timing is already proven
+   * with real setTimeout delays in lib/llm/anthropic-provider.test.ts —
+   * 511ms/1522ms/504ms measured, unchanged logic, just a larger constant)
+   * without making this test impractically slow. What it DOES prove for
+   * real, with real (small, proportional) async delays rather than
+   * instant-resolving mocks: runDesignBrief's own orchestration correctly
+   * awaits and sequences all three calls in order, the revision path's
+   * result — not the original flagged draft — is what actually gets
+   * persisted, and nothing in this codebase's own code (as opposed to the
+   * network layer already proven separately) introduces any additional
+   * blocking, deadlock, or premature resolution under this exact shape.
+   */
+  function slowFakeLlmProvider(delaysMs: { pass1: number; critique: number; revision: number }): LlmProvider & { callCount: number } {
+    const responses = [
+      { body: validDesignIntelligenceResponseJson(), delay: delaysMs.pass1 },
+      { body: genericCritiqueResponseJson(), delay: delaysMs.critique },
+      { body: revisedDesignIntelligenceResponseJson(), delay: delaysMs.revision },
+    ];
+    const provider = {
+      name: "fake:test-model-slow",
+      callCount: 0,
+      async complete(this: { callCount: number }) {
+        const { body, delay } = responses[this.callCount];
+        this.callCount += 1;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return body;
+      },
+    };
+    return provider as unknown as LlmProvider & { callCount: number };
+  }
+
+  test("revision triggered + the slowest call taking as long as a real timeout-then-retry would — still completes 'complete' with the REVISED content actually persisted, not orphaned", async () => {
+    // Proportional stand-in for the real worst case (a call that needed a
+    // full 60s timeout before a successful 60s retry lands around 120s
+    // real-world) — scaled down so the test stays fast while still being
+    // genuinely asynchronous, not instant-resolving.
+    const llmProvider = slowFakeLlmProvider({ pass1: 120, critique: 20, revision: 100 });
+    const { deps, mission } = buildTestDeps({
+      lead: { location: "Springfield, IL", discovery_phone: null, discovery_address: null },
+      llmProvider,
+    });
+
+    const startedAt = Date.now();
+    const result = await runDesignBrief(deps, "brief-1");
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(result.status, "complete", "must reach a real terminal state, never left orphaned at 'running'");
+    assert.equal(llmProvider.callCount, 3, "revision must actually have been triggered — Pass 1 + critique + revision, not just 2 calls");
+    assert.equal(mission.current.state, "reviewing");
+
+    const brief = (result as unknown as { brief: DesignBrief }).brief;
+    assert.equal(
+      brief.heroThesis,
+      "A real neighborhood diner, grounded in its own real photography.",
+      "the REVISED brief must be what's persisted — the original flagged-generic draft must never win"
+    );
+
+    // Real, not simulated: the three calls' own delays (120+20+100=240ms)
+    // must actually have been awaited in sequence, proving this codebase's
+    // own orchestration doesn't race, skip, or otherwise resolve early.
+    assert.ok(elapsedMs >= 240, `expected the three real delays to be genuinely awaited in sequence (>=240ms), got ${elapsedMs}ms`);
   });
 });

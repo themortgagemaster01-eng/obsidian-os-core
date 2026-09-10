@@ -22,10 +22,33 @@ interface RouteParams {
  * otherwise untracked background work — see the matching fix in
  * app/api/leads/scan/route.ts (commit 2873e6f). waitUntil() below keeps the
  * function alive until it settles; maxDuration raises the execution budget
- * to this Hobby-plan route's max so that extension has real time to use —
- * a real design brief run took ~56s end to end when this was verified live.
+ * so that extension has real time to use.
+ *
+ * Raised from 60 to 280 (Phase 5.5): runDesignBrief's real shape is up to
+ * three SEQUENTIAL LLM calls (Pass 1, a mandatory critique, and — only if
+ * the critique flags the result as generic or a content-boundary violation
+ * — one bounded revision), each now able to retry through
+ * fetchAnthropicWithRetry (lib/llm/anthropic-provider.ts). A single stuck
+ * live row (design_briefs f8f06285, Sep 10 2026, 30+ minutes at 'running'
+ * with no error) traced to exactly this: the function very likely exceeded
+ * the old 60s ceiling and was killed by the platform before any code could
+ * mark the row 'failed' — the same "killed mid-flight" symptom as the
+ * original waitUntil bug, just triggered by legitimate worst-case latency
+ * this time, not a missing waitUntil() (which was already in place).
+ *
+ * Vercel's Hobby plan, with Fluid Compute (enabled by default), allows up
+ * to 300s — confirmed via Vercel's own docs, not assumed. 280 leaves a
+ * real ~7% buffer below that true ceiling. Worst case this covers with
+ * real margin: revision triggered (3 calls) AND two of the three calls
+ * each need one retry that hits the full 60s timeout before succeeding —
+ * (60+1+51) + 10 + (60+1+50) ≈ 233s, ~47s (20%) of headroom under 280.
+ * Even one call fully exhausting all 3 attempts via timeout (60+1+60+2+60
+ * = 183s) plus the other two completing normally (~60s) ≈ 243s still fits
+ * with real margin. A scenario beyond that (every attempt on every call
+ * timing out) is a sustained network outage, not a bound worth designing
+ * a single request/response cycle around.
  */
-export const maxDuration = 60;
+export const maxDuration = 280;
 
 /**
  * GET /api/missions/:id/design-brief — read-only counterpart to the POST
