@@ -9,6 +9,7 @@ import { rankLeads } from "@/lib/services/lead-scoring-service";
 import { Badge } from "@/components/ui/badge";
 import { ScanForm } from "@/components/lead-hunter/scan-form";
 import { AutoRefreshWhileScanning } from "@/components/lead-hunter/auto-refresh-while-scanning";
+import { PageLoadError } from "@/components/ui/page-load-error";
 
 /**
  * Lead Hunter — "Today's Top Opportunities" (CTO Lead Hunter directive §8,
@@ -23,17 +24,33 @@ import { AutoRefreshWhileScanning } from "@/components/lead-hunter/auto-refresh-
 export default async function LeadHunterPage() {
   const supabase = createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[/leads] supabase.auth.getUser() threw:", err);
+    return <PageLoadError message="Could not verify your session — please reload the page." />;
+  }
   if (!user) {
     return null;
   }
 
-  const profile = await profileRepository.findById(supabase, user.id);
-  const organizationId = profile?.default_organization_id;
-  const leads = organizationId ? await leadRepository.listByOrganization(supabase, organizationId) : [];
-  const latestScan = organizationId ? await leadScanRepository.findLatestByOrganization(supabase, organizationId) : null;
+  let leads: LeadRow[];
+  let latestScan: LeadScanRunRow | null;
+  try {
+    const profile = await profileRepository.findById(supabase, user.id);
+    const organizationId = profile?.default_organization_id;
+    leads = organizationId ? await leadRepository.listByOrganization(supabase, organizationId) : [];
+    latestScan = organizationId ? await leadScanRepository.findLatestByOrganization(supabase, organizationId) : null;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[/leads] failed to load leads data:", err);
+    return <PageLoadError message="Could not load your leads right now — please reload the page." />;
+  }
 
   // "Rejected this scan" means exactly that — leads is every rejected lead
   // this org has ever had (no scan_run_id column exists to join on), so

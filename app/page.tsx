@@ -13,6 +13,7 @@ import { NewMissionDialog } from "@/components/mission-control/new-mission-dialo
 import { ProductionLine } from "@/components/mission-control/production-line";
 import { SignOutButton } from "@/components/mission-control/sign-out-button";
 import { profileRepository } from "@/lib/repositories/profile-repository";
+import { PageLoadError } from "@/components/ui/page-load-error";
 
 /**
  * Mission Control — the authenticated home. Server component: fetches real
@@ -22,9 +23,17 @@ import { profileRepository } from "@/lib/repositories/profile-repository";
 export default async function MissionControlPage() {
   const supabase = createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[/] supabase.auth.getUser() threw:", err);
+    return <PageLoadError message="Could not verify your session — please reload the page." />;
+  }
 
   // middleware.ts already guards this route, but guard again defensively
   // for direct server-side rendering / type-narrowing.
@@ -32,18 +41,21 @@ export default async function MissionControlPage() {
     return null;
   }
 
-  const profile = await profileRepository.findById(supabase, user.id);
-  const organizationId = profile?.default_organization_id;
+  let missions, completedDesigns;
+  try {
+    const profile = await profileRepository.findById(supabase, user.id);
+    const organizationId = profile?.default_organization_id;
 
-  // Every user gets a default organization at signup (see
-  // handle_new_user() in supabase/migrations/0002_organizations.sql), so
-  // this should never be null in practice — guarded defensively.
-  const missions = organizationId
-    ? await listMissionsForOrganization(supabase, organizationId)
-    : [];
-  const completedDesigns = organizationId
-    ? await websiteDesignRepository.listCompletedByOrganization(supabase, organizationId)
-    : [];
+    // Every user gets a default organization at signup (see
+    // handle_new_user() in supabase/migrations/0002_organizations.sql), so
+    // this should never be null in practice — guarded defensively.
+    missions = organizationId ? await listMissionsForOrganization(supabase, organizationId) : [];
+    completedDesigns = organizationId ? await websiteDesignRepository.listCompletedByOrganization(supabase, organizationId) : [];
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[/] failed to load mission control data:", err);
+    return <PageLoadError message="Could not load Mission Control right now — please reload the page." />;
+  }
   const missionsWithPreview = computeMissionsWithPreview(completedDesigns);
   const stats = computeMissionControlStats(missions, missionsWithPreview);
   const lineCounts = computeProductionLineCounts(missions);

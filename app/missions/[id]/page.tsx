@@ -17,6 +17,7 @@ import { MissionHeader } from "@/components/mission-detail/mission-header";
 import { AnalysisPanel } from "@/components/mission-detail/analysis-panel";
 import { DesignBriefPanel } from "@/components/mission-detail/design-brief-panel";
 import { ApprovalPanel } from "@/components/mission-detail/approval-panel";
+import { PageLoadError } from "@/components/ui/page-load-error";
 
 interface PageParams {
   params: { id: string };
@@ -34,24 +35,45 @@ interface PageParams {
 export default async function MissionDetailPage({ params }: PageParams) {
   const supabase = createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  let user;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[/missions/${params.id}] supabase.auth.getUser() threw:`, err);
+    return <PageLoadError message="Could not verify your session — please reload the page." />;
+  }
   if (!user) {
     return null;
   }
 
   // RLS-scoped: doubles as the authorization check.
-  const mission = await missionRepository.findById(supabase, params.id);
+  let mission;
+  try {
+    mission = await missionRepository.findById(supabase, params.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[/missions/${params.id}] mission lookup failed:`, err);
+    return <PageLoadError message="Could not look up this mission — please reload the page." />;
+  }
   if (!mission) {
     notFound();
   }
 
-  const analysis = await websiteAnalysisRepository.findLatestByMission(supabase, mission.id);
-  const design = await websiteDesignRepository.findLatestByMission(supabase, mission.id);
-  const designBrief = await designBriefRepository.findLatestByMission(supabase, mission.id);
-  const proposal = await proposalRepository.findByMission(supabase, mission.id);
+  let analysis, design, designBrief, proposal;
+  try {
+    analysis = await websiteAnalysisRepository.findLatestByMission(supabase, mission.id);
+    design = await websiteDesignRepository.findLatestByMission(supabase, mission.id);
+    designBrief = await designBriefRepository.findLatestByMission(supabase, mission.id);
+    proposal = await proposalRepository.findByMission(supabase, mission.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[/missions/${params.id}] failed to load mission pipeline data:`, err);
+    return <PageLoadError message="Could not load this mission's data right now — please reload the page." backHref="/" />;
+  }
 
   let report = null;
   let screenshotUrl: string | null = null;
