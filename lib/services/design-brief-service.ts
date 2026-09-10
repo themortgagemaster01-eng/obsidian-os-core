@@ -515,6 +515,10 @@ export async function runDesignBrief(
     const updated = await deps.designBriefRepository.update(deps.client, designBriefId, {
       status: "complete",
       completed_at: new Date().toISOString(),
+      // A retry that succeeds after an earlier failed attempt must not
+      // leave that attempt's error_message behind on an otherwise-'complete'
+      // row — confirmed stale in production (Station Plaza Wine, Sep 2026).
+      error_message: null,
       industry_bucket: brief.industryBucket,
       brief: brief as unknown as Json,
       design_memory: designMemory as unknown as Json,

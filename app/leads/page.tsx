@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { profileRepository } from "@/lib/repositories/profile-repository";
 import { leadRepository, type LeadRow } from "@/lib/repositories/lead-repository";
-import { leadScanRepository } from "@/lib/repositories/lead-scan-repository";
+import { leadScanRepository, type LeadScanRunRow } from "@/lib/repositories/lead-scan-repository";
 import { rankLeads } from "@/lib/services/lead-scoring-service";
 import { Badge } from "@/components/ui/badge";
 import { ScanForm } from "@/components/lead-hunter/scan-form";
@@ -35,7 +35,16 @@ export default async function LeadHunterPage() {
   const leads = organizationId ? await leadRepository.listByOrganization(supabase, organizationId) : [];
   const latestScan = organizationId ? await leadScanRepository.findLatestByOrganization(supabase, organizationId) : null;
 
-  const rejected = leads.filter((l) => l.status === "rejected");
+  // "Rejected this scan" means exactly that — leads is every rejected lead
+  // this org has ever had (no scan_run_id column exists to join on), so
+  // scope it to the latest scan's own [started_at, completed_at] window via
+  // qualified_at, the timestamp every lead-hunter-service.ts upsert sets on
+  // both the candidate and rejected branches. A lead re-touched by the
+  // latest scan (same discovery_external_id, existing row updated in
+  // place) correctly counts as "this scan" even if the row itself is old.
+  const rejected = latestScan
+    ? leads.filter((l) => l.status === "rejected" && isWithinScanWindow(l.qualified_at, latestScan))
+    : [];
   // Rank: an explicit step, not an implicit database ORDER BY — highest
   // opportunity first, confidence as the tie-break (CTO Phase 3 directive).
   const candidates = rankLeads(
@@ -128,6 +137,15 @@ export default async function LeadHunterPage() {
       </div>
     </main>
   );
+}
+
+/** A scan still `running` has no completed_at yet — its window is open-ended, up to now. */
+function isWithinScanWindow(timestamp: string | null, scanRun: LeadScanRunRow): boolean {
+  if (!timestamp) return false;
+  const t = new Date(timestamp).getTime();
+  const windowStart = new Date(scanRun.started_at).getTime();
+  const windowEnd = scanRun.completed_at ? new Date(scanRun.completed_at).getTime() : Date.now();
+  return t >= windowStart && t <= windowEnd;
 }
 
 const MAKEOVER_POTENTIAL_LABEL: Record<string, string> = {
