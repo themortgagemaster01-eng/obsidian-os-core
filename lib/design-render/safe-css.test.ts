@@ -47,12 +47,93 @@ describe("safe-css", () => {
     assert.equal(toSafeCssColor("Something like rgb(10, 20, 30) for the accent.", "#000000"), "rgb(10, 20, 30)");
   });
 
-  test("toSafeCssColor still falls back when the prose contains no extractable color token at all", () => {
-    assert.equal(toSafeCssColor("Warm terracotta, no hex given", "#C9A227"), "#C9A227");
+  test("toSafeCssColor still falls back when the prose contains no extractable color token or recognized color term at all", () => {
+    assert.equal(toSafeCssColor("A moody, sophisticated tone with real depth", "#C9A227"), "#C9A227");
   });
 
   test("toSafeCssColor ignores an invalid-length hex run embedded in prose and falls back", () => {
     assert.equal(toSafeCssColor("Something like #12ab5 in tone", "#C9A227"), "#C9A227");
+  });
+
+  // ===========================================================================
+  // Fix #7 (Design Intelligence Gap Map) — the embedded-hex rescue above only
+  // ever fires when the model happens to include a literal hex code, which
+  // real production data (Dante's Trattoria, Carriage House Mahopac) proved
+  // it essentially never does: real colorPalette values are purely
+  // descriptive ("Deep terracotta / brick red...", "Deep aged-wood
+  // brown..."), so every one of those fields was still silently falling back
+  // to the identical navy/gold palette for every business. Fix: a small,
+  // closed NAMED_COLOR_VOCABULARY resolves recognized color-family terms
+  // deterministically, tried only after both hex paths already fail.
+  // ===========================================================================
+  describe("toSafeCssColor — Fix #7 (named color vocabulary)", () => {
+    test("(a) recognized color terms resolve to real, distinct colors instead of the shared fallback", () => {
+      const terracotta = toSafeCssColor("Deep terracotta / brick red, sampled from real photography", "#1E3A5F");
+      const olive = toSafeCssColor("Olive green", "#1E3A5F");
+      const cream = toSafeCssColor("Warm cream / parchment background", "#1E3A5F");
+      const charcoal = toSafeCssColor("Charcoal for text, not pure black, for softer contrast", "#1E3A5F");
+
+      assert.notEqual(terracotta, "#1E3A5F");
+      assert.notEqual(olive, "#1E3A5F");
+      assert.notEqual(cream, "#1E3A5F");
+      assert.notEqual(charcoal, "#1E3A5F");
+      // All four genuinely different colors, not one term matching everything.
+      assert.equal(new Set([terracotta, olive, cream, charcoal]).size, 4);
+    });
+
+    test("(a) the exact motivating bug: 'Warm terracotta, no hex given' now resolves to a real color, not the fallback", () => {
+      assert.equal(toSafeCssColor("Warm terracotta, no hex given", "#C9A227"), "#C2571B");
+    });
+
+    test("(a) hyphenated real phrasing ('aged-wood') resolves the same as a spaced variant would", () => {
+      const hyphenated = toSafeCssColor("Deep aged-wood brown, sampled from real interior photography", "#1E3A5F");
+      const spaced = toSafeCssColor("A deep aged wood brown tone", "#1E3A5F");
+      assert.equal(hyphenated, spaced);
+      assert.notEqual(hyphenated, "#1E3A5F");
+    });
+
+    test("(a) vocabulary added specifically for Carriage House Mahopac's real accent field ('brass'/'gold')", () => {
+      assert.notEqual(toSafeCssColor("Muted brass/gold used sparingly for the call-to-action only", "#1E3A5F"), "#1E3A5F");
+    });
+
+    test("(b) deterministic — repeated calls with the same input produce the identical result", () => {
+      const input = "Warm, low-saturation tones pulled from the actual photography — aged wood, amber light, deep neutral backgrounds.";
+      const first = toSafeCssColor(input, "#1E3A5F");
+      const second = toSafeCssColor(input, "#1E3A5F");
+      assert.equal(first, second);
+    });
+
+    test("(b) when multiple recognized terms appear in one string, the leftmost (first-mentioned) one wins, deterministically", () => {
+      const result = toSafeCssColor("A palette moving from olive at the top to terracotta below", "#1E3A5F");
+      assert.equal(result, "#6B7A3A"); // olive, mentioned first — not terracotta
+    });
+
+    test("(c) explicit hex precedence is completely unchanged — a hex embedded alongside a recognized color word still wins", () => {
+      // Pre-existing test above already proves this for "terracotta... #C9622D";
+      // this adds coverage for a vocabulary term Fix #7 itself introduced.
+      assert.equal(toSafeCssColor("A deep aged wood brown, close to #4A2F1E in practice.", "#000000"), "#4A2F1E");
+    });
+
+    test("(c) functional-color precedence is also unchanged in the presence of a recognized color word", () => {
+      assert.equal(toSafeCssColor("Something amber-toned, like rgb(198, 142, 23) for the accent.", "#000000"), "rgb(198, 142, 23)");
+    });
+
+    test("(d) unrecognized color language not in the closed vocabulary still falls back exactly as before — never a guessed/invented color", () => {
+      assert.equal(toSafeCssColor("A moody mauve and dusty rose palette", "#C9A227"), "#C9A227");
+      assert.equal(toSafeCssColor("Something turquoise and coral", "#C9A227"), "#C9A227");
+    });
+
+    test("(d) missing/empty input still falls back exactly as before, unaffected by the new vocabulary", () => {
+      assert.equal(toSafeCssColor(undefined, "#1E3A5F"), "#1E3A5F");
+      assert.equal(toSafeCssColor(null, "#1E3A5F"), "#1E3A5F");
+      assert.equal(toSafeCssColor("", "#1E3A5F"), "#1E3A5F");
+    });
+
+    test("(d) never a false match inside an unrelated longer word — word-boundary matching, not raw substring", () => {
+      // 'cream' must not match inside 'creamery'; 'gold' must not match inside 'marigold'.
+      assert.equal(toSafeCssColor("The old creamery building now houses the dining room", "#1E3A5F"), "#1E3A5F");
+      assert.equal(toSafeCssColor("Fields of marigold surround the property", "#1E3A5F"), "#1E3A5F");
+    });
   });
 
   // ===========================================================================

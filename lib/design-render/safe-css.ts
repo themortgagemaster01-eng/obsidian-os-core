@@ -18,7 +18,18 @@
  * - toSafeCssColor extracts the first embedded valid `#RRGGBB`-style hex
  *   token (e.g. pulls "#122A3D" out of "Deep navy (#122A3D-range)") before
  *   falling back — real per-business color reaches the page instead of the
- *   same default every time.
+ *   same default every time. Fix #7 (Design Intelligence Gap Map) found this
+ *   only ever fires when the model happens to embed a literal hex code,
+ *   which real production data (Dante's Trattoria, Carriage House Mahopac)
+ *   confirmed it essentially never does — real output is purely descriptive
+ *   ("Deep terracotta / brick red...", "Deep aged-wood brown...") with no
+ *   hex anywhere, so the "same navy/gold palette for every business" bug
+ *   this paragraph describes was still happening in practice. toSafeCssColor
+ *   now also tries a small, closed NAMED_COLOR_VOCABULARY of real color-
+ *   family terms (terracotta, olive, amber, aged wood, cream, charcoal,
+ *   forest green, burgundy, navy, warm white, brass, gold) before falling
+ *   back — never unrestricted natural-language color interpretation, never
+ *   an LLM call, never an invented color outside this fixed list.
  * - toSafeFontFamilyStack had a quieter version of the identical bug: an
  *   arbitrary quoted string is syntactically valid CSS wherever a
  *   font-family is expected, so the old code never "failed," but a
@@ -67,6 +78,89 @@ const EMBEDDED_HEX_TOKEN = /#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{4}|[0-9a-f]{3})
 /** Matches a CSS rgb()/rgba()/hsl()/hsla() function call embedded anywhere inside a longer string. */
 const EMBEDDED_FUNCTIONAL_COLOR = /(?:rgb|rgba|hsl|hsla)\([^)]+\)/i;
 
+/**
+ * Fix #7 (Design Intelligence Gap Map) — the CTO Remediation directive above
+ * only rescues prose that happens to embed a literal hex/functional token
+ * ("Deep navy (#122A3D-range)..."). Confirmed by the Fix #6/#7 audit against
+ * two real, live missions (Dante's Trattoria, Carriage House Mahopac) that
+ * this is NOT what the model actually produces in practice — real
+ * DesignMemory.colorPalette values are purely descriptive ("Deep terracotta
+ * / brick red, sampled from real photography", "Deep aged-wood brown...")
+ * with no embedded hex at all, so every one of those fields was silently
+ * falling through to the same fixed fallback for every business, exactly
+ * the "same navy/gold palette for every business" failure this file's own
+ * doc comment already describes as fixed — it wasn't, for this shape of
+ * output.
+ *
+ * A small, closed, deterministic vocabulary — never unrestricted natural-
+ * language color interpretation, never a second LLM call, never an invented
+ * color the vocabulary doesn't cover. Each hex is a real, representative
+ * tone for that color family (navy/gold reuse this exact renderer's own
+ * existing FALLBACK.primary/accent values — the same "existing palette/
+ * theme tokens" this fix is required to reuse rather than invent a second
+ * color system). Brass/gold were added beyond the founder's own illustrative
+ * list specifically because Carriage House Mahopac's real, live
+ * colorPalette.accent ("Muted brass/gold used sparingly for the
+ * call-to-action only") needs one of them to resolve to a real color rather
+ * than the fallback — confirmed by direct verification against that
+ * mission's actual persisted data, not speculative.
+ */
+const NAMED_COLOR_VOCABULARY: Record<string, string> = {
+  terracotta: "#C2571B",
+  olive: "#6B7A3A",
+  amber: "#C68E17",
+  "aged wood": "#6B4A32",
+  cream: "#F3E9D2",
+  charcoal: "#36454F",
+  "forest green": "#2E4B32",
+  burgundy: "#5E1F30",
+  navy: "#1E3A5F",
+  "warm white": "#F7F3EC",
+  brass: "#B08D57",
+  gold: "#C9A227",
+};
+
+const NAMED_COLOR_ENTRIES: { term: string; hex: string; pattern: RegExp }[] = Object.entries(
+  NAMED_COLOR_VOCABULARY
+).map(([term, hex]) => ({
+  term,
+  hex,
+  // Word-boundary matching so "cream" never matches inside "creamery" and
+  // "olive" never matches inside an unrelated proper noun — the same
+  // false-positive discipline typography-rules.ts's own DISPLAY_LED_SCALE_
+  // KEYWORDS already established for this codebase's other keyword
+  // classifiers (its own "Playfair Display" false-positive precedent).
+  pattern: new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+")}\\b`, "i"),
+}));
+
+/**
+ * Extracts the earliest-mentioned recognized color-family term from free
+ * text and returns its mapped hex value, or null when nothing in the closed
+ * vocabulary is present. Hyphens are normalized to spaces first so "aged-
+ * wood" (Carriage House Mahopac's real, literal phrasing) matches the same
+ * "aged wood" vocabulary entry as a spaced variant would. When multiple
+ * recognized terms appear in one string, the one mentioned first (leftmost)
+ * wins — deterministic, and matches how a human reading the same sentence
+ * would naturally weight "the color mentioned first" — never a second,
+ * independent judgment about which color is more "important."
+ */
+function extractNamedColorToken(raw: string): string | null {
+  const normalized = raw.toLowerCase().replace(/-/g, " ");
+  let bestHex: string | null = null;
+  let bestIndex = Infinity;
+  let bestLength = 0;
+  for (const entry of NAMED_COLOR_ENTRIES) {
+    const match = entry.pattern.exec(normalized);
+    if (!match) continue;
+    if (match.index < bestIndex || (match.index === bestIndex && entry.term.length > bestLength)) {
+      bestHex = entry.hex;
+      bestIndex = match.index;
+      bestLength = entry.term.length;
+    }
+  }
+  return bestHex;
+}
+
 /** True only for strings that are actually valid CSS `<color>` syntax — hex, rgb()/hsl() functions, or a single bare keyword. Multi-word prose ("Warm terracotta") is rejected, not guessed at. */
 export function isPlausibleCssColor(value: string): boolean {
   const v = value.trim();
@@ -77,11 +171,20 @@ export function isPlausibleCssColor(value: string): boolean {
 /**
  * Returns `raw` if it's plausible CSS color syntax; otherwise looks for a
  * real, valid hex or rgb()/hsl() token embedded inside the prose (e.g. "Deep
- * navy (#122A3D-range)..." -> "#122A3D") and returns that; otherwise
- * `fallback` — never emits a value that would silently fail, but no longer
- * discards real per-business color reasoning just because it arrived as a
- * sentence instead of a bare token (CTO Design Intelligence Remediation
- * directive, Issue 1).
+ * navy (#122A3D-range)..." -> "#122A3D") and returns that; otherwise (Fix
+ * #7) looks for a recognized natural-language color term from the closed
+ * NAMED_COLOR_VOCABULARY (e.g. "Deep terracotta / brick red..." ->
+ * "#C2571B"); otherwise `fallback` — never emits a value that would
+ * silently fail, but no longer discards real per-business color reasoning
+ * just because it arrived as a sentence instead of a bare token or an
+ * embedded hex code (CTO Design Intelligence Remediation directive, Issue
+ * 1, extended by Fix #7 to the far more common case of purely descriptive
+ * color language with no hex anywhere in it).
+ *
+ * Explicit-hex precedence is unchanged and untouched: a valid hex/functional
+ * token, whether standalone or embedded, is still matched and returned
+ * BEFORE the named-color vocabulary is ever consulted — Fix #7 only adds a
+ * new rescue attempt after both of those already fail, never before.
  */
 export function toSafeCssColor(raw: string | undefined | null, fallback: string): string {
   if (!raw) return fallback;
@@ -91,6 +194,8 @@ export function toSafeCssColor(raw: string | undefined | null, fallback: string)
   if (hexMatch) return hexMatch[0];
   const functionalMatch = v.match(EMBEDDED_FUNCTIONAL_COLOR);
   if (functionalMatch) return functionalMatch[0];
+  const namedColorMatch = extractNamedColorToken(v);
+  if (namedColorMatch) return namedColorMatch;
   return fallback;
 }
 
