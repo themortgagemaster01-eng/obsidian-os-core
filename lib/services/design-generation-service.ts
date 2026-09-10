@@ -682,6 +682,38 @@ function conflictsWithContactEvidence(candidate: string, address: string | null)
   return !address.toLowerCase().includes(named[1].toLowerCase());
 }
 
+function normalizeForComparison(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/**
+ * True when a metaDescription-derived headline candidate is substantially
+ * just the business's own name immediately followed by its address — a
+ * real regression distinct from conflictsWithContactEvidence above (Station
+ * Plaza Wine, Sep 2026: the business's own real <meta name="description">
+ * literally read "Station Plaza Wine 102 Kraft Avenue, Bronxville NY
+ * 10708", nothing else). conflictsWithContactEvidence only rejects a
+ * location claim that DISAGREES with contactEvidence.address — a candidate
+ * whose address portion agrees with it isn't a "conflict," so it slipped
+ * through and rendered as the hero headline, directly redundant with the
+ * real address already shown separately in heroQuickFacts/the contact
+ * section. Not fabrication to reject this — it's honestly recognizing that
+ * "name + address" is contact information, not marketing copy, so the
+ * caller falls through to heroThesis (or the honest placeholder) instead.
+ */
+function isJustBusinessNameAndAddress(candidate: string, businessName: string, address: string | null): boolean {
+  if (!address) return false;
+  const normalizedCandidate = normalizeForComparison(candidate);
+  const normalizedName = normalizeForComparison(businessName);
+  if (!normalizedName || !normalizedCandidate.startsWith(normalizedName)) return false;
+  const remainder = normalizedCandidate.slice(normalizedName.length).trim();
+  if (!remainder) return false;
+  return normalizeForComparison(address).includes(remainder);
+}
+
 /**
  * Chooses the hero headline: a cleaned, reconciled metaDescription when one
  * exists and survives cleanup/reconciliation, otherwise the real,
@@ -779,7 +811,12 @@ function containsInternalRationaleLanguage(text: string): boolean {
 
 function buildHeroHeadline(context: AssembleComponentsContext): ComponentSlot[] {
   const rawMeta = context.metaDescription?.trim();
-  if (rawMeta && !hasUnreconciledMetaDescription(context) && !containsInternalRationaleLanguage(rawMeta)) {
+  if (
+    rawMeta &&
+    !hasUnreconciledMetaDescription(context) &&
+    !containsInternalRationaleLanguage(rawMeta) &&
+    !isJustBusinessNameAndAddress(rawMeta, context.businessName, context.contactEvidence.address)
+  ) {
     const cleaned = stripTrailingCtaAndLocation(rawMeta);
     if (cleaned) {
       const { headline, supportingText } = splitHeroHeadline(cleaned);
@@ -1109,6 +1146,15 @@ export function collectContentWarnings(context: AssembleComponentsContext): Cont
       field: "headline",
       rejectedValue: rawMeta,
       reason: "metaDescription reads as internal design rationale/audit commentary rather than customer-facing copy — dropped rather than rendered.",
+    });
+  }
+
+  if (rawMeta && isJustBusinessNameAndAddress(rawMeta, context.businessName, context.contactEvidence.address)) {
+    warnings.push({
+      section: "hero",
+      field: "headline",
+      rejectedValue: rawMeta,
+      reason: `metaDescription is just the business name followed by its address (${context.contactEvidence.address ?? "no verified address captured"}), not real marketing copy — dropped rather than rendered redundantly next to the contact card; heroThesis used instead where available.`,
     });
   }
 

@@ -311,7 +311,7 @@ export function DesignPreview({
   const mainSections = renderedSections.filter((s) => s.type !== "footer");
   const footerSection = renderedSections.find((s) => s.type === "footer");
 
-  const renderSection = ({ type, rationale }: { type: SectionType; rationale: string }) => {
+  const renderSection = ({ type }: { type: SectionType }) => {
     const node = componentsBySection.get(type)!;
     const isSignature = type === signatureSection;
     const background = type === "footer" ? secondary : type === "hero" ? primary : neutral;
@@ -363,7 +363,6 @@ export function DesignPreview({
         key={type}
         section={type}
         refinedDesign={refinedDesign}
-        rationale={rationale}
         background={background}
         foreground={foreground}
         backgroundImageUrl={type === "hero" ? heroImageUrl : null}
@@ -739,7 +738,6 @@ function SignatureRule({ accent, widthRem = 3 }: { accent: string; widthRem?: nu
 function SectionShell({
   section,
   refinedDesign,
-  rationale,
   background,
   foreground,
   backgroundImageUrl,
@@ -751,7 +749,6 @@ function SectionShell({
 }: {
   section: SectionType;
   refinedDesign: RefinedDesign;
-  rationale: string;
   background: string;
   foreground: string;
   /** Real, already-captured business photography (see DesignPreviewProps.heroImageUrl) — currently only ever passed for "hero". */
@@ -804,7 +801,6 @@ function SectionShell({
       id={sectionAnchorId(section)}
       data-section={section}
       data-op-animated={motion ? "" : undefined}
-      title={rationale}
       aria-label={sectionAriaLabel(section)}
       style={{
         backgroundColor: background,

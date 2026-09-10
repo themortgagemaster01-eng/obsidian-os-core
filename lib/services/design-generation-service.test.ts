@@ -1118,6 +1118,22 @@ describe("design-generation-service: hero composition (headline/supportingText s
       }
     }
   });
+
+  test("the actual rendered headline slot falls back to heroThesis, not the redundant name+address metaDescription — Station Plaza Wine, real regression", () => {
+    const wireframe = generateWireframe(briefFor("general", "credibility-led"), { hasRealTestimonials: false });
+    const heroThesis = "A real neighborhood wine shop, grounded in its own real selection.";
+    const components = assembleComponents(wireframe, {
+      businessName: "Station Plaza Wine",
+      citedInsights: [],
+      contactEvidence: { phones: [], emails: [], address: "102 Kraft Avenue, Bronxville, NY, 10708, US", hours: null },
+      metaDescription: "Station Plaza Wine 102 Kraft Avenue, Bronxville NY 10708",
+      heroThesis,
+    });
+    const hero = components.find((c) => c.section === "hero")!;
+    const headline = hero.slots.find((s) => s.name === "headline")!;
+    assert.equal(headline.value, heroThesis, "must fall through to heroThesis, never render the bare name+address string as the headline");
+    assert.doesNotMatch(headline.value!, /10708/, "the address must never appear in the headline — it's already shown separately in the contact card");
+  });
 });
 
 describe("design-generation-service: collectContentWarnings (evidence conflict preservation)", () => {
@@ -1152,6 +1168,32 @@ describe("design-generation-service: collectContentWarnings (evidence conflict p
       contactEvidence: NO_CONTACT_EVIDENCE,
     });
     assert.equal(nothingToCheck.length, 0);
+  });
+
+  test("records a content warning when metaDescription is just the business name + address — the real Station Plaza Wine regression (Sep 2026)", () => {
+    const context = {
+      businessName: "Station Plaza Wine",
+      citedInsights: [],
+      contactEvidence: { phones: [], emails: [], address: "102 Kraft Avenue, Bronxville, NY, 10708, US", hours: null } as ContactInfo,
+      metaDescription: "Station Plaza Wine 102 Kraft Avenue, Bronxville NY 10708",
+      heroThesis: "A real, evidence-grounded fallback headline.",
+    };
+    const warnings = collectContentWarnings(context);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].section, "hero");
+    assert.equal(warnings[0].field, "headline");
+    assert.equal(warnings[0].rejectedValue, context.metaDescription);
+    assert.match(warnings[0].reason, /just the business name followed by its address/);
+  });
+
+  test("does NOT flag real marketing copy that happens to start with the business name — only name+address specifically", () => {
+    const clean = collectContentWarnings({
+      businessName: "Acme Co",
+      citedInsights: [],
+      contactEvidence: { phones: [], emails: [], address: "1 Main St, Springfield, IL", hours: null } as ContactInfo,
+      metaDescription: "Acme Co — trusted local service since 1988.",
+    });
+    assert.equal(clean.length, 0);
   });
 
   test("generateWebsiteStructure exposes contentWarnings on its result, empty for clean data", () => {
