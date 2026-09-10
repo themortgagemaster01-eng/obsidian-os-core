@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { waitUntil } from "@vercel/functions";
 
 import { createClient } from "@/lib/supabase/server";
 import { createSecretKeyClient } from "@/lib/supabase/service-role";
@@ -10,6 +11,16 @@ interface BatchBody {
   requestedCount?: number;
   maxAttempts?: number;
 }
+
+/**
+ * Vercel is free to freeze this function's execution context the instant
+ * the 202 response below is sent, since the batch promise is otherwise
+ * untracked background work — see the matching fix in
+ * app/api/leads/scan/route.ts (commit 2873e6f). waitUntil() below keeps the
+ * function alive until it settles; maxDuration raises the execution budget
+ * to this Hobby-plan route's max so that extension has real time to use.
+ */
+export const maxDuration = 60;
 
 /**
  * POST /api/mission-batches — Phase 9: "Prepare N approval-ready prospect
@@ -82,10 +93,12 @@ export async function POST(request: NextRequest) {
   // rotatable secret key (see app/api/leads/scan/route.ts, commit 3023a36)
   // rather than the legacy service_role key.
   const backgroundDeps = createMissionBatchServiceDeps(createSecretKeyClient());
-  void runMissionBatch(backgroundDeps, { organizationId, location, requestedCount, maxAttempts, ownerId: user.id }).catch((err) => {
-    // eslint-disable-next-line no-console
-    console.error(`[mission-batch] organization ${organizationId}, location "${location}" failed:`, err);
-  });
+  waitUntil(
+    runMissionBatch(backgroundDeps, { organizationId, location, requestedCount, maxAttempts, ownerId: user.id }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(`[mission-batch] organization ${organizationId}, location "${location}" failed:`, err);
+    })
+  );
 
   return NextResponse.json({ status: "batch_started", location, requestedCount, maxAttempts: maxAttempts ?? requestedCount * 3 }, { status: 202 });
 }

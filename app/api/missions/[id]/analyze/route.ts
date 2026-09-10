@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { waitUntil } from "@vercel/functions";
 
 import { createClient } from "@/lib/supabase/server";
 import { createSecretKeyClient } from "@/lib/supabase/service-role";
@@ -12,6 +13,16 @@ import {
 interface RouteParams {
   params: { id: string };
 }
+
+/**
+ * Vercel is free to freeze this function's execution context the instant
+ * the 202 response below is sent, since the analysis promise is otherwise
+ * untracked background work — see the matching fix in
+ * app/api/leads/scan/route.ts (commit 2873e6f). waitUntil() below keeps the
+ * function alive until it settles; maxDuration raises the execution budget
+ * to this Hobby-plan route's max so that extension has real time to use.
+ */
+export const maxDuration = 60;
 
 /**
  * POST /api/missions/:id/analyze — triggers the Sprint 3 Analysis Engine
@@ -89,15 +100,17 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   // call here previously crashed this route unhandled, confirmed live via
   // a website_analyses row stuck at status: 'pending' with no error_message.
   const backgroundDeps = createAnalysisServiceDeps(createSecretKeyClient());
-  void runAnalysis(backgroundDeps, analysis.id).catch((err) => {
-    // Last-resort log: runAnalysis already persists failures to the
-    // website_analyses row itself (status: 'failed' + error_message) and
-    // publishes AnalysisFailed, so reaching this catch means something
-    // failed even more fundamentally than a normal adapter error (e.g.
-    // the row/mission lookup at the top of runAnalysis itself).
-    // eslint-disable-next-line no-console
-    console.error(`[analysis ${analysis!.id}] background run failed unexpectedly:`, err);
-  });
+  waitUntil(
+    runAnalysis(backgroundDeps, analysis.id).catch((err) => {
+      // Last-resort log: runAnalysis already persists failures to the
+      // website_analyses row itself (status: 'failed' + error_message) and
+      // publishes AnalysisFailed, so reaching this catch means something
+      // failed even more fundamentally than a normal adapter error (e.g.
+      // the row/mission lookup at the top of runAnalysis itself).
+      // eslint-disable-next-line no-console
+      console.error(`[analysis ${analysis!.id}] background run failed unexpectedly:`, err);
+    })
+  );
 
   return NextResponse.json({ analysis }, { status: 202 });
 }

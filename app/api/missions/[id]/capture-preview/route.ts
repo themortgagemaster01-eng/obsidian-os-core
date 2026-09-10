@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { waitUntil } from "@vercel/functions";
 
 import { createClient } from "@/lib/supabase/server";
 import { createSecretKeyClient } from "@/lib/supabase/service-role";
@@ -9,6 +10,16 @@ import { createPreviewCaptureServiceDeps, runPreviewCapture } from "@/lib/servic
 interface RouteParams {
   params: { id: string };
 }
+
+/**
+ * Vercel is free to freeze this function's execution context the instant
+ * the 202 response below is sent, since the capture promise is otherwise
+ * untracked background work — see the matching fix in
+ * app/api/leads/scan/route.ts (commit 2873e6f). waitUntil() below keeps the
+ * function alive until it settles; maxDuration raises the execution budget
+ * to this Hobby-plan route's max so that extension has real time to use.
+ */
+export const maxDuration = 60;
 
 /**
  * POST /api/missions/:id/capture-preview — Phase 4: triggers a real
@@ -68,10 +79,12 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   // independently-rotatable secret key (see app/api/leads/scan/route.ts,
   // commit 3023a36) rather than the legacy service_role key.
   const backgroundDeps = createPreviewCaptureServiceDeps(createSecretKeyClient());
-  void runPreviewCapture(backgroundDeps, websiteDesign.id).catch((err) => {
-    // eslint-disable-next-line no-console
-    console.error(`[preview-capture ${websiteDesign.id}] background run failed unexpectedly:`, err);
-  });
+  waitUntil(
+    runPreviewCapture(backgroundDeps, websiteDesign.id).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(`[preview-capture ${websiteDesign.id}] background run failed unexpectedly:`, err);
+    })
+  );
 
   return NextResponse.json({ websiteDesign }, { status: 202 });
 }

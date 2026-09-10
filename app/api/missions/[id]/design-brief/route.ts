@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { waitUntil } from "@vercel/functions";
 
 import { createClient } from "@/lib/supabase/server";
 import { createSecretKeyClient } from "@/lib/supabase/service-role";
@@ -13,6 +14,17 @@ import {
 interface RouteParams {
   params: { id: string };
 }
+
+/**
+ * Vercel is free to freeze this function's execution context the instant
+ * the 202 response below is sent, since the design brief promise is
+ * otherwise untracked background work — see the matching fix in
+ * app/api/leads/scan/route.ts (commit 2873e6f). waitUntil() below keeps the
+ * function alive until it settles; maxDuration raises the execution budget
+ * to this Hobby-plan route's max so that extension has real time to use —
+ * a real design brief run took ~56s end to end when this was verified live.
+ */
+export const maxDuration = 60;
 
 /**
  * GET /api/missions/:id/design-brief — read-only counterpart to the POST
@@ -125,14 +137,16 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   // unhandled, confirmed live via a design_briefs row stuck at status:
   // 'pending' with no error_message.
   const backgroundDeps = createDesignBriefServiceDeps(createSecretKeyClient());
-  void runDesignBrief(backgroundDeps, designBrief.id).catch((err) => {
-    // Last-resort log: runDesignBrief already persists failures to the
-    // design_briefs row itself (status: 'failed' + error_message) and
-    // publishes DesignBriefFailed, so reaching this catch means something
-    // failed even more fundamentally than a normal build error.
-    // eslint-disable-next-line no-console
-    console.error(`[design-brief ${designBrief!.id}] background run failed unexpectedly:`, err);
-  });
+  waitUntil(
+    runDesignBrief(backgroundDeps, designBrief.id).catch((err) => {
+      // Last-resort log: runDesignBrief already persists failures to the
+      // design_briefs row itself (status: 'failed' + error_message) and
+      // publishes DesignBriefFailed, so reaching this catch means something
+      // failed even more fundamentally than a normal build error.
+      // eslint-disable-next-line no-console
+      console.error(`[design-brief ${designBrief!.id}] background run failed unexpectedly:`, err);
+    })
+  );
 
   return NextResponse.json({ designBrief }, { status: 202 });
 }
