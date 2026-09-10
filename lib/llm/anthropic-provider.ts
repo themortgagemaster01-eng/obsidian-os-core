@@ -3,6 +3,15 @@ import type { LlmProvider, LlmMessageRequest } from "@/lib/llm/provider";
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_API_VERSION = "2023-06-01";
 const DEFAULT_MAX_TOKENS = 4096;
+const FETCH_TIMEOUT_MS = 45_000;
+/** 429 (rate limit) and 529 (Anthropic's own "overloaded") are the two documented, expected-to-retry statuses for this API; 500/502/503/504 are the same generic transient-failure set every other adapter in this codebase retries. */
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504, 529]);
+const MAX_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 1_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * Default model id — per this session's own model-id reference, "claude-
@@ -17,6 +26,44 @@ export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5";
 interface AnthropicMessagesResponse {
   content?: { type: string; text?: string }[];
   usage?: { input_tokens?: number; output_tokens?: number };
+}
+
+/**
+ * Previously a plain, unguarded fetch() with no timeout and no retry — a
+ * hung request could silently consume this route's entire maxDuration
+ * budget, and a transient 429/529 ("overloaded", Anthropic's own documented
+ * retry-worthy status) failed the whole Design Brief run outright. Mirrors
+ * the retry/backoff shape lib/adapters/discovery-adapter.ts's
+ * fetchWithRetry() already applies to Overpass/Nominatim — same principle,
+ * a different transport (POST + JSON body, no query string) — with a
+ * longer timeout and base delay to match a real completion call's own
+ * cost/latency versus a lightweight lookup.
+ */
+async function fetchAnthropicWithRetry(init: RequestInit): Promise<Response> {
+  let lastResponse: Response | undefined;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(ANTHROPIC_API_URL, { ...init, signal: controller.signal });
+      if (res.ok || !RETRYABLE_STATUS_CODES.has(res.status)) {
+        return res;
+      }
+      lastResponse = res;
+    } catch (err) {
+      lastError = err;
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (attempt < MAX_RETRIES) {
+      await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
+    }
+  }
+
+  if (lastResponse) return lastResponse;
+  throw lastError;
 }
 
 /**
@@ -67,7 +114,7 @@ export class AnthropicLlmProvider implements LlmProvider {
       { role: "user", content: request.userPrompt },
     ];
 
-    const response = await fetch(ANTHROPIC_API_URL, {
+    const response = await fetchAnthropicWithRetry({
       method: "POST",
       headers: {
         "x-api-key": apiKey,

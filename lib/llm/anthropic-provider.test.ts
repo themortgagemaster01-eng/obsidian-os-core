@@ -23,6 +23,24 @@ function mockFetchOnce(response: { ok: boolean; status?: number; statusText?: st
   }) as typeof fetch;
 }
 
+/** Returns each response in sequence (repeating the last one past the end) and reports how many times fetch was actually called — for testing retry/backoff. */
+function mockFetchSequence(responses: { ok: boolean; status?: number; statusText?: string; json?: unknown; text?: string }[]) {
+  let calls = 0;
+  global.fetch = (async (...args: FetchArgs) => {
+    lastFetchArgs = args;
+    const response = responses[Math.min(calls, responses.length - 1)];
+    calls += 1;
+    return {
+      ok: response.ok,
+      status: response.status ?? (response.ok ? 200 : 500),
+      statusText: response.statusText ?? "",
+      json: async () => response.json,
+      text: async () => response.text ?? "",
+    } as unknown as Response;
+  }) as typeof fetch;
+  return () => calls;
+}
+
 describe("anthropic-provider", () => {
   beforeEach(() => {
     originalFetch = global.fetch;
@@ -123,5 +141,40 @@ describe("anthropic-provider", () => {
     await provider.complete({ systemPrompt: "sys", userPrompt: "user", onUsage: () => (called = true) });
 
     assert.equal(called, false);
+  });
+
+  test("retries a transient 529 (Anthropic's own documented 'overloaded' status) and succeeds on the next attempt", async () => {
+    const getCalls = mockFetchSequence([
+      { ok: false, status: 529, text: "overloaded" },
+      { ok: true, json: { content: [{ type: "text", text: "hello" }] } },
+    ]);
+
+    const provider = new AnthropicLlmProvider();
+    const result = await provider.complete({ systemPrompt: "sys", userPrompt: "user" });
+
+    assert.equal(result, "hello");
+    assert.equal(getCalls(), 2, "expected exactly one retry after the first 529");
+  });
+
+  test("does not retry a 401 — fails on the first attempt (a bad key won't fix itself on retry)", async () => {
+    const getCalls = mockFetchSequence([{ ok: false, status: 401, statusText: "Unauthorized", text: "invalid api key" }]);
+
+    const provider = new AnthropicLlmProvider();
+    await assert.rejects(
+      () => provider.complete({ systemPrompt: "sys", userPrompt: "user" }),
+      /Anthropic API request failed \(401\).*invalid api key/
+    );
+    assert.equal(getCalls(), 1, "a 401 is a real auth-error signal — retrying it verbatim would just fail identically");
+  });
+
+  test("gives up after exhausting retries against a persistent 429, with the same honest error shape as before this fix", async () => {
+    const getCalls = mockFetchSequence([{ ok: false, status: 429, statusText: "Too Many Requests", text: "rate limited" }]);
+
+    const provider = new AnthropicLlmProvider();
+    await assert.rejects(
+      () => provider.complete({ systemPrompt: "sys", userPrompt: "user" }),
+      /Anthropic API request failed \(429\).*rate limited/
+    );
+    assert.equal(getCalls(), 3, "expected the initial attempt plus 2 retries, then giving up");
   });
 });
