@@ -22,15 +22,29 @@ interface CreateMissionBody {
 export async function POST(request: NextRequest) {
   const supabase = createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  let user;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[POST /api/missions] supabase.auth.getUser() threw:", err);
+    return NextResponse.json({ error: "Could not verify your session — please try again." }, { status: 500 });
+  }
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const profile = await profileRepository.findById(supabase, user.id);
+  let profile;
+  try {
+    profile = await profileRepository.findById(supabase, user.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions] profile lookup failed for user ${user.id}:`, err);
+    return NextResponse.json({ error: "Could not look up your profile — please try again." }, { status: 500 });
+  }
   const organizationId = profile?.default_organization_id;
 
   if (!organizationId) {

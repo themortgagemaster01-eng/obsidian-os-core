@@ -34,17 +34,31 @@ interface ApproveDesignBriefBody {
 export async function POST(request: NextRequest, { params }: RouteParams) {
   const supabase = createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  let user;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/approve-design-brief] supabase.auth.getUser() threw:`, err);
+    return NextResponse.json({ error: "Could not verify your session — please try again." }, { status: 500 });
+  }
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // RLS-scoped: doubles as the authorization check, same pattern as the
   // other mission-scoped routes.
-  const mission = await missionRepository.findById(supabase, params.id);
+  let mission;
+  try {
+    mission = await missionRepository.findById(supabase, params.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/approve-design-brief] mission lookup failed:`, err);
+    return NextResponse.json({ error: "Could not look up this mission — please try again." }, { status: 500 });
+  }
   if (!mission) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
   }

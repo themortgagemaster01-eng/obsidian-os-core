@@ -24,10 +24,17 @@ interface RouteParams {
 export async function POST(_request: NextRequest, { params }: RouteParams) {
   const supabase = createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  let user;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/leads/${params.id}/promote] supabase.auth.getUser() threw:`, err);
+    return NextResponse.json({ error: "Could not verify your session — please try again." }, { status: 500 });
+  }
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

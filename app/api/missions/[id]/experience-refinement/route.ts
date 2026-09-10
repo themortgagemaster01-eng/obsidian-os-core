@@ -46,15 +46,29 @@ function isValidPreference(value: unknown): value is HumanExperiencePreference {
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   const supabase = createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  let user;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[GET /api/missions/${params.id}/experience-refinement] supabase.auth.getUser() threw:`, err);
+    return NextResponse.json({ error: "Could not verify your session — please try again." }, { status: 500 });
+  }
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const mission = await missionRepository.findById(supabase, params.id);
+  let mission;
+  try {
+    mission = await missionRepository.findById(supabase, params.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[GET /api/missions/${params.id}/experience-refinement] mission lookup failed:`, err);
+    return NextResponse.json({ error: "Could not look up this mission — please try again." }, { status: 500 });
+  }
   if (!mission) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
   }
@@ -69,7 +83,14 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ baselinePlan: null, currentRefinement: null, reapplyPrompt: null });
   }
 
-  const briefRow = await designBriefRepository.findById(supabase, websiteDesign.design_brief_id);
+  let briefRow;
+  try {
+    briefRow = await designBriefRepository.findById(supabase, websiteDesign.design_brief_id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[GET /api/missions/${params.id}/experience-refinement] design brief lookup failed:`, err);
+    return NextResponse.json({ error: "Could not look up this mission's Design Brief — please try again." }, { status: 500 });
+  }
   if (!briefRow || briefRow.status !== "complete" || !briefRow.brief) {
     return NextResponse.json({ baselinePlan: null, currentRefinement: null, reapplyPrompt: null });
   }
@@ -111,15 +132,29 @@ interface RefineExperienceBody {
 export async function POST(request: NextRequest, { params }: RouteParams) {
   const supabase = createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  let user;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/experience-refinement] supabase.auth.getUser() threw:`, err);
+    return NextResponse.json({ error: "Could not verify your session — please try again." }, { status: 500 });
+  }
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const mission = await missionRepository.findById(supabase, params.id);
+  let mission;
+  try {
+    mission = await missionRepository.findById(supabase, params.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/experience-refinement] mission lookup failed:`, err);
+    return NextResponse.json({ error: "Could not look up this mission — please try again." }, { status: 500 });
+  }
   if (!mission) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
   }
