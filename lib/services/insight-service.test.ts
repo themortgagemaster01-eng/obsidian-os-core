@@ -171,4 +171,15 @@ describe("insight-service", () => {
     const insights = generateInsights(analysis);
     assert.ok(!insights.some((i) => i.category === "seo"));
   });
+
+  // Pipeline audit finding #3 (2026-09-11): technicalHealthScore had the
+  // exact same fake-0 bug as the three categories above, just missed by the
+  // original fix (analysis-types.ts's computeTechnicalHealth, not
+  // analysis-service.ts, so it lived outside that fix's scope). A crawl
+  // that never ran must not fabricate a "technical problems" insight.
+  test("Fix: an unmeasured technicalHealth score (null, not a fake 0) produces no technicalHealth-gap insight", () => {
+    const analysis: NormalizedAnalysis = { ...GOOD_ANALYSIS, technicalHealthScore: null };
+    const insights = generateInsights(analysis);
+    assert.ok(!insights.some((i) => i.id === "technical-health-gap"));
+  });
 });

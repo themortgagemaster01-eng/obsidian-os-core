@@ -74,7 +74,8 @@ export interface NormalizedAnalysis {
   /** `null` when the accessibility check never ran (e.g. a failed headless-Chrome launch) — same discipline as seoScore. Real production bug this fixed: a fake 0 here silently corrupted Dante's Trattoria's real Opportunity Score via opportunity-scoring-service.ts's blendAccessibility. */
   accessibilityScore: number | null;
   accessibilityFindings: string[];
-  technicalHealthScore: number;
+  /** `null` when the crawl the score is computed from never ran (see computeTechnicalHealth below) — never a fake 0 standing in for a measurement that didn't happen. Real production bug this fixed (pipeline audit finding #3, 2026-09-11): unlike seoScore/mobileScore/accessibilityScore, this field was still typed non-nullable and defaulted to 0 on a failed crawl, so a fully-failed crawl always counted as a real, confidently-measured 20% of the Opportunity Score — never excluded by opportunity-scoring-service.ts's null-exclusion path, the same corruption mechanism as the Dante's Trattoria incident Fix A addressed for the other three categories. */
+  technicalHealthScore: number | null;
   technicalHealthFindings: string[];
   lighthouse: {
     performance: number | null;
@@ -195,10 +196,10 @@ function clampScore(value: number): number {
 export function computeTechnicalHealth(
   crawl: CrawlRawResult | null | undefined,
   tech: TechDetectionRawResult | null | undefined
-): { score: number; findings: string[] } {
+): { score: number | null; findings: string[] } {
   if (!crawl || crawl.fetchError) {
     return {
-      score: 0,
+      score: null,
       findings: [
         crawl?.fetchError
           ? `Could not analyze the site's basic structure: ${crawl.fetchError}`

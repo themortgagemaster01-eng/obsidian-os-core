@@ -83,11 +83,11 @@ describe("opportunity-scoring-service", () => {
     assert.ok(!result.excludedCategories.includes("accessibility"));
   });
 
-  test("a real, honestly-measured 0 (not a failed check) across mobile/seo/accessibility is scored, never excluded", () => {
+  test("a real, honestly-measured 0 (not a failed check) across mobile/seo/accessibility/technicalHealth is scored, never excluded", () => {
     // Distinct from the fetchError/null regression tests below: these are
     // real zeros (e.g. a genuinely maxed-out penalty, or robots noindex),
-    // not an unmeasured check — technicalHealthScore is likewise never
-    // null. Only an unmeasured Performance score is excluded here.
+    // not an unmeasured check. Only an unmeasured Performance score is
+    // excluded here.
     const analysis: NormalizedAnalysis = {
       ...BASE,
       accessibilityScore: 0,
@@ -136,6 +136,25 @@ describe("opportunity-scoring-service", () => {
     assert.deepEqual(result.excludedCategories.sort(), ["accessibility", "mobile", "seo"]);
     // Only performance (40) and technicalHealth (90) remain measured.
     assert.equal(result.overallScore, 65);
+  });
+
+  // Pipeline audit finding #3 (2026-09-11): technicalHealthScore was still
+  // typed non-nullable and defaulted to a fake 0 on a failed crawl
+  // (analysis-types.ts's computeTechnicalHealth) — the exact bug class the
+  // tests above already proved fixed for mobile/seo/accessibility, just
+  // missed for this fifth category. This is the same live corruption
+  // mechanism as the Dante's Trattoria incident: a fake 0 always counted as
+  // a real, confidently-measured 20% of the average instead of being
+  // excluded and renormalized away.
+  test("Fix: an unmeasured technicalHealth score (null, not a fake 0) is excluded from the average and renormalized, not counted as a real 0", () => {
+    const analysis: NormalizedAnalysis = { ...BASE, technicalHealthScore: null };
+    const result = computeOpportunityScore(analysis);
+    assert.deepEqual(result.excludedCategories, ["technicalHealth"]);
+    const thCategory = result.categories.find((c) => c.category === "technicalHealth");
+    assert.equal(thCategory?.score, null);
+    assert.equal(thCategory?.weight, 0);
+    // Remaining 4 categories (performance 40, accessibility 60, seo 80, mobile 60) average to 60, not dragged down by a fake 0.
+    assert.equal(result.overallScore, 60);
   });
 
   test("scoreForCategory returns null for a category not present", () => {

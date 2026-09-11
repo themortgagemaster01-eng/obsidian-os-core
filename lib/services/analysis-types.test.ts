@@ -89,10 +89,26 @@ describe("normalizedAnalysisFromRow", () => {
     assert.equal(normalized.technicalHealthScore, 95);
   });
 
-  test("a null crawl_result (no crawl ever ran) still produces the existing honest zero-score fallback, unaffected by this fix", () => {
+  // Pipeline audit finding #3 (2026-09-11): a null crawl_result used to
+  // compute a fake, confidently-measured 0 here — the exact bug class Fix A
+  // already eliminated for seoScore/mobileScore/accessibilityScore, just
+  // missed for this field. A crawl that never ran must report unavailable,
+  // never a 0 that opportunity-scoring-service.ts would then average in as
+  // a real, badly-failing measurement.
+  test("Fix: a null crawl_result (no crawl ever ran) reports technicalHealthScore as null, never a fake 0", () => {
     const normalized = normalizedAnalysisFromRow(fakeRow({ crawl_result: null }), "https://acme.test/");
-    assert.equal(normalized.technicalHealthScore, 0);
+    assert.equal(normalized.technicalHealthScore, null);
     assert.deepEqual(normalized.technicalHealthFindings, ["Could not analyze the site's basic structure."]);
+  });
+
+  test("Fix: a crawl_result that ran but recorded a real fetchError also reports technicalHealthScore as null, not just a fully-missing crawl_result", () => {
+    const failedCrawl = { fetchError: "Navigation timeout of 20000 ms exceeded" };
+    const row = fakeRow({ crawl_result: failedCrawl as unknown as WebsiteAnalysisRow["crawl_result"] });
+    const normalized = normalizedAnalysisFromRow(row, "https://acme.test/");
+    assert.equal(normalized.technicalHealthScore, null);
+    assert.deepEqual(normalized.technicalHealthFindings, [
+      "Could not analyze the site's basic structure: Navigation timeout of 20000 ms exceeded",
+    ]);
   });
 
   // ===========================================================================
