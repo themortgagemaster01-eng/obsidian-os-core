@@ -170,7 +170,28 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   // Fire-and-forget: intentionally not awaited (ADR-012). Uses the
   // independently-rotatable secret key (see app/api/leads/scan/route.ts,
   // commit 3023a36) rather than the legacy service_role key.
-  const backgroundDeps = createDesignGenerationServiceDeps(createSecretKeyClient());
+  // Pipeline audit fix #4 (2026-09-11): createSecretKeyClient() throws
+  // synchronously if SUPABASE_SECRET_KEY is missing/misconfigured — by this
+  // point createDesignGenerationRun above has already inserted a real
+  // website_designs row, so simply returning an error here would leave it
+  // stuck at 'pending' forever (the exact "stuck row" symptom this whole
+  // audit went looking for). Marked 'failed' via the same request-scoped
+  // client that created it — createSecretKeyClient() failing doesn't affect
+  // that earlier client's validity.
+  let backgroundDeps;
+  try {
+    backgroundDeps = createDesignGenerationServiceDeps(createSecretKeyClient());
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/generate-design] createSecretKeyClient() threw:`, err);
+    const message = "Could not start the website generation background worker.";
+    await websiteDesignRepository.update(supabase, websiteDesign.id, {
+      status: "failed",
+      completed_at: new Date().toISOString(),
+      error_message: message,
+    });
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
   waitUntil(
     runDesignGeneration(backgroundDeps, websiteDesign.id).catch((err) => {
       // eslint-disable-next-line no-console

@@ -106,7 +106,20 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   // Fire-and-forget: intentionally not awaited (ADR-012). Uses the
   // independently-rotatable secret key (see app/api/leads/scan/route.ts,
   // commit 3023a36) rather than the legacy service_role key.
-  const backgroundDeps = createDesignQaServiceDeps(createSecretKeyClient());
+  //
+  // Pipeline audit fix #4 (2026-09-11): createSecretKeyClient() throws
+  // synchronously if SUPABASE_SECRET_KEY is missing/misconfigured —
+  // createDesignQaRun above only reads the existing website_designs row, it
+  // never creates or marks one 'pending', so a clean error response is
+  // sufficient.
+  let backgroundDeps;
+  try {
+    backgroundDeps = createDesignQaServiceDeps(createSecretKeyClient());
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/qa] createSecretKeyClient() threw:`, err);
+    return NextResponse.json({ error: "Could not start Design QA — please try again." }, { status: 500 });
+  }
   waitUntil(
     runDesignQa(backgroundDeps, run.id).catch((err) => {
       // eslint-disable-next-line no-console

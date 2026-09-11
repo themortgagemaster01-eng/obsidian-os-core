@@ -92,7 +92,19 @@ export async function POST(request: NextRequest) {
   // other long-running mission-pipeline route. Uses the independently-
   // rotatable secret key (see app/api/leads/scan/route.ts, commit 3023a36)
   // rather than the legacy service_role key.
-  const backgroundDeps = createMissionBatchServiceDeps(createSecretKeyClient());
+  //
+  // Pipeline audit fix #4 (2026-09-11): createSecretKeyClient() throws
+  // synchronously if SUPABASE_SECRET_KEY is missing/misconfigured — no
+  // mission_batch_runs row exists yet at this point (runMissionBatch
+  // creates it), so a clean error response is sufficient.
+  let backgroundDeps;
+  try {
+    backgroundDeps = createMissionBatchServiceDeps(createSecretKeyClient());
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[POST /api/mission-batches] createSecretKeyClient() threw:", err);
+    return NextResponse.json({ error: "Could not start this batch — please try again." }, { status: 500 });
+  }
   waitUntil(
     runMissionBatch(backgroundDeps, { organizationId, location, requestedCount, maxAttempts, ownerId: user.id }).catch((err) => {
       // eslint-disable-next-line no-console

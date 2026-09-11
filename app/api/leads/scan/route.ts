@@ -114,7 +114,19 @@ export async function POST(request: NextRequest) {
   const requestedScanSize = typeof body.scanSize === "number" && body.scanSize > 0 ? body.scanSize : MAX_SCAN_SIZE;
   const scanSize = Math.min(requestedScanSize, MAX_SCAN_SIZE);
 
-  const secretKeyClient = createSecretKeyClient();
+  // Pipeline audit fix #4 (2026-09-11): createSecretKeyClient() throws
+  // synchronously if SUPABASE_SECRET_KEY is missing/misconfigured — no row
+  // has been created yet at this point in this route, so a clean error
+  // response is sufficient (unlike analyze/design-brief/generate-design
+  // below, nothing needs to be marked 'failed' here).
+  let secretKeyClient;
+  try {
+    secretKeyClient = createSecretKeyClient();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[POST /api/leads/scan] createSecretKeyClient() threw:", err);
+    return NextResponse.json({ error: "Could not start this scan — please try again." }, { status: 500 });
+  }
 
   // Overlap guard: checked synchronously, before this responds, so a
   // caller gets a real 409 instead of an always-"scan_started" 202 that

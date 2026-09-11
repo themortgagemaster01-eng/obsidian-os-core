@@ -78,7 +78,19 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   // Fire-and-forget: intentionally not awaited (ADR-012). Uses the
   // independently-rotatable secret key (see app/api/leads/scan/route.ts,
   // commit 3023a36) rather than the legacy service_role key.
-  const backgroundDeps = createPreviewCaptureServiceDeps(createSecretKeyClient());
+  //
+  // Pipeline audit fix #4 (2026-09-11): createSecretKeyClient() throws
+  // synchronously if SUPABASE_SECRET_KEY is missing/misconfigured — no new
+  // row is created by this route (it operates on the existing websiteDesign
+  // row above), so a clean error response is sufficient.
+  let backgroundDeps;
+  try {
+    backgroundDeps = createPreviewCaptureServiceDeps(createSecretKeyClient());
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/capture-preview] createSecretKeyClient() threw:`, err);
+    return NextResponse.json({ error: "Could not start the preview capture — please try again." }, { status: 500 });
+  }
   waitUntil(
     runPreviewCapture(backgroundDeps, websiteDesign.id).catch((err) => {
       // eslint-disable-next-line no-console

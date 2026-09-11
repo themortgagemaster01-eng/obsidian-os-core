@@ -176,7 +176,28 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   // createServiceRoleClient() call here previously crashed this route
   // unhandled, confirmed live via a design_briefs row stuck at status:
   // 'pending' with no error_message.
-  const backgroundDeps = createDesignBriefServiceDeps(createSecretKeyClient());
+  // Pipeline audit fix #4 (2026-09-11): createSecretKeyClient() throws
+  // synchronously if SUPABASE_SECRET_KEY is missing/misconfigured — by this
+  // point createDesignBriefRun above has already inserted a real
+  // design_briefs row, so simply returning an error here would leave it
+  // stuck at 'pending' forever (the exact "stuck row" symptom this whole
+  // audit went looking for). Marked 'failed' via the same request-scoped
+  // client that created it — createSecretKeyClient() failing doesn't affect
+  // that earlier client's validity.
+  let backgroundDeps;
+  try {
+    backgroundDeps = createDesignBriefServiceDeps(createSecretKeyClient());
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/design-brief] createSecretKeyClient() threw:`, err);
+    const message = "Could not start the Design Brief background worker.";
+    await designBriefRepository.update(supabase, designBrief.id, {
+      status: "failed",
+      completed_at: new Date().toISOString(),
+      error_message: message,
+    });
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
   waitUntil(
     runDesignBrief(backgroundDeps, designBrief.id).catch((err) => {
       // Last-resort log: runDesignBrief already persists failures to the
