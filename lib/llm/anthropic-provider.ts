@@ -4,20 +4,49 @@ const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_API_VERSION = "2023-06-01";
 const DEFAULT_MAX_TOKENS = 4096;
 /**
- * Raised from 45s to 60s (Phase 5.5): design-intelligence-service.ts's own
- * Pass 1 call (design-brief-service.ts's largest, DESIGN_INTELLIGENCE_MAX_TOKENS
- * = 8192) was independently measured at ~51s for a real, successful,
- * healthy completion — uncomfortably close to the old 45s abort threshold.
- * A timeout that's too tight doesn't just risk a false-positive abort on a
- * legitimately-slow-but-working request, it actively works against
- * fetchAnthropicWithRetry below: aborting and retrying a call that was
- * always going to succeed just adds latency without adding safety. 60s
- * gives real headroom above the one real data point this codebase has.
+ * Raised 60s -> 85s, MAX_RETRIES dropped 2 -> 0 (Design Intelligence Gap Map
+ * Fix D; real incidents: Video Game Plus x2, Station Plaza Wine x1, all
+ * three "This operation was aborted" — every one of the 3 retry attempts
+ * timing out identically, never recovering on retry). Two real, conflicting
+ * constraints forced this pairing, not an independent choice of either
+ * number:
+ *
+ * 1. design-intelligence-service.ts's generateDesignIntelligence() can chain
+ *    up to 3 sequential calls (Pass 1, critique, a conditional revision),
+ *    each independently retried — and this route's own maxDuration is 280s
+ *    (app/api/missions/[id]/analyze's sibling route). Worst case is
+ *    `3 passes x (attempts x timeout + backoff)`. Solved for timeout with
+ *    the OLD attempts=3 (2 retries): even at zero safety margin, the
+ *    ceiling is ~30s (3 x (3 x 30 + 3) = 297s) — meaningfully BELOW the
+ *    ~51s a real, healthy Pass 1 completion was independently measured at.
+ *    Keeping 3 attempts and raising the timeout at all — let alone to
+ *    85s — silently blows the 280s route budget (3 x (3 x 85 + 3) = 774s):
+ *    exactly the "max out the single-call number and let the multi-pass
+ *    chain blow the route budget" mistake this fix exists to avoid.
+ * 2. The only way to raise the per-attempt ceiling ABOVE 60s and stay
+ *    providably safe across all 3 chained passes is to also drop to a
+ *    single attempt (0 retries): worst case becomes `3 passes x timeout`
+ *    = 3 x 85s = 255s, a real 25s (~9%) margin under 280s — while giving
+ *    +67% headroom over the documented 51s baseline (vs. the old 60s
+ *    ceiling's +18%). Retrying a timeout that's this close to a real
+ *    completion's own natural duration was never actually recovering
+ *    anything anyway — all 3 real incidents timed out identically on
+ *    every one of their 3 attempts, never on just one.
+ *
+ * Trade-off, made knowingly: this also removes automatic retry for a
+ * genuine transient Anthropic-side 429/529 ("overloaded") response — a
+ * real, previously-tested capability, never actually observed triggering
+ * in this system (all 3 real incidents were pure client-side timeouts, not
+ * a 4xx/5xx status). RETRYABLE_STATUS_CODES/the retry loop below are left
+ * intact rather than removed — restoring resilience against a transient
+ * status is a single-constant change (raise MAX_RETRIES back up) if that
+ * trade ever needs revisiting, not a structural one.
  */
-const FETCH_TIMEOUT_MS = 60_000;
+const FETCH_TIMEOUT_MS = 85_000;
 /** 429 (rate limit) and 529 (Anthropic's own "overloaded") are the two documented, expected-to-retry statuses for this API; 500/502/503/504 are the same generic transient-failure set every other adapter in this codebase retries. */
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504, 529]);
-const MAX_RETRIES = 2;
+/** 0 (was 2) — see FETCH_TIMEOUT_MS's doc comment above for the full multi-pass-chain math this pairing is derived from. */
+const MAX_RETRIES = 0;
 const RETRY_BASE_DELAY_MS = 1_000;
 
 function sleep(ms: number): Promise<void> {
@@ -51,6 +80,14 @@ interface AnthropicMessagesResponse {
  * a different transport (POST + JSON body, no query string) — with a
  * longer timeout and base delay to match a real completion call's own
  * cost/latency versus a lightweight lookup.
+ *
+ * Per-attempt start/duration logging (Fix D): the real "aborted" incidents
+ * this timeout/retry logic exists for gave zero telemetry — a client-side
+ * AbortError means the call never resolves at all, so there was no way to
+ * tell "hung with zero bytes back" apart from "still generating, just past
+ * the wall" after the fact. Every attempt now logs how long it actually
+ * took, success or failure, so a future occurrence shows a real duration
+ * number instead of forcing another multi-day investigation to guess one.
  */
 async function fetchAnthropicWithRetry(init: RequestInit): Promise<Response> {
   let lastResponse: Response | undefined;
@@ -59,13 +96,25 @@ async function fetchAnthropicWithRetry(init: RequestInit): Promise<Response> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const attemptStartedAt = Date.now();
     try {
       const res = await fetch(ANTHROPIC_API_URL, { ...init, signal: controller.signal });
+      const durationMs = Date.now() - attemptStartedAt;
+      // eslint-disable-next-line no-console
+      console.log(
+        `[anthropic-fetch] attempt ${attempt + 1}/${MAX_RETRIES + 1}: HTTP ${res.status} after ${durationMs}ms`
+      );
       if (res.ok || !RETRYABLE_STATUS_CODES.has(res.status)) {
         return res;
       }
       lastResponse = res;
     } catch (err) {
+      const durationMs = Date.now() - attemptStartedAt;
+      const reason = err instanceof Error ? err.message : "unknown error";
+      // eslint-disable-next-line no-console
+      console.log(
+        `[anthropic-fetch] attempt ${attempt + 1}/${MAX_RETRIES + 1}: failed after ${durationMs}ms (${reason})`
+      );
       lastError = err;
     } finally {
       clearTimeout(timeout);

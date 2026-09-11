@@ -164,17 +164,23 @@ describe("anthropic-provider", () => {
     assert.equal(called, false);
   });
 
-  test("retries a transient 529 (Anthropic's own documented 'overloaded' status) and succeeds on the next attempt", async () => {
-    const getCalls = mockFetchSequence([
-      { ok: false, status: 529, text: "overloaded" },
-      { ok: true, json: { content: [{ type: "text", text: "hello" }] } },
-    ]);
+  // Fix D (Design Intelligence Gap Map, 2026-09-11): MAX_RETRIES dropped
+  // 2 -> 0 as part of the FETCH_TIMEOUT_MS 60s -> 85s change — the two
+  // numbers are paired, not independent (see anthropic-provider.ts's
+  // FETCH_TIMEOUT_MS doc comment for the full multi-pass-chain math). A
+  // transient 529/429 status is no longer retried at all; these two tests
+  // replace the old "retries a transient 529" / "gives up after exhausting
+  // retries against a persistent 429" tests, which asserted a retry
+  // behavior that no longer exists at MAX_RETRIES=0.
+  test("Fix D: does not retry a transient 529 (Anthropic's own documented 'overloaded' status) — fails on the first attempt, same as any other non-2xx status now that MAX_RETRIES is 0", async () => {
+    const getCalls = mockFetchSequence([{ ok: false, status: 529, text: "overloaded" }]);
 
     const provider = new AnthropicLlmProvider();
-    const result = await provider.complete({ systemPrompt: "sys", userPrompt: "user" });
-
-    assert.equal(result, "hello");
-    assert.equal(getCalls(), 2, "expected exactly one retry after the first 529");
+    await assert.rejects(
+      () => provider.complete({ systemPrompt: "sys", userPrompt: "user" }),
+      /Anthropic API request failed \(529\).*overloaded/
+    );
+    assert.equal(getCalls(), 1, "MAX_RETRIES is 0 — a 529 is no longer retried, it fails immediately");
   });
 
   test("does not retry a 401 — fails on the first attempt (a bad key won't fix itself on retry)", async () => {
@@ -188,7 +194,7 @@ describe("anthropic-provider", () => {
     assert.equal(getCalls(), 1, "a 401 is a real auth-error signal — retrying it verbatim would just fail identically");
   });
 
-  test("gives up after exhausting retries against a persistent 429, with the same honest error shape as before this fix", async () => {
+  test("Fix D: fails immediately on a persistent 429, with the same honest error shape as before — no retry attempts at MAX_RETRIES=0", async () => {
     const getCalls = mockFetchSequence([{ ok: false, status: 429, statusText: "Too Many Requests", text: "rate limited" }]);
 
     const provider = new AnthropicLlmProvider();
@@ -196,6 +202,6 @@ describe("anthropic-provider", () => {
       () => provider.complete({ systemPrompt: "sys", userPrompt: "user" }),
       /Anthropic API request failed \(429\).*rate limited/
     );
-    assert.equal(getCalls(), 3, "expected the initial attempt plus 2 retries, then giving up");
+    assert.equal(getCalls(), 1, "MAX_RETRIES is 0 — the single attempt fails and that's the end of it");
   });
 });
