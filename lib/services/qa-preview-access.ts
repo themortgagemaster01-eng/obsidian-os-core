@@ -103,19 +103,45 @@ interface MailpitMessageFull {
 
 const POLL_INTERVAL_MS = 1000;
 const POLL_TIMEOUT_MS = 15_000;
+/**
+ * Pipeline audit fix #5 (2026-09-11): both Mailpit calls below used to be
+ * plain `fetch(...).catch(() => null)` with no timeout at all — the
+ * `.catch()` only swallows a *rejected* fetch (e.g. connection refused), it
+ * does nothing to bound an accepted-but-silent connection. The surrounding
+ * poll loop's own deadline check only runs *between* fetches, not during
+ * one, so a single hung request could silently consume this function's
+ * entire budget — and this runs inside design-qa-service.ts's runDesignQa,
+ * itself inside a serverless function with its own maxDuration. 5s is
+ * generous for a local Mailpit call (same instance the app itself talks
+ * to) while still leaving room for several attempts inside the 15s total
+ * poll budget.
+ */
+const MAILPIT_FETCH_TIMEOUT_MS = 5_000;
+
+async function fetchWithTimeout(url: string): Promise<Response | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MAILPIT_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 async function pollForConfirmationLink(config: QaPreviewAccessConfig): Promise<string | null> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
-    const listResponse = await fetch(`${config.mailpitBaseUrl}/api/v1/messages?limit=25`).catch(() => null);
+    const listResponse = await fetchWithTimeout(`${config.mailpitBaseUrl}/api/v1/messages?limit=25`);
     if (listResponse?.ok) {
       const list = (await listResponse.json()) as { messages?: MailpitMessageSummary[] };
       const match = (list.messages ?? []).find((m) =>
         (m.To ?? []).some((t) => t.Address === config.validationUserEmail)
       );
       if (match) {
-        const messageResponse = await fetch(`${config.mailpitBaseUrl}/api/v1/message/${match.ID}`).catch(() => null);
+        const messageResponse = await fetchWithTimeout(`${config.mailpitBaseUrl}/api/v1/message/${match.ID}`);
         if (messageResponse?.ok) {
           const full = (await messageResponse.json()) as MailpitMessageFull;
           const link = extractConfirmationLink(full.HTML ?? full.Text ?? "", config.supabaseUrl);
