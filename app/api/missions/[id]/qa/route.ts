@@ -21,9 +21,25 @@ interface RouteParams {
  * untracked background work — see the matching fix in
  * app/api/leads/scan/route.ts (commit 2873e6f). waitUntil() below keeps the
  * function alive until it settles; maxDuration raises the execution budget
- * to this Hobby-plan route's max so that extension has real time to use.
+ * so that extension has real time to use.
+ *
+ * Raised 60 -> 120 (Design Intelligence Gap Map Fix E, audit finding #2):
+ * runDesignQa's one LLM call (runAiDerivedAssessments,
+ * design-qa-service.ts) shares lib/llm/anthropic-provider.ts with the
+ * Design Brief pipeline, so it inherited Fix D's FETCH_TIMEOUT_MS=85s with
+ * no retry — but this route's maxDuration was still 60, meaning a
+ * legitimately-slow-but-working QA call (up to 85s) would be killed by the
+ * PLATFORM before the app's own 85s AbortController ever got a chance to
+ * fire, let alone catch/log/persist anything — a silent death, no
+ * error_message, nothing to investigate afterward. Unlike the Design Brief
+ * pipeline, this route makes exactly one LLM call with no chaining, so no
+ * multi-pass math is needed here — just enough margin above that single
+ * call's own ceiling: 85s (LLM) + ~10s (a handful of DB reads/writes, event
+ * publish, the state transition — all fast, budgeted generously) = 95s
+ * worst case; 120 leaves a real 25s (~21%) margin, comfortably under
+ * Vercel's true Hobby+Fluid-Compute ceiling of 300s.
  */
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 /**
  * POST /api/missions/:id/qa — Sprint 4 Phase 4's Design QA step. Uses the
