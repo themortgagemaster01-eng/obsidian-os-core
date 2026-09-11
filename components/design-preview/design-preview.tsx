@@ -20,9 +20,9 @@ import {
   toCssFontWeight,
   MUTED_TEXT_OPACITY,
   getReadableTextColor,
-  relativeLuminanceOfCssColor,
   safeAccentTextColor,
 } from "@/lib/design-render/safe-css";
+import { assignColorRoles } from "@/lib/design-render/color-roles";
 import { SlotValue, isRealSlot } from "@/components/design-preview/slot-value";
 import { ScrollRevealRuntime } from "@/components/design-preview/scroll-reveal-runtime";
 import { ShaderHeroRuntime } from "@/components/design-preview/shader-hero-runtime";
@@ -186,36 +186,66 @@ export function DesignPreview({
   heroImageUrl,
 }: DesignPreviewProps) {
   const palette = designMemory?.colorPalette;
-  const accent = toSafeCssColor(palette?.accent, FALLBACK.accent);
 
-  // Resolve which of DesignMemory's three named tones is the page
-  // background vs. the hero fill vs. the footer fill by actually measured
-  // luminance, rather than trusting primary/secondary/neutral's field names
-  // to carry a fixed role — design-intelligence-service.ts's prompt schema
-  // never defines what each name means (it's typed as a bare "string" with
-  // no role description), so a real Design Brief is free to (and, for
-  // Friedman, Grimes, Meinken & Leischner PLLC, genuinely did) use "primary"
-  // for a heading TEXT color and "secondary" for the actual page BACKGROUND
-  // — the reverse of this renderer's previous fixed assumption (primary =>
-  // hero fill, secondary => footer fill, neutral => page background), which
-  // rendered that business's real "warm off-white / bone" background choice
-  // as a muddy mid-grey (its real "secondary text" tone) instead. The same
-  // "verify, don't assume the pairing holds" discipline getReadableTextColor
-  // already applies to text-on-background contrast, applied here to
-  // background *selection*: lightest measured tone becomes the page
-  // background, darkest becomes the hero fill, the remaining one becomes the
-  // footer fill — an unmeasurable tone (not a hex token) sorts to the middle
-  // rather than crashing or silently winning an extreme role.
-  const rawTones = [
-    toSafeCssColor(palette?.neutral, FALLBACK.neutral),
-    toSafeCssColor(palette?.primary, FALLBACK.primary),
-    toSafeCssColor(palette?.secondary, FALLBACK.secondary),
-  ];
-  const [neutral, secondary, primary] = [...rawTones].sort((a, b) => {
-    const la = relativeLuminanceOfCssColor(a) ?? 0.5;
-    const lb = relativeLuminanceOfCssColor(b) ?? 0.5;
-    return lb - la; // lightest first
-  });
+  // Fix #8 (Design Intelligence Gap Map) — replaces the old three-tone
+  // luminance sort (which excluded `accent` entirely and couldn't
+  // distinguish "bright" from "neutral": Dante's Trattoria's most-saturated
+  // real color, terracotta, won the page background purely because it
+  // measured numerically brighter than the business's own calmer tones)
+  // with assignColorRoles' genuine relational hierarchy over all four
+  // resolved colors (lib/design-render/color-roles.ts).
+  //
+  // Robert's explicit decision: when there is no real palette at all, the
+  // new algorithm must never run, not even to reproduce today's output —
+  // an exact bypass to the literal FALLBACK.* constants, preserving the
+  // no-data path byte-for-byte and giving Fix #8 a clean regression
+  // boundary, the same discipline every fix from #1 forward has held to.
+  let neutral: string;
+  let primary: string;
+  let secondary: string;
+  let accent: string;
+  let defaultForeground: string;
+
+  if (!palette) {
+    neutral = FALLBACK.neutral;
+    primary = FALLBACK.primary;
+    secondary = FALLBACK.secondary;
+    accent = FALLBACK.accent;
+    defaultForeground = FALLBACK.text;
+  } else {
+    const roles = assignColorRoles({
+      neutral: toSafeCssColor(palette.neutral, FALLBACK.neutral),
+      primary: toSafeCssColor(palette.primary, FALLBACK.primary),
+      secondary: toSafeCssColor(palette.secondary, FALLBACK.secondary),
+      accent: toSafeCssColor(palette.accent, FALLBACK.accent),
+    });
+    // Renderer role mapping approved by the founder: background = the calm
+    // base tone (every non-hero, non-footer section, and Nav); hero = the
+    // boldest/most expressive appropriate color; footer = the secondary/
+    // supporting tone; foreground = a real, contrast-validated text color.
+    // `primary`/`secondary`/`neutral`/`accent` are kept as the existing
+    // variable names the rest of this component already reads at line
+    // ~317 and throughout (background = footer?secondary:hero?primary:
+    // neutral) — only what they hold has changed, from a luminance-sorted
+    // 3-tuple to assignColorRoles' own output.
+    neutral = roles.background;
+    primary = roles.accent;
+    secondary = roles.secondary;
+    accent = roles.accent;
+
+    // Contrast-validation gate (Section 8 of the Fix #8 spec): a
+    // palette-derived foreground is only ever used once it's confirmed to
+    // clear WCAG AA against the resolved background — reusing
+    // safeAccentTextColor exactly the way the nav phone-link already does,
+    // never a new contrast-math implementation. `null` (no candidate from
+    // the opposite lightness group at all) falls straight to the same
+    // guaranteed-safe measurement every other background flavor already
+    // uses.
+    const safeFallbackForeground = getReadableTextColor(roles.background, FALLBACK.text, FALLBACK.onDark);
+    defaultForeground = roles.foreground
+      ? safeAccentTextColor(roles.foreground, roles.background, safeFallbackForeground)
+      : safeFallbackForeground;
+  }
 
   const headingFontStack = toSafeFontFamilyStack(designMemory?.typography.headingFamily, FALLBACK_HEADING_STACK);
   const bodyFontStack = toSafeFontFamilyStack(designMemory?.typography.bodyFamily, FALLBACK_BODY_STACK);
@@ -357,7 +387,26 @@ export function DesignPreview({
           ? heroHasScrim || shaderColors
             ? FALLBACK.onDark
             : getReadableTextColor(background, FALLBACK.text, FALLBACK.onDark)
-          : FALLBACK.text;
+          : defaultForeground;
+    // Fix #8: hero's own background can now legitimately equal `accent`
+    // (the founder's approved renderer mapping — hero gets the boldest/most
+    // expressive resolved color, the SAME value used sitewide for CTA/
+    // border/rule highlights). Traced every accent-consuming element inside
+    // hero's own rendering (SectionBody, below) — the text container's
+    // borderLeft on the editorial-typographic pattern, the businessName
+    // SignatureRule, and the "Get in Touch" CTA in all three ctaVariant
+    // styles — and confirmed each would become invisible (a same-color
+    // stroke/fill on a same-color background) without this guard. Reuses
+    // safeAccentTextColor exactly the way the nav phone-link already does
+    // below, never a new contrast mechanism, falling back to hero's own
+    // already-contrast-checked `foreground` whenever `accent` doesn't
+    // sufficiently differ from hero's actual background. Every other
+    // section's background is guaranteed distinct from `accent` by
+    // construction (assignColorRoles never assigns the same candidate to
+    // two roles), so only hero needs this — SectionShell's own `accent`
+    // prop below is untouched, since its only internal use already
+    // excludes hero explicitly.
+    const heroSafeAccent = type === "hero" ? safeAccentTextColor(accent, background, foreground) : accent;
     return (
       <SectionShell
         key={type}
@@ -375,7 +424,7 @@ export function DesignPreview({
           node={node}
           refinedDesign={refinedDesign}
           headingFontStack={headingFontStack}
-          accent={accent}
+          accent={heroSafeAccent}
           navAccentText={navAccentText}
           textColor={foreground}
           isSignature={isSignature}

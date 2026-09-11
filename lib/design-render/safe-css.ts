@@ -259,8 +259,12 @@ export function toSafeFontFamilyStack(raw: string | undefined | null, fallbackSt
  * functions, bare keywords) -- not a full CSS color parser, just enough to
  * measure the hex tokens toSafeCssColor actually produces from real Design
  * Memory palette values.
+ *
+ * Exported for Fix #8's lib/design-render/color-roles.ts, which needs the
+ * same RGB components to derive HSL saturation/lightness — reused rather
+ * than re-implementing the same hex-parsing regex a second time.
  */
-function hexToRgb(hex: string): [number, number, number] | null {
+export function hexToRgb(hex: string): [number, number, number] | null {
   const v = hex.trim();
   const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])[0-9a-f]?$/i.exec(v);
   if (short) {
