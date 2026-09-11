@@ -1,5 +1,4 @@
-import puppeteer from "puppeteer";
-
+import { launchChrome } from "@/lib/adapters/chrome-runtime";
 import type { ScreenshotRawResult } from "@/lib/adapters/types";
 
 const NAV_TIMEOUT_MS = 20_000;
@@ -30,9 +29,9 @@ export async function runScreenshotAdapter(
   targetUrl: string,
   upload: ScreenshotUploader
 ): Promise<ScreenshotRawResult> {
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+  let browser: Awaited<ReturnType<typeof launchChrome>> | null = null;
   try {
-    browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
+    browser = await launchChrome();
     const page = await browser.newPage();
     await page.setViewport(VIEWPORT);
     await page.goto(targetUrl, { waitUntil: "networkidle2", timeout: NAV_TIMEOUT_MS });

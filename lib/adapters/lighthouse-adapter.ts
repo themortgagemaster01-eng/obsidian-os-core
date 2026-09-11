@@ -1,5 +1,6 @@
 import * as chromeLauncher from "chrome-launcher";
 
+import { resolveChromeLaunchConfig } from "@/lib/adapters/chrome-runtime";
 import type { LighthouseRawResult } from "@/lib/adapters/types";
 
 /**
@@ -107,7 +108,8 @@ export async function runLighthouseAdapter(
 
   let chrome: chromeLauncher.LaunchedChrome | null = null;
   try {
-    chrome = await chromeLauncher.launch({ chromeFlags: ["--headless", "--no-sandbox"] });
+    const { chromePath, chromeFlags } = await resolveChromeLaunchConfig();
+    chrome = await chromeLauncher.launch({ chromePath, chromeFlags });
 
     const lighthouse = await getLighthouseRunner();
     const runnerResult = await lighthouse(targetUrl, {

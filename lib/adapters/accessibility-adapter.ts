@@ -1,6 +1,6 @@
-import puppeteer from "puppeteer";
 import { source as axeSource } from "axe-core";
 
+import { launchChrome } from "@/lib/adapters/chrome-runtime";
 import type { AccessibilityRawResult, AccessibilityViolation } from "@/lib/adapters/types";
 
 const NAV_TIMEOUT_MS = 20_000;
@@ -69,9 +69,9 @@ export async function runAccessibilityAdapter(
 ): Promise<AccessibilityRawResult> {
   const emptyByImpact = { minor: 0, moderate: 0, serious: 0, critical: 0 };
 
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+  let browser: Awaited<ReturnType<typeof launchChrome>> | null = null;
   try {
-    browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
+    browser = await launchChrome();
     const page = await browser.newPage();
     if (options.cookies && options.cookies.length > 0) {
       await page.setCookie(
