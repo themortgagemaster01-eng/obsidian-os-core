@@ -83,14 +83,11 @@ describe("opportunity-scoring-service", () => {
     assert.ok(!result.excludedCategories.includes("accessibility"));
   });
 
-  test("today, Performance is the only category that can actually be excluded", () => {
-    // Phase 1's mobile/seo/accessibility normalizers already collapse a
-    // total adapter failure to a score of 0 rather than null, and
-    // technicalHealthScore is likewise never null — so even with every
-    // other signal maximally degraded, only an unmeasured Performance
-    // score can produce a null overall score today. This test documents
-    // that real boundary rather than asserting an unreachable "everything
-    // excluded" case.
+  test("a real, honestly-measured 0 (not a failed check) across mobile/seo/accessibility is scored, never excluded", () => {
+    // Distinct from the fetchError/null regression tests below: these are
+    // real zeros (e.g. a genuinely maxed-out penalty, or robots noindex),
+    // not an unmeasured check — technicalHealthScore is likewise never
+    // null. Only an unmeasured Performance score is excluded here.
     const analysis: NormalizedAnalysis = {
       ...BASE,
       accessibilityScore: 0,
@@ -102,6 +99,43 @@ describe("opportunity-scoring-service", () => {
     const result = computeOpportunityScore(analysis);
     assert.notEqual(result.overallScore, null);
     assert.deepEqual(result.excludedCategories, ["performance"]);
+  });
+
+  // ===========================================================================
+  // Bug fix — real production incident confirmed live on the Dante's
+  // Trattoria mission: mobile/seo/accessibility's own normalizers used to
+  // collapse a total adapter failure to a fake 0 rather than null, so this
+  // exclusion/renormalization path could never trigger for them — a failed
+  // accessibility-adapter Chrome launch fed a fake 0 into the accessibility
+  // blend alongside a real Lighthouse-measured 87, producing a wrong ~44
+  // instead of correctly using 87 directly. analysis-service.ts's three
+  // normalizers now return null on a failed check (analysis-service.test.ts
+  // covers that directly); these tests prove the fix all the way through
+  // computeOpportunityScore, using the exact real numbers from that mission.
+  // ===========================================================================
+  test("Fix: an unmeasured accessibility check (null, not a fake 0) is excluded from the blend — uses the real Lighthouse half directly instead of averaging in a fake zero", () => {
+    const analysis: NormalizedAnalysis = {
+      ...BASE,
+      accessibilityScore: null, // the accessibility-adapter's own Chrome launch failed
+      lighthouse: { ...BASE.lighthouse, accessibility: 87 }, // Lighthouse's own launch succeeded — Dante's Trattoria's real number
+    };
+    const result = computeOpportunityScore(analysis);
+    assert.equal(scoreForCategory(result, "accessibility"), 87, "should use the real 87 directly, not a wrong blend with a fake 0");
+    assert.deepEqual(result.excludedCategories, []);
+  });
+
+  test("Fix: mobile/seo/accessibility can now all be genuinely excluded when unmeasured, not just Performance", () => {
+    const analysis: NormalizedAnalysis = {
+      ...BASE,
+      accessibilityScore: null,
+      seoScore: null,
+      mobileScore: null,
+      lighthouse: { performance: 40, accessibility: null, bestPractices: 60, seo: 70 },
+    };
+    const result = computeOpportunityScore(analysis);
+    assert.deepEqual(result.excludedCategories.sort(), ["accessibility", "mobile", "seo"]);
+    // Only performance (40) and technicalHealth (90) remain measured.
+    assert.equal(result.overallScore, 65);
   });
 
   test("scoreForCategory returns null for a category not present", () => {

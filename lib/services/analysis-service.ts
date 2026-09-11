@@ -187,8 +187,26 @@ function clampScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-export function normalizeMobileScore(raw: MobileRawResult): number {
-  if (raw.fetchError) return 0;
+/**
+ * Bug fix (real production incident, Video Game Plus mission 2026-09-11 and
+ * Dante's Trattoria mission 2026-08-27 — both a failed Puppeteer/Chrome
+ * launch): this used to `return 0` when the underlying check never ran at
+ * all, indistinguishable from a real, honestly-measured 0/100. Confirmed
+ * live: Dante's Trattoria's accessibility ended up blended to ~44 (a real,
+ * wrong number feeding its actual Opportunity Score) instead of its real
+ * Lighthouse-measured 87, purely because this function's own fetchError
+ * branch returned a fake 0 instead of signaling "unavailable." `null` here
+ * is not a new concept this codebase has to learn — NormalizedAnalysis.
+ * measurementStatus, opportunity-scoring-service.ts's category-exclusion/
+ * renormalization logic, opportunity-report-service.ts's "Unavailable"
+ * confidence level, insight-service.ts's scoreBand(null) => "unknown", and
+ * design-brief-service.ts's measuredCategories()/buildCitations() were ALL
+ * already written to expect and correctly handle `number | null` here —
+ * this function was the one place still manufacturing a fake number instead
+ * of using it.
+ */
+export function normalizeMobileScore(raw: MobileRawResult): number | null {
+  if (raw.fetchError) return null;
   let score = 100;
   if (!raw.hasViewportMeta) score -= 40;
   if (raw.usesUserScalableNo) score -= 15;
@@ -209,8 +227,9 @@ export function mobileFindings(raw: MobileRawResult): string[] {
   return findings;
 }
 
-export function normalizeSeoScore(raw: SeoRawResult): number {
-  if (raw.fetchError) return 0;
+/** See normalizeMobileScore's doc comment — same fix, same reasoning. `hasRobotsNoindex`'s own `return 0` is untouched: that's a real, honestly-measured fact (a real noindex tag was found), not a failed check. */
+export function normalizeSeoScore(raw: SeoRawResult): number | null {
+  if (raw.fetchError) return null;
   if (raw.hasRobotsNoindex) return 0;
   let score = 100;
   if (!raw.title) score -= 20;
@@ -242,8 +261,9 @@ export function seoFindings(raw: SeoRawResult): string[] {
   return findings;
 }
 
-export function normalizeAccessibilityScore(raw: AccessibilityRawResult): number {
-  if (raw.fetchError) return 0;
+/** See normalizeMobileScore's doc comment — same fix, same reasoning. This is the specific normalizer whose fake 0 was confirmed live to have corrupted Dante's Trattoria's real Opportunity Score. */
+export function normalizeAccessibilityScore(raw: AccessibilityRawResult): number | null {
+  if (raw.fetchError) return null;
   const penalty =
     raw.violationCountByImpact.critical * 10 +
     raw.violationCountByImpact.serious * 5 +
@@ -374,8 +394,8 @@ export async function runAnalysis(
       organizationId: mission.organization_id,
       payload: {
         websiteUrl,
-        mobileScore,
-        accessibilityScore,
+        mobileScore: mobileScore ?? undefined,
+        accessibilityScore: accessibilityScore ?? undefined,
         lighthousePerformance: lighthouseResult.scores.performance ?? undefined,
         lighthouseAccessibility: lighthouseResult.scores.accessibility ?? undefined,
         lighthouseBestPractices: lighthouseResult.scores.bestPractices ?? undefined,
@@ -388,7 +408,7 @@ export async function runAnalysis(
       type: "SEOComplete",
       missionId: mission.id,
       organizationId: mission.organization_id,
-      payload: { score: seoScore, issues: seoFindingsList },
+      payload: { score: seoScore ?? undefined, issues: seoFindingsList },
     });
 
     return updated;

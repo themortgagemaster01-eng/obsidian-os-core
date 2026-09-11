@@ -51,14 +51,20 @@ export const EQUAL_CATEGORY_WEIGHT = 1 / 5;
  * design-doc scoring decision — flagged here for visibility rather than
  * silently baked in.
  *
- * In practice, only Performance can trigger this today: Phase 1's
- * mobile/seo/accessibility normalizers already collapse a total adapter
- * failure to a score of 0 rather than null (see the Phase 2 report for
- * why that inconsistency with Performance wasn't fixed here), and
- * Accessibility's blend (below) always has accessibilityScore — a real
- * number, never null by type — as one of its two inputs, so the blend
- * itself can never resolve to null even when the Lighthouse half is
- * unavailable. Confirmed by opportunity-scoring-service.test.ts.
+ * Fix (real production incident, confirmed live on the Dante's Trattoria
+ * mission): mobile/seo/accessibility's own normalizers used to collapse a
+ * total adapter failure to a score of 0 rather than null, so this
+ * exclusion path could never trigger for them — Accessibility's blend
+ * (below) always had accessibilityScore as a real, never-null-by-type
+ * input, meaning it could never resolve to null even when the Lighthouse
+ * half was genuinely unavailable. Confirmed live: a failed accessibility-
+ * adapter Chrome launch fed a fake 0 into the blend alongside a real
+ * Lighthouse-measured 87, producing a wrong ~44 instead of correctly
+ * excluding the unmeasured half and using 87 directly. All three
+ * normalizers (lib/services/analysis-service.ts) now return null on a
+ * failed check, so this exclusion/renormalization path is live for every
+ * category, not just Performance. Confirmed by
+ * opportunity-scoring-service.test.ts.
  */
 export function computeOpportunityScore(analysis: NormalizedAnalysis): OpportunityScoreResult {
   const raw: { category: AnalysisCategory; score: number | null }[] = [

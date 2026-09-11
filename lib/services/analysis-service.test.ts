@@ -5,9 +5,92 @@ import {
   resolveAnalysisErrorMessage,
   decideAnalysisOverlapGuardAction,
   checkAnalysisOverlap,
+  normalizeMobileScore,
+  normalizeSeoScore,
+  normalizeAccessibilityScore,
   type AnalysisServiceDeps,
 } from "@/lib/services/analysis-service";
 import type { WebsiteAnalysisRow } from "@/lib/repositories/website-analysis-repository";
+import type { MobileRawResult, SeoRawResult, AccessibilityRawResult } from "@/lib/adapters/types";
+
+const HEALTHY_MOBILE: MobileRawResult = {
+  hasViewportMeta: true,
+  viewportContent: "width=device-width, initial-scale=1",
+  usesUserScalableNo: false,
+  mediaQueryCount: 3,
+  stylesheetsChecked: 2,
+  smallFontDeclarationCount: 0,
+};
+
+const HEALTHY_SEO: SeoRawResult = {
+  title: "Real Business",
+  titleLength: 13,
+  metaDescription: "A real description.",
+  metaDescriptionLength: 20,
+  canonicalUrl: "https://example.test/",
+  h1Count: 1,
+  imageCount: 2,
+  imagesMissingAlt: 0,
+  structuredDataTypes: ["LocalBusiness"],
+  openGraphTagCount: 3,
+  hasRobotsNoindex: false,
+};
+
+const HEALTHY_ACCESSIBILITY: AccessibilityRawResult = {
+  violations: [],
+  passCount: 20,
+  incompleteCount: 0,
+  violationCountByImpact: { minor: 0, moderate: 0, serious: 0, critical: 0 },
+};
+
+// ===========================================================================
+// Bug fix — real production incident (Video Game Plus mission 2026-09-11,
+// Dante's Trattoria mission 2026-08-27, both a failed Puppeteer/Chrome
+// launch): these three normalizers used to `return 0` when the underlying
+// check never ran at all, indistinguishable from a real, honestly-measured
+// 0/100 — confirmed live to have corrupted Dante's Trattoria's real
+// Opportunity Score (a fake 0 blended with a real Lighthouse-measured 87
+// produced a wrong ~44 instead of correctly using 87 directly). `null` is
+// the correct "unavailable" signal every downstream consumer
+// (opportunity-scoring-service.ts, opportunity-report-service.ts,
+// insight-service.ts, design-brief-service.ts) was already written to
+// expect.
+// ===========================================================================
+describe("analysis-service: score normalizers report unavailable, never a fake 0", () => {
+  test("normalizeMobileScore: a real, successful check still produces a real score", () => {
+    assert.equal(normalizeMobileScore(HEALTHY_MOBILE), 100);
+  });
+
+  test("normalizeMobileScore: a failed check (fetchError) returns null, never 0", () => {
+    assert.equal(normalizeMobileScore({ ...HEALTHY_MOBILE, fetchError: "Navigation timeout" }), null);
+  });
+
+  test("normalizeSeoScore: a real, successful check still produces a real score", () => {
+    assert.equal(normalizeSeoScore(HEALTHY_SEO), 100);
+  });
+
+  test("normalizeSeoScore: a failed check (fetchError) returns null, never 0", () => {
+    assert.equal(normalizeSeoScore({ ...HEALTHY_SEO, fetchError: "Navigation timeout" }), null);
+  });
+
+  test("normalizeSeoScore: a real, honestly-measured 0 (robots noindex) is NOT confused with an unavailable check", () => {
+    assert.equal(normalizeSeoScore({ ...HEALTHY_SEO, hasRobotsNoindex: true }), 0);
+  });
+
+  test("normalizeAccessibilityScore: a real, successful check still produces a real score", () => {
+    assert.equal(normalizeAccessibilityScore(HEALTHY_ACCESSIBILITY), 100);
+  });
+
+  test("normalizeAccessibilityScore: a failed check (fetchError) returns null, never 0 — the exact Video Game Plus / Dante's Trattoria regression", () => {
+    assert.equal(
+      normalizeAccessibilityScore({
+        ...HEALTHY_ACCESSIBILITY,
+        fetchError: "Could not find Chrome (ver. 131.0.6778.204).",
+      }),
+      null
+    );
+  });
+});
 
 // Phase 5.4: the "before" screenshot silently failed for 2 of 3 real Phase
 // 5.3 businesses (J&B, Canadian Tire) despite their analyses reporting

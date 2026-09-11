@@ -62,11 +62,16 @@ describe("design-brief-service: buildCitations", () => {
   });
 
   test("returns an empty array when there are no insights and nothing measured", () => {
+    // accessibilityScore/seoScore/mobileScore are genuinely nullable now
+    // (analysis-service.ts's normalizers report a failed check as
+    // unavailable, never a fake 0 — see analysis-service.test.ts) — no cast
+    // needed to construct this fixture. technicalHealthScore's own cast is
+    // unrelated to this fix and stays as-is (that field is still `number`).
     const emptyAnalysis: NormalizedAnalysis = {
       ...CLEAN_ANALYSIS,
-      accessibilityScore: null as unknown as number,
-      seoScore: null as unknown as number,
-      mobileScore: null as unknown as number,
+      accessibilityScore: null,
+      seoScore: null,
+      mobileScore: null,
       technicalHealthScore: null as unknown as number,
       lighthouse: { performance: null, accessibility: null, bestPractices: null, seo: null },
     };

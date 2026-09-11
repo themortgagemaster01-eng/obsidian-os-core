@@ -94,4 +94,28 @@ describe("normalizedAnalysisFromRow", () => {
     assert.equal(normalized.technicalHealthScore, 0);
     assert.deepEqual(normalized.technicalHealthFindings, ["Could not analyze the site's basic structure."]);
   });
+
+  // ===========================================================================
+  // Bug fix — real production incident (Video Game Plus / Dante's Trattoria):
+  // this function used to coalesce a null mobile_score/seo_score/
+  // accessibility_score column (a failed check) to 0 via `?? 0`, the same
+  // fake-zero bug as analysis-service.ts's own normalizers (see
+  // analysis-service.test.ts and opportunity-scoring-service.test.ts for the
+  // rest of this fix's coverage). A real persisted row with a null score
+  // column must surface as null all the way through, never silently become 0.
+  // ===========================================================================
+  test("Fix: a null mobile_score/seo_score/accessibility_score column (a failed check) stays null, never coerced to a fake 0", () => {
+    const row = fakeRow({ mobile_score: null, seo_score: null, accessibility_score: null });
+    const normalized = normalizedAnalysisFromRow(row, "https://acme.test/");
+    assert.equal(normalized.mobileScore, null);
+    assert.equal(normalized.seoScore, null);
+    assert.equal(normalized.accessibilityScore, null);
+  });
+
+  test("a real, honestly-measured score column still passes through unchanged", () => {
+    const normalized = normalizedAnalysisFromRow(fakeRow(), "https://acme.test/");
+    assert.equal(normalized.mobileScore, 50);
+    assert.equal(normalized.seoScore, 60);
+    assert.equal(normalized.accessibilityScore, 70);
+  });
 });

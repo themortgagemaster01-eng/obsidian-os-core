@@ -144,4 +144,31 @@ describe("insight-service", () => {
     const insights = generateInsights(analysis);
     assert.ok(!insights.some((i) => i.category === "performance"));
   });
+
+  // ===========================================================================
+  // Bug fix — real production incident: mobile/seo/accessibility scores used
+  // to collapse a failed check to a fake 0 rather than null, which would
+  // score-band as "poor" here and fabricate a real-sounding insight (e.g.
+  // "accessibility-barriers") from a measurement that never actually ran.
+  // Now that analysis-service.ts's normalizers correctly return null on a
+  // failed check, these mirror the pre-existing performance/null test above
+  // for the other three categories.
+  // ===========================================================================
+  test("an unmeasured accessibility score (null, not a fake 0) produces no accessibility insight", () => {
+    const analysis: NormalizedAnalysis = { ...GOOD_ANALYSIS, accessibilityScore: null };
+    const insights = generateInsights(analysis);
+    assert.ok(!insights.some((i) => i.category === "accessibility"));
+  });
+
+  test("an unmeasured mobile score (null, not a fake 0) produces no mobile insight", () => {
+    const analysis: NormalizedAnalysis = { ...GOOD_ANALYSIS, mobileScore: null };
+    const insights = generateInsights(analysis);
+    assert.ok(!insights.some((i) => i.category === "mobile"));
+  });
+
+  test("an unmeasured seo score (null, not a fake 0) produces no seo insight", () => {
+    const analysis: NormalizedAnalysis = { ...GOOD_ANALYSIS, seoScore: null };
+    const insights = generateInsights(analysis);
+    assert.ok(!insights.some((i) => i.category === "seo"));
+  });
 });

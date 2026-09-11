@@ -65,11 +65,14 @@ export interface MeasurementStatus {
 
 export interface NormalizedAnalysis {
   websiteUrl: string;
-  seoScore: number;
+  /** `null` when the SEO check never ran (see analysis-service.ts's normalizeSeoScore) — never a fake 0 standing in for a measurement that didn't happen. */
+  seoScore: number | null;
   seoFindings: string[];
-  mobileScore: number;
+  /** `null` when the mobile check never ran — same discipline as seoScore. */
+  mobileScore: number | null;
   mobileFindings: string[];
-  accessibilityScore: number;
+  /** `null` when the accessibility check never ran (e.g. a failed headless-Chrome launch) — same discipline as seoScore. Real production bug this fixed: a fake 0 here silently corrupted Dante's Trattoria's real Opportunity Score via opportunity-scoring-service.ts's blendAccessibility. */
+  accessibilityScore: number | null;
   accessibilityFindings: string[];
   technicalHealthScore: number;
   technicalHealthFindings: string[];
@@ -254,11 +257,11 @@ export function normalizedAnalysisFromRow(
 
   return {
     websiteUrl,
-    seoScore: row.seo_score ?? 0,
+    seoScore: row.seo_score,
     seoFindings: (row.seo_findings as unknown as string[] | null) ?? [],
-    mobileScore: row.mobile_score ?? 0,
+    mobileScore: row.mobile_score,
     mobileFindings: (row.mobile_findings as unknown as string[] | null) ?? [],
-    accessibilityScore: row.accessibility_score ?? 0,
+    accessibilityScore: row.accessibility_score,
     accessibilityFindings: (row.accessibility_findings as unknown as string[] | null) ?? [],
     technicalHealthScore: technicalHealth.score,
     technicalHealthFindings: technicalHealth.findings,
