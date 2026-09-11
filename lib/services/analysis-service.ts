@@ -319,19 +319,30 @@ export async function runAnalysis(
     throw new Error(`Mission ${analysis.mission_id} not found.`);
   }
 
-  await deps.websiteAnalysisRepository.update(deps.client, analysisId, {
-    status: "running",
-    started_at: new Date().toISOString(),
-  });
-
-  // Only advance discovered -> analyzing; a re-run on a mission already at
-  // `analyzing` (§13: re-running analysis inserts a new row, doesn't touch
-  // state) should not attempt a second, now-invalid transition.
-  if (mission.state === "discovered") {
-    await transitionMissionState(deps.workflowDeps, mission.id, "analyzing");
-  }
-
   try {
+    await deps.websiteAnalysisRepository.update(deps.client, analysisId, {
+      status: "running",
+      started_at: new Date().toISOString(),
+    });
+
+    // Only advance discovered -> analyzing; a re-run on a mission already at
+    // `analyzing` (§13: re-running analysis inserts a new row, doesn't touch
+    // state) should not attempt a second, now-invalid transition.
+    //
+    // Pipeline audit fix #6 (2026-09-11): this status update and the guarded
+    // transitionMissionState call used to sit OUTSIDE this try block — if
+    // either threw (a genuine self-transition race, or any transient DB
+    // error inside transitionMissionState's own update/publish), runAnalysis
+    // threw all the way up uncaught, leaving this row stuck at 'pending'
+    // forever with no error_message: the exact historical "stuck row"
+    // incident this file's own comments describe as already fixed.
+    // design-brief-service.ts's equivalent transitions were already inside
+    // its own try block; this one wasn't. Moved inside so any failure here
+    // is caught below and persisted as a real, honest 'failed' status.
+    if (mission.state === "discovered") {
+      await transitionMissionState(deps.workflowDeps, mission.id, "analyzing");
+    }
+
     const websiteUrl = mission.website_url;
 
     const uploadScreenshot: ScreenshotUploader = async (fileName, buffer) => {
