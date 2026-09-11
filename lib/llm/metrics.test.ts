@@ -2,12 +2,12 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { MetricsLlmProvider, type LlmCallMetrics } from "@/lib/llm/metrics";
-import type { LlmProvider, LlmMessageRequest } from "@/lib/llm/provider";
+import type { LlmProvider, LlmMessageRequest, LlmUsage } from "@/lib/llm/provider";
 
 function fakeProvider(opts: {
   name?: string;
   responses?: (string | Error)[];
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: Pick<LlmUsage, "inputTokens" | "outputTokens"> & Partial<Pick<LlmUsage, "stopReason">>;
 }): LlmProvider {
   const responses = opts.responses ?? ["ok"];
   let call = 0;
@@ -16,7 +16,7 @@ function fakeProvider(opts: {
     async complete(request: LlmMessageRequest) {
       const response = responses[Math.min(call, responses.length - 1)];
       call++;
-      if (opts.usage) request.onUsage?.(opts.usage);
+      if (opts.usage) request.onUsage?.({ stopReason: null, ...opts.usage });
       if (response instanceof Error) throw response;
       return response;
     },
@@ -85,10 +85,10 @@ describe("MetricsLlmProvider: success path", () => {
   });
 
   test("still forwards onUsage to the caller's own callback", async () => {
-    const observed: { inputTokens: number; outputTokens: number }[] = [];
+    const observed: LlmUsage[] = [];
     const provider = new MetricsLlmProvider(fakeProvider({ usage: { inputTokens: 5, outputTokens: 7 } }));
     await provider.complete({ systemPrompt: "sys", userPrompt: "user", onUsage: (u) => observed.push(u) });
-    assert.deepEqual(observed, [{ inputTokens: 5, outputTokens: 7 }]);
+    assert.deepEqual(observed, [{ inputTokens: 5, outputTokens: 7, stopReason: null }]);
   });
 
   test("records usage delivered through an asynchronous provider callback", async () => {
@@ -98,7 +98,7 @@ describe("MetricsLlmProvider: success path", () => {
         name: "anthropic:claude-sonnet-5",
         async complete(request) {
           await Promise.resolve();
-          request.onUsage?.({ inputTokens: 11, outputTokens: 13 });
+          request.onUsage?.({ inputTokens: 11, outputTokens: 13, stopReason: "end_turn" });
           return "ok";
         },
       },
@@ -108,6 +108,29 @@ describe("MetricsLlmProvider: success path", () => {
     await provider.complete({ systemPrompt: "sys", userPrompt: "user" });
     assert.equal(metrics[0].promptTokens, 11);
     assert.equal(metrics[0].completionTokens, 13);
+    assert.equal(metrics[0].stopReason, "end_turn");
+  });
+
+  // ===========================================================================
+  // Fix B (Design Intelligence Gap Map) — stopReason lets a later JSON-parse
+  // failure (lib/llm/json-response.ts) be correlated against the nearest
+  // metrics log line to tell a genuine model formatting mistake ("end_turn")
+  // apart from a response truncated by the token budget ("max_tokens").
+  // ===========================================================================
+  test("Fix B: reports the provider's stopReason on a successful call", async () => {
+    const metrics: LlmCallMetrics[] = [];
+    const provider = new MetricsLlmProvider(fakeProvider({ usage: { inputTokens: 5, outputTokens: 7, stopReason: "max_tokens" } }), {
+      sink: (m) => metrics.push(m),
+    });
+    await provider.complete({ systemPrompt: "sys", userPrompt: "user" });
+    assert.equal(metrics[0].stopReason, "max_tokens");
+  });
+
+  test("Fix B: stopReason is null when the provider never reported usage at all (no onUsage call)", async () => {
+    const metrics: LlmCallMetrics[] = [];
+    const provider = new MetricsLlmProvider(fakeProvider({}), { sink: (m) => metrics.push(m) });
+    await provider.complete({ systemPrompt: "sys", userPrompt: "user" });
+    assert.equal(metrics[0].stopReason, null);
   });
 });
 

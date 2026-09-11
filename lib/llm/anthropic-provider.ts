@@ -37,6 +37,8 @@ export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5";
 interface AnthropicMessagesResponse {
   content?: { type: string; text?: string }[];
   usage?: { input_tokens?: number; output_tokens?: number };
+  /** Always present on a real Anthropic response — e.g. "end_turn", "max_tokens", "stop_sequence". Surfaced via onUsage/LlmUsage.stopReason (Fix B) so a caller can tell a genuine model formatting mistake apart from a response truncated by the token budget. */
+  stop_reason?: string | null;
 }
 
 /**
@@ -152,7 +154,11 @@ export class AnthropicLlmProvider implements LlmProvider {
     }
 
     if (request.onUsage && data.usage?.input_tokens !== undefined && data.usage?.output_tokens !== undefined) {
-      request.onUsage({ inputTokens: data.usage.input_tokens, outputTokens: data.usage.output_tokens });
+      request.onUsage({
+        inputTokens: data.usage.input_tokens,
+        outputTokens: data.usage.output_tokens,
+        stopReason: data.stop_reason ?? null,
+      });
     }
 
     return text;

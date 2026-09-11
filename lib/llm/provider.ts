@@ -11,10 +11,24 @@
  * codebase for the same kind of "swappable external dependency" problem.
  */
 
-/** Token counts for one completion — real spend now that a live API key exists, so callers that care about cost can observe it per call. */
+/**
+ * Token counts for one completion — real spend now that a live API key
+ * exists, so callers that care about cost can observe it per call.
+ *
+ * `stopReason` (Fix B, Design Intelligence Gap Map): the provider's own
+ * reason the response ended (Anthropic's Messages API always returns one,
+ * e.g. "end_turn" or "max_tokens") — added specifically because
+ * lib/llm/json-response.ts's own JSON-parse failures previously carried no
+ * signal for whether a malformed response was a genuine model formatting
+ * mistake (stop_reason "end_turn") or a response cut off mid-generation by
+ * the token budget (stop_reason "max_tokens") — two failure modes that need
+ * different fixes, indistinguishable from the raw text alone. `null` for a
+ * provider that doesn't expose one, never a guess.
+ */
 export interface LlmUsage {
   inputTokens: number;
   outputTokens: number;
+  stopReason: string | null;
 }
 
 export interface LlmMessageRequest {

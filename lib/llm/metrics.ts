@@ -27,6 +27,8 @@ export interface LlmCallMetrics {
   retryCount: number;
   success: boolean;
   errorMessage: string | null;
+  /** Fix B (Design Intelligence Gap Map): the provider's own reason the response ended (e.g. Anthropic's "end_turn"/"max_tokens") — null when the provider didn't report one, or when the call failed before any response was received. Lets a later JSON-parse failure (lib/llm/json-response.ts) be correlated against the nearest metrics log line to tell truncation apart from a genuine formatting mistake. */
+  stopReason: string | null;
 }
 
 export type LlmMetricsSink = (metrics: LlmCallMetrics) => void;
@@ -132,6 +134,7 @@ export class MetricsLlmProvider implements LlmProvider {
           retryCount: attempt,
           success: true,
           errorMessage: null,
+          stopReason: usage ? usage.stopReason : null,
         });
 
         return text;
@@ -153,6 +156,7 @@ export class MetricsLlmProvider implements LlmProvider {
       retryCount: attempt - 1,
       success: false,
       errorMessage: message,
+      stopReason: usage ? usage.stopReason : null,
     });
 
     throw lastError;

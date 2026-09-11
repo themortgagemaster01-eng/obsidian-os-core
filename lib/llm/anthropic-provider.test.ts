@@ -125,12 +125,33 @@ describe("anthropic-provider", () => {
       json: { content: [{ type: "text", text: "hello" }], usage: { input_tokens: 120, output_tokens: 45 } },
     });
 
-    const usages: { inputTokens: number; outputTokens: number }[] = [];
+    const usages: { inputTokens: number; outputTokens: number; stopReason: string | null }[] = [];
     const provider = new AnthropicLlmProvider();
     await provider.complete({ systemPrompt: "sys", userPrompt: "user", onUsage: (u) => usages.push(u) });
 
     assert.equal(usages.length, 1);
-    assert.deepEqual(usages[0], { inputTokens: 120, outputTokens: 45 });
+    assert.deepEqual(usages[0], { inputTokens: 120, outputTokens: 45, stopReason: null });
+  });
+
+  // Fix B (Design Intelligence Gap Map): stop_reason lets a later JSON-parse
+  // failure (lib/llm/json-response.ts) be correlated against the nearest
+  // metrics log line to tell a genuine model formatting mistake ("end_turn")
+  // apart from a response truncated by the token budget ("max_tokens").
+  test("Fix B: passes through the real Anthropic stop_reason via onUsage", async () => {
+    mockFetchOnce({
+      ok: true,
+      json: {
+        content: [{ type: "text", text: "hello" }],
+        usage: { input_tokens: 120, output_tokens: 45 },
+        stop_reason: "max_tokens",
+      },
+    });
+
+    const usages: { stopReason: string | null }[] = [];
+    const provider = new AnthropicLlmProvider();
+    await provider.complete({ systemPrompt: "sys", userPrompt: "user", onUsage: (u) => usages.push(u) });
+
+    assert.equal(usages[0].stopReason, "max_tokens");
   });
 
   test("does not call onUsage, and does not throw, when the response has no usage field", async () => {
