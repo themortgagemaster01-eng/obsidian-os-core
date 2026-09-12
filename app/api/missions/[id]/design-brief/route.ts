@@ -89,7 +89,17 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
   }
 
-  const designBrief = await designBriefRepository.findLatestByMission(supabase, mission.id);
+  // Pipeline audit fix #8 (2026-09-11): findLatestByMission can throw (a
+  // real DB/network exception, not just "no row found") — guarded the same
+  // way missionRepository.findById already is above.
+  let designBrief;
+  try {
+    designBrief = await designBriefRepository.findLatestByMission(supabase, mission.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[GET /api/missions/${params.id}/design-brief] design brief lookup failed:`, err);
+    return NextResponse.json({ error: "Could not look up this mission's Design Brief — please try again." }, { status: 500 });
+  }
   return NextResponse.json({ designBrief });
 }
 

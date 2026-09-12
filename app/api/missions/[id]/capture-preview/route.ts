@@ -67,7 +67,17 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
   }
 
-  const websiteDesign = await websiteDesignRepository.findLatestByMission(supabase, mission.id);
+  // Pipeline audit fix #8 (2026-09-11): findLatestByMission can throw (a
+  // real DB/network exception, not just "no row found") — guarded the same
+  // way missionRepository.findById already is above.
+  let websiteDesign;
+  try {
+    websiteDesign = await websiteDesignRepository.findLatestByMission(supabase, mission.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[POST /api/missions/${params.id}/capture-preview] website design lookup failed:`, err);
+    return NextResponse.json({ error: "Could not look up this mission's website design — please try again." }, { status: 500 });
+  }
   if (!websiteDesign || websiteDesign.status !== "complete") {
     return NextResponse.json(
       { error: "No completed website design found for this mission — run POST /api/missions/:id/generate-design first." },

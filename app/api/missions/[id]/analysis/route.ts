@@ -57,7 +57,18 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
   }
 
-  const analysis = await websiteAnalysisRepository.findLatestByMission(supabase, mission.id);
+  // Pipeline audit fix #8 (2026-09-11): findLatestByMission can throw (a
+  // real DB/network exception, not just "no row found") — guarded the same
+  // way missionRepository.findById already is above, closing the one
+  // inconsistency in this file's own error-handling discipline.
+  let analysis;
+  try {
+    analysis = await websiteAnalysisRepository.findLatestByMission(supabase, mission.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[GET /api/missions/${params.id}/analysis] website analysis lookup failed:`, err);
+    return NextResponse.json({ error: "Could not look up this mission's analysis — please try again." }, { status: 500 });
+  }
 
   if (!analysis || analysis.status !== "complete") {
     return NextResponse.json({ analysis, report: null, screenshotUrl: null });

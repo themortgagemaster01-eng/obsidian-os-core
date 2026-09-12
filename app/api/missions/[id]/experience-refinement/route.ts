@@ -73,7 +73,17 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
   }
 
-  const websiteDesign = await websiteDesignRepository.findLatestByMission(supabase, mission.id);
+  // Pipeline audit fix #8 (2026-09-11): findLatestByMission can throw (a
+  // real DB/network exception, not just "no row found") — guarded the same
+  // way missionRepository.findById already is above.
+  let websiteDesign;
+  try {
+    websiteDesign = await websiteDesignRepository.findLatestByMission(supabase, mission.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[GET /api/missions/${params.id}/experience-refinement] website design lookup failed:`, err);
+    return NextResponse.json({ error: "Could not look up this mission's website design — please try again." }, { status: 500 });
+  }
   if (!websiteDesign || websiteDesign.status !== "complete" || !websiteDesign.wireframe) {
     return NextResponse.json({ baselinePlan: null, currentRefinement: null, reapplyPrompt: null });
   }
@@ -99,8 +109,18 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   const designMemory = briefRow.design_memory as unknown as DesignMemory | null;
   const { baseline } = resolveRefinement(brief, designMemory, wireframe.compositionVariant.heroPattern, NEUTRAL_EXPERIENCE_PREFERENCE);
 
-  const currentRefinement = await experienceRefinementRepository.findLatestByWebsiteDesign(supabase, websiteDesign.id);
-  const latestMissionRefinement = await experienceRefinementRepository.findLatestByMission(supabase, mission.id);
+  // Pipeline audit fix #8 (2026-09-11): both of these can throw (a real
+  // DB/network exception, not just "no row found") — guarded the same way
+  // missionRepository.findById already is above.
+  let currentRefinement, latestMissionRefinement;
+  try {
+    currentRefinement = await experienceRefinementRepository.findLatestByWebsiteDesign(supabase, websiteDesign.id);
+    latestMissionRefinement = await experienceRefinementRepository.findLatestByMission(supabase, mission.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[GET /api/missions/${params.id}/experience-refinement] experience refinement lookup failed:`, err);
+    return NextResponse.json({ error: "Could not look up this mission's Experience Refinement — please try again." }, { status: 500 });
+  }
 
   // A reapply prompt only makes sense when the founder's most recent
   // refinement, anywhere on this mission, belongs to an OLDER website_design
