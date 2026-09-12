@@ -286,7 +286,9 @@ describe("identity-verification-service: the corroboration rule itself (not brit
 
   test("every verdict carries real, non-empty reasoning for every signal — never a bare label", () => {
     const result = verifyBusinessIdentity(baseInput());
-    assert.equal(result.signals.length, 8);
+    // 9, not 8, since the identity-verification suppression gap fix
+    // (2026-09-12) added a 9th signal, content_ownership.
+    assert.equal(result.signals.length, 9);
     for (const signal of result.signals) {
       assert.ok(signal.detail.length > 0, `${signal.signal} must carry real reasoning`);
     }
@@ -312,5 +314,132 @@ describe("identity-verification-service: the corroboration rule itself (not brit
     );
     assert.equal(failed.verdict, "failed");
     assert.deepEqual(failed.suppressedEvidenceCategories, []);
+  });
+});
+
+// ===========================================================================
+// Identity-verification suppression gap fix (2026-09-12) — real audit
+// finding: services/team/certifications could never be suppressed by any
+// signal, so X.com's own Terms of Service/Privacy Policy boilerplate
+// (reached via twitter.com/mahopacgaming's own footer links) flowed all
+// the way into Video Game Plus's real generated website as its "services"
+// and "team" sections. Design QA caught it after the fact (CRITICAL:
+// "the actual assembled content leaks unrelated third-party legal text");
+// this signal closes the gap earlier, in Design Brief construction,
+// before that content is ever cited or generated from at all.
+// ===========================================================================
+describe("identity-verification-service: content_ownership signal (services/team/certifications suppression)", () => {
+  /** Verbatim real data: Video Game Plus's actual persisted crawl_result, mission 17cbe02c-d95d-484f-ba15-88aaec0ee9b1. */
+  function vgpInput(): VerifyBusinessIdentityInput {
+    return baseInput({
+      businessName: "Video Game Plus",
+      crawl: {
+        requestedUrl: "https://www.twitter.com/mahopacgaming",
+        finalUrl: "https://x.com/mahopacgaming",
+        title: "Video Game Plus (@MahopacGaming) / X",
+        metaDescription:
+          "Video Game Plus buys, sells, and trades both new and retro video games. We also perform video game console, computer, cellphone, and electronic repairs",
+        jsonLdName: null,
+        jsonLdType: null,
+        contact: EMPTY_CONTACT,
+        services: [
+          {
+            heading: "X Terms of Service",
+            excerpt:
+              "Terms of Service We have made some updates to our Terms of Service. This version of the Terms of Service will go into effect on October 9, 2026.",
+            sourceUrl: "https://x.com/tos",
+          },
+        ],
+        team: [
+          { heading: "X Corp.", excerpt: "Attn: Privacy Policy Inquiry", sourceUrl: "https://x.com/privacy" },
+          { heading: "X Internet Unlimited Company", excerpt: "Attn: Data Protection Officer", sourceUrl: "https://x.com/privacy" },
+        ],
+        certifications: [],
+      },
+    });
+  }
+
+  test("regression: Video Game Plus's real contaminated data now gets services/team suppressed, and the verdict stays uncertain (not flipped to failed)", () => {
+    const result = verifyBusinessIdentity(vgpInput());
+    assert.equal(result.verdict, "uncertain", "a plain domain_brand mismatch plus this compound signal must still never resolve FAILED on its own");
+    assert.deepEqual(
+      [...result.suppressedEvidenceCategories].sort(),
+      ["certifications", "services", "team"],
+      "certifications is included even though empty here — suppression is category-level, not conditional on that category actually having content this time"
+    );
+    const ownership = result.signals.find((s) => s.signal === "content_ownership");
+    assert.equal(ownership?.verdict, "mismatch");
+    assert.match(ownership?.detail ?? "", /terms of service/i);
+  });
+
+  test("a plain domain mismatch with NO platform-boilerplate content never suppresses services/team/certifications (the deliberately-preserved exclusion)", () => {
+    // Same domain_brand mismatch shape as the legitimate-rebrand scenario
+    // (test 2 above) — but here the new domain's services/team content is
+    // real, on-topic business content, not legal boilerplate.
+    const result = verifyBusinessIdentity(
+      baseInput({
+        businessName: "Acme Diner",
+        crawl: {
+          requestedUrl: "https://acmediner-old.test/",
+          finalUrl: "https://acmerestaurantgroup.test/",
+          title: "Acme Diner — now part of Acme Restaurant Group",
+          metaDescription: "Acme Diner has a new home.",
+          jsonLdName: "Acme Diner",
+          jsonLdType: "Restaurant",
+          contact: EMPTY_CONTACT,
+          services: [{ heading: "Catering", excerpt: "Full-service catering for events of any size.", sourceUrl: "https://acmerestaurantgroup.test/catering" }],
+          team: [{ heading: "Head Chef", excerpt: "Twenty years of experience in Italian cuisine.", sourceUrl: "https://acmerestaurantgroup.test/team" }],
+        },
+      })
+    );
+    const ownership = result.signals.find((s) => s.signal === "content_ownership");
+    assert.equal(ownership?.verdict, "inconclusive");
+    assert.equal(result.suppressedEvidenceCategories.includes("services"), false);
+    assert.equal(result.suppressedEvidenceCategories.includes("team"), false);
+  });
+
+  test("platform-boilerplate-shaped text alone, with NO domain mismatch, never suppresses anything (the compound gate really is compound)", () => {
+    const result = verifyBusinessIdentity(
+      baseInput({
+        crawl: {
+          requestedUrl: "https://acmediner.test/",
+          finalUrl: "https://acmediner.test/",
+          title: "Acme Diner | Home",
+          metaDescription: "Acme Diner, a real local restaurant.",
+          jsonLdName: null,
+          jsonLdType: null,
+          contact: EMPTY_CONTACT,
+          // Contrived: a real business's own site legitimately links its
+          // own Privacy Policy from a services/team-classified page. This
+          // must never suppress anything when the domain itself is fine.
+          services: [{ heading: "Our Privacy Policy", excerpt: "See our full privacy policy and terms of service here.", sourceUrl: "https://acmediner.test/legal" }],
+        },
+      })
+    );
+    const ownership = result.signals.find((s) => s.signal === "content_ownership");
+    assert.equal(ownership?.verdict, "inconclusive");
+    assert.deepEqual(result.suppressedEvidenceCategories, []);
+    assert.equal(result.verdict, "confirmed");
+  });
+
+  test("absent services/team/certifications fields (every pre-existing caller) resolve exactly like today — inconclusive, no suppression", () => {
+    // No services/team/certifications passed at all — mirrors every
+    // caller/fixture that existed before this fix.
+    const result = verifyBusinessIdentity(
+      baseInput({
+        crawl: {
+          requestedUrl: "https://acmediner.test/",
+          finalUrl: "https://totally-unrelated-domain.test/",
+          title: "Totally Unrelated Domain",
+          metaDescription: "Nothing about Acme Diner here.",
+          jsonLdName: null,
+          jsonLdType: null,
+          contact: EMPTY_CONTACT,
+        },
+      })
+    );
+    const ownership = result.signals.find((s) => s.signal === "content_ownership");
+    assert.equal(ownership?.verdict, "inconclusive");
+    assert.equal(result.suppressedEvidenceCategories.includes("services"), false);
   });
 });

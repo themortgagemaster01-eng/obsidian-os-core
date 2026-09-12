@@ -432,6 +432,9 @@ export async function runDesignBrief(
         jsonLdName: rawCrawl.jsonLdName ?? null,
         jsonLdType: rawCrawl.jsonLdType ?? null,
         contact: rawCrawl.contact,
+        services: rawCrawl.services,
+        team: rawCrawl.team,
+        certifications: rawCrawl.certifications,
       },
     });
 
@@ -482,6 +485,17 @@ export async function runDesignBrief(
         contactEvidence: identityResult.suppressedEvidenceCategories.includes("contactEvidence")
           ? { phones: [], emails: [], address: null, hours: null }
           : normalized.contactEvidence,
+        // Identity-verification suppression gap fix (2026-09-12, confirmed
+        // live on Video Game Plus): services/team/certifications can now
+        // also be suppressed, via the new content_ownership signal only
+        // (a domain not relating to the business name is never, by
+        // itself, grounds to suppress anything — see
+        // resolveContentOwnershipSignal's own doc comment).
+        services: identityResult.suppressedEvidenceCategories.includes("services") ? [] : normalized.services,
+        team: identityResult.suppressedEvidenceCategories.includes("team") ? [] : normalized.team,
+        certifications: identityResult.suppressedEvidenceCategories.includes("certifications")
+          ? []
+          : normalized.certifications,
       };
     }
 

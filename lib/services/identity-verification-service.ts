@@ -1,4 +1,4 @@
-import type { ContactInfo } from "@/lib/adapters/types";
+import type { ContactInfo, ContentSection } from "@/lib/adapters/types";
 
 /**
  * lib/services/identity-verification-service.ts — Phase 14
@@ -37,7 +37,8 @@ export interface SignalResult {
     | "json_ld"
     | "domain_brand"
     | "content_category"
-    | "redirect_destination";
+    | "redirect_destination"
+    | "content_ownership";
   verdict: SignalVerdict;
   /** Plain-language reasoning — every claim traces to something checkable, never a bare label (same discipline design-qa-service.ts's own category reasoning already holds itself to). */
   detail: string;
@@ -74,6 +75,20 @@ export interface VerifyBusinessIdentityInput {
     jsonLdName: string | null;
     jsonLdType: string | string[] | null;
     contact: ContactInfo;
+    /**
+     * The crawler's own "services"/"team"/"certifications" sections
+     * (Fix: identity-verification suppression gap, confirmed live on Video
+     * Game Plus, 2026-09-12) — optional and additive, every existing caller
+     * omits them and gets exactly today's behavior (resolveContentOwnershipSignal
+     * below always resolves "inconclusive" on an empty/absent array, same as
+     * "no title/meta to check" does for the other content-based signals).
+     * Passed through raw, never re-classified — this module only scans the
+     * text for a small, explicit boilerplate vocabulary, never reinterprets
+     * what crawl-adapter.ts already decided these sections mean.
+     */
+    services?: ContentSection[];
+    team?: ContentSection[];
+    certifications?: ContentSection[];
   };
 }
 
@@ -172,6 +187,30 @@ const SPAM_NETWORK_VOCABULARY = [
 const PARKING_PAGE_PHRASES = [
   "this domain may be for sale", "buy this domain", "domain parking",
   "the owner of this domain", "is parked free", "checkout the",
+];
+
+/**
+ * A small, explicit vocabulary of platform/corporate legal-boilerplate
+ * markers — real business "services"/"team"/"certifications" content
+ * essentially never carries this exact shape, while a social-media/hosting
+ * platform's own site-wide footer pages (its Terms of Service, Privacy
+ * Policy, cookie policy) reliably do, and the crawler's own "sample a
+ * handful of same-domain sub-pages" behavior (crawl-adapter.ts's
+ * prioritizeSampleUrls) has no way to know those links lead to the
+ * platform's own boilerplate rather than the business's real content.
+ * Deliberately narrow and phrase-based (mirrors SPAM_NETWORK_VOCABULARY's
+ * own discipline), not a broad "legal-sounding" heuristic that could
+ * false-positive on a law firm's own genuinely-relevant terms/compliance
+ * content. Confirmed necessary and demonstrated by the real Video Game
+ * Plus incident (2026-09-12): its crawled "services"/"team" sections were
+ * literally headed "X Terms of Service" / "X Corp." with excerpts reading
+ * "Attn: Privacy Policy Inquiry" / "Attn: Data Protection Officer" — X.com's
+ * own site-wide legal pages, reached via twitter.com/mahopacgaming's own
+ * footer links, not anything about the actual game/repair shop.
+ */
+const PLATFORM_BOILERPLATE_VOCABULARY = [
+  "terms of service", "terms and conditions", "user agreement",
+  "privacy policy", "data protection officer", "cookie policy", "acceptable use policy",
 ];
 
 function containsAnyPhrase(haystack: string, phrases: string[]): string | null {
@@ -302,6 +341,62 @@ function resolveDomainBrandSignal(input: VerifyBusinessIdentityInput): SignalRes
   return { signal: "domain_brand", verdict: "mismatch", detail: `The domain currently being served (${sld}) shares no text with the business name.` };
 }
 
+/**
+ * resolveContentOwnershipSignal — the narrow, compound fix for the real
+ * suppression gap this signal exists to close (identity-verification
+ * suppression gap, confirmed live on Video Game Plus, 2026-09-12).
+ *
+ * Deliberately gated on domain_brand already being a "mismatch" — a
+ * domain not textually relating to the business name is common and often
+ * legitimate on its own (§ resolveDomainBrandSignal's own doc comment,
+ * and docs/PHASE_14_IMPLEMENTATION_PLAN.md §8's "not itself treated as
+ * suspicious" principle for third-party platforms) and stays exactly that
+ * lenient here — this function does NOT add domain_brand mismatches to
+ * the general suppression table, and does not change the FAILED/CONFIRMED
+ * verdict math for a plain domain mismatch at all. It only asks a second,
+ * narrower, compound question on top of an already-mismatched domain:
+ * does the crawled services/team/certifications content ALSO read as
+ * platform-wide legal boilerplate rather than business content? Only
+ * when BOTH are true does this resolve "mismatch" — a domain mismatch
+ * alone (a real rebrand) or platform-shaped text alone (extremely
+ * unlikely to occur on a domain that DOES relate to the business) never
+ * trips it.
+ */
+function resolveContentOwnershipSignal(
+  input: VerifyBusinessIdentityInput,
+  domainBrandVerdict: SignalVerdict
+): SignalResult {
+  if (domainBrandVerdict !== "mismatch") {
+    return {
+      signal: "content_ownership",
+      verdict: "inconclusive",
+      detail: "The served domain already relates to the business name — no reason to check services/team/certifications content for platform boilerplate.",
+    };
+  }
+  const sections = [...(input.crawl.services ?? []), ...(input.crawl.team ?? []), ...(input.crawl.certifications ?? [])];
+  const text = sections.map((s) => `${s.heading} ${s.excerpt}`).join(" ");
+  if (text.trim().length === 0) {
+    return {
+      signal: "content_ownership",
+      verdict: "inconclusive",
+      detail: "The served domain doesn't relate to the business name, but no services/team/certifications content was crawled to check for platform boilerplate.",
+    };
+  }
+  const hit = containsAnyPhrase(text, PLATFORM_BOILERPLATE_VOCABULARY);
+  if (hit) {
+    return {
+      signal: "content_ownership",
+      verdict: "mismatch",
+      detail: `The served domain doesn't relate to the business name, AND the crawled services/team/certifications content matches platform legal-boilerplate ("${hit}") rather than business content — likely a platform's own site-wide page, not this business's.`,
+    };
+  }
+  return {
+    signal: "content_ownership",
+    verdict: "inconclusive",
+    detail: "The served domain doesn't relate to the business name, but services/team/certifications content doesn't match a known platform-boilerplate pattern.",
+  };
+}
+
 function resolveContentCategorySignal(input: VerifyBusinessIdentityInput): SignalResult {
   const text = `${input.crawl.title ?? ""} ${input.crawl.metaDescription ?? ""}`;
   if (text.trim().length === 0) {
@@ -391,20 +486,28 @@ const EVIDENCE_SUPPRESSION_BY_SIGNAL: Partial<Record<SignalResult["signal"], str
   business_name: ["gallery"],
   address: ["contactEvidence"],
   phone: ["contactEvidence"],
+  // Identity-verification suppression gap fix (2026-09-12): the ONLY
+  // signal capable of suppressing services/team/certifications — a plain
+  // domain_brand mismatch never reaches this table on its own (see
+  // resolveContentOwnershipSignal's own doc comment for why that
+  // exclusion is deliberately preserved, not loosened).
+  content_ownership: ["services", "team", "certifications"],
 };
 
 export function verifyBusinessIdentity(input: VerifyBusinessIdentityInput): IdentityVerificationResult {
   const businessName = resolveBusinessNameSignal(input);
   const redirect = resolveRedirectSignal(input, businessName.verdict);
+  const domainBrand = resolveDomainBrandSignal(input);
   const signals: SignalResult[] = [
     redirect,
     businessName,
     resolveAddressSignal(input),
     resolvePhoneSignal(input),
     resolveJsonLdSignal(input),
-    resolveDomainBrandSignal(input),
+    domainBrand,
     resolveContentCategorySignal(input),
     resolveRedirectDestinationSignal(input, redirect),
+    resolveContentOwnershipSignal(input, domainBrand.verdict),
   ];
 
   const mismatches = signals.filter((s) => s.verdict === "mismatch");
