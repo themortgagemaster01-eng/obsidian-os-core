@@ -1460,6 +1460,12 @@ export async function runDesignGeneration(
     const updated = await deps.websiteDesignRepository.update(deps.client, websiteDesignId, {
       status: "complete",
       completed_at: new Date().toISOString(),
+      // Pipeline audit fix #12 (2026-09-11): a retry that succeeds after an
+      // earlier failed attempt must not leave that attempt's error_message
+      // behind on an otherwise-'complete' row — same real bug, same fix, as
+      // design-brief-service.ts's own success-path update (confirmed stale
+      // in production there, Station Plaza Wine, Sep 2026), just missed here.
+      error_message: null,
       wireframe: wireframe as unknown as Json,
       components: components as unknown as Json,
       refined_design: refinedDesign as unknown as Json,
