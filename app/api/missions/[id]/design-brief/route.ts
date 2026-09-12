@@ -134,8 +134,24 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
  * gone. Fails gracefully with a persisted 'failed' status and error
  * message if ANTHROPIC_API_KEY isn't configured — see
  * lib/llm/anthropic-provider.ts.
+ *
+ * `forceRegenerate` (Design Intelligence regeneration-for-comparison
+ * feature, 2026-09-12): an explicit, named, opt-in escape hatch past the
+ * Fix #11 stage gate above — mirrors transitionMissionState's own
+ * `allowNonSequential` spirit (an explicit override, never a loosening of
+ * the default guard). Only reachable from a dedicated, confirmation-gated
+ * UI control (components/mission-detail/regenerate-for-comparison.tsx),
+ * never the normal Generate/Retry button, which never sends this flag and
+ * gets today's guard behavior unchanged. Bypasses ONLY the stage-gate
+ * check — auth, the overlap guard, and every other check below still run
+ * exactly as they do for a normal request. Does not touch mission state:
+ * runDesignBrief's own internal transition guard (`mission.state ===
+ * "analyzing" || "researching"`) already only ever advances a mission
+ * that's this early in the pipeline, so a forced run on a mission already
+ * at qa/approval creates new design_briefs/website_designs rows without
+ * moving the mission's real, already-approved state at all.
  */
-export async function POST(_request: NextRequest, { params }: RouteParams) {
+export async function POST(request: NextRequest, { params }: RouteParams) {
   const supabase = createClient();
 
   let user;
@@ -167,10 +183,23 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
   }
 
+  // An absent or unparseable body is exactly today's behavior (no flag,
+  // normal guarded request) — never a 400, since the normal Generate/Retry
+  // button sends no body at all.
+  let forceRegenerate = false;
+  try {
+    const body = (await request.json()) as { forceRegenerate?: boolean };
+    forceRegenerate = body?.forceRegenerate === true;
+  } catch {
+    forceRegenerate = false;
+  }
+
   // Pipeline audit fix #11 (2026-09-11): reject a regeneration attempt on a
   // mission that has already moved past the Founder Approval Gate — see
-  // VALID_DESIGN_BRIEF_TRIGGER_STATES's own doc comment above.
-  if (!VALID_DESIGN_BRIEF_TRIGGER_STATES.includes(mission.state)) {
+  // VALID_DESIGN_BRIEF_TRIGGER_STATES's own doc comment above. `forceRegenerate`
+  // (see this route's own POST doc comment) is the one explicit, named
+  // escape hatch — every other request still hits this exact guard.
+  if (!VALID_DESIGN_BRIEF_TRIGGER_STATES.includes(mission.state) && !forceRegenerate) {
     return NextResponse.json(
       {
         error: `Mission ${mission.id} is at state "${mission.state}" — a Design Brief can only be generated while the mission is at analyzing, researching, or reviewing. This mission has already moved past that stage.`,

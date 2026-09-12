@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { DesignBriefView } from "@/components/mission-detail/design-brief-view";
 import { QaReportView } from "@/components/mission-detail/qa-report-view";
 import { BeforeAfterPanel } from "@/components/mission-detail/before-after-panel";
+import { RegenerateForComparison } from "@/components/mission-detail/regenerate-for-comparison";
 import type { DesignBriefRow } from "@/lib/repositories/design-brief-repository";
 import type { WebsiteDesignRow } from "@/lib/repositories/website-design-repository";
 import type { DesignBrief } from "@/lib/services/design-brief-service";
@@ -18,6 +19,24 @@ import type { DesignQaReport } from "@/lib/services/design-qa-service";
 import type { MissionState } from "@/lib/workflow/mission-state";
 
 const POLL_INTERVAL_MS = 3000;
+
+/**
+ * Mirrors VALID_DESIGN_BRIEF_TRIGGER_STATES in
+ * app/api/missions/[id]/design-brief/route.ts (Fix #11's guard) — every
+ * state NOT in that route's own allow-list. Duplicated rather than
+ * imported since that route isn't a shared module; kept as the exact
+ * complement so RegenerateForComparison renders precisely when a normal,
+ * unforced POST .../design-brief would be rejected by the guard it bypasses.
+ */
+const PAST_APPROVAL_GATE_STATES: readonly MissionState[] = [
+  "designing",
+  "qa",
+  "proposal",
+  "email",
+  "approval",
+  "sent",
+  "archived",
+];
 
 /**
  * Founder Mission Experience (Product Surface Pass, Priorities 1–3). Client
@@ -328,6 +347,8 @@ export function DesignBriefPanel({
           onCapture={handleCapturePreview}
         />
       )}
+
+      {PAST_APPROVAL_GATE_STATES.includes(missionState) && <RegenerateForComparison missionId={missionId} />}
     </div>
   );
 }

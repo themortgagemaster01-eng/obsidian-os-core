@@ -86,6 +86,24 @@ export const designBriefRepository = {
     return data;
   },
 
+  /**
+   * Every design_briefs row ever created for this mission, newest first —
+   * for the Design Intelligence regeneration-for-comparison feature
+   * (2026-09-12). Rows are never deleted (no delete() exists on this
+   * repository), so this is a real, complete history, not a partial one —
+   * a mission regenerated 3 times has all 3 real rows here, unmodified.
+   */
+  async findAllByMission(client: TypedClient, missionId: string): Promise<DesignBriefRow[]> {
+    const { data, error } = await client
+      .from("design_briefs")
+      .select("*")
+      .eq("mission_id", missionId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    return data ?? [];
+  },
+
   /** Mirrors websiteDesignRepository.listCompletedByOrganization — design-qa-service.ts's cross-mission genericity checks (heroThesis/signatureElement duplication) need every other completed mission's brief in this organization, the same way findDuplicateSectionStructures already needs every other mission's wireframe. */
   async listCompletedByOrganization(client: TypedClient, organizationId: string): Promise<DesignBriefRow[]> {
     const { data, error } = await client

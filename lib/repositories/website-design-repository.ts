@@ -108,6 +108,25 @@ export const websiteDesignRepository = {
   },
 
   /**
+   * Every website_designs row ever created for this mission, newest first
+   * — for the Design Intelligence regeneration-for-comparison feature
+   * (2026-09-12). Rows are never deleted, so this is a real, complete
+   * history; the mission preview page (app/missions/[id]/preview) already
+   * supports viewing any one of them via `?designId=`, so this list is
+   * the only new surface the comparison feature actually needs.
+   */
+  async findAllByMission(client: TypedClient, missionId: string): Promise<WebsiteDesignRow[]> {
+    const { data, error } = await client
+      .from("website_designs")
+      .select("*")
+      .eq("mission_id", missionId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    return data ?? [];
+  },
+
+  /**
    * Every completed design run in an organization — design-qa-service.ts's
    * batch input for lib/design-intelligence/layout-rules.ts's
    * findDuplicateSectionStructures() (§4.3/§4.10/§4.11's cross-mission
