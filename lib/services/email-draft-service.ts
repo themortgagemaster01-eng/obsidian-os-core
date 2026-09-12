@@ -99,7 +99,22 @@ export async function createEmailDraft(deps: EmailDraftServiceDeps, missionId: s
     email_body: draft.body,
   });
 
-  await transitionMissionState(deps.workflowDeps, missionId, "email");
+  const { mission: afterEmailTransition } = await transitionMissionState(deps.workflowDeps, missionId, "email");
+  // Pipeline audit fix #9 (2026-09-11): every other transitionMissionState
+  // call site in the codebase has an explicit precondition check before
+  // attempting it; this second transition relied entirely on the first one
+  // having just succeeded, with no guard of its own. Uses the FRESH mission
+  // row transitionMissionState itself just returned (no extra DB read) —
+  // protects against a future refactor inserting an await (or any other
+  // async work) between the two transitions from silently attempting a
+  // doomed "email -> approval" move instead of a clear, early error. The two
+  // transitions are meant to fire as one atomic unit (see this function's
+  // own doc comment above), so a mismatch here throws rather than skipping.
+  if (afterEmailTransition.state !== "email") {
+    throw new Error(
+      `Mission ${missionId} is at state "${afterEmailTransition.state}", not "email" — cannot proceed to the approval transition.`
+    );
+  }
   await transitionMissionState(deps.workflowDeps, missionId, "approval");
 
   await deps.eventBus.publish({
