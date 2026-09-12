@@ -9,6 +9,7 @@ import {
   createDesignQaRun,
   createDesignQaServiceDeps,
   runDesignQa,
+  checkDesignQaOverlap,
 } from "@/lib/services/design-qa-service";
 
 interface RouteParams {
@@ -91,6 +92,23 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   if (!websiteDesign || websiteDesign.status !== "complete") {
     return NextResponse.json(
       { error: "No completed website design found for this mission — run POST /api/missions/:id/generate-design first." },
+      { status: 409 }
+    );
+  }
+
+  // Overlap guard (pipeline audit fix #7, 2026-09-11): checked before
+  // claiming the row, so a caller gets a real 409 instead of a duplicate
+  // Design QA run racing the one already in flight for this mission. The
+  // DB's own partial unique index (website_designs_one_qa_inflight_per_mission)
+  // is the real, final authority against a genuine race between this check
+  // and createDesignQaRun's claim below.
+  const overlap = await checkDesignQaOverlap(createDesignQaServiceDeps(supabase), mission.id);
+  if (overlap.kind === "already_running") {
+    return NextResponse.json(
+      {
+        error: `A Design QA run is already in progress for this mission — wait for it to finish before starting another.`,
+        runningWebsiteDesign: overlap.runningRun,
+      },
       { status: 409 }
     );
   }

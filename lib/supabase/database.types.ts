@@ -842,6 +842,9 @@ export interface Database {
           components: Json | null;
           refined_design: Json | null;
           qa_result: Json | null;
+          /** Design QA's own in-flight marker (0032_website_designs_qa_overlap_guard.sql) — independent of `status`, which tracks Generation's lifecycle only. 'running' while a Design QA run is in flight for this row, null otherwise. */
+          qa_status: string | null;
+          qa_started_at: string | null;
           preview_screenshot_desktop_path: string | null;
           preview_screenshot_mobile_path: string | null;
           preview_screenshot_captured_at: string | null;
@@ -861,6 +864,8 @@ export interface Database {
           components?: Json | null;
           refined_design?: Json | null;
           qa_result?: Json | null;
+          qa_status?: string | null;
+          qa_started_at?: string | null;
           preview_screenshot_desktop_path?: string | null;
           preview_screenshot_mobile_path?: string | null;
           preview_screenshot_captured_at?: string | null;
@@ -880,6 +885,8 @@ export interface Database {
           components?: Json | null;
           refined_design?: Json | null;
           qa_result?: Json | null;
+          qa_status?: string | null;
+          qa_started_at?: string | null;
           preview_screenshot_desktop_path?: string | null;
           preview_screenshot_mobile_path?: string | null;
           preview_screenshot_captured_at?: string | null;

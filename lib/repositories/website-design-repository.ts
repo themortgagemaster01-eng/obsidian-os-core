@@ -86,6 +86,28 @@ export const websiteDesignRepository = {
   },
 
   /**
+   * Design QA's own overlap guard question (pipeline audit finding #7,
+   * 2026-09-11) — mirrors findInFlightByMission's shape, but keyed on
+   * qa_status rather than status, since QA writes onto an existing
+   * website_designs row rather than inserting a new one (see
+   * 0032_website_designs_qa_overlap_guard.sql). At most one row can ever
+   * match, since the DB-level partial unique index
+   * (website_designs_one_qa_inflight_per_mission) is the real authority
+   * that guarantees it.
+   */
+  async findQaInFlightByMission(client: TypedClient, missionId: string): Promise<WebsiteDesignRow | null> {
+    const { data, error } = await client
+      .from("website_designs")
+      .select("*")
+      .eq("mission_id", missionId)
+      .eq("qa_status", "running")
+      .maybeSingle();
+
+    if (error) throw error;
+    return data;
+  },
+
+  /**
    * Every completed design run in an organization — design-qa-service.ts's
    * batch input for lib/design-intelligence/layout-rules.ts's
    * findDuplicateSectionStructures() (§4.3/§4.10/§4.11's cross-mission

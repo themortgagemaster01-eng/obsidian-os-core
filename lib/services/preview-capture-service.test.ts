@@ -19,6 +19,8 @@ function fakeWebsiteDesign(overrides: Partial<WebsiteDesignRow> = {}): WebsiteDe
     components: [{ section: "hero", componentKind: "hero-editorial", slots: [] }] as unknown as WebsiteDesignRow["components"],
     refined_design: null,
     qa_result: null,
+    qa_status: null,
+    qa_started_at: null,
     preview_screenshot_desktop_path: null,
     preview_screenshot_mobile_path: null,
     preview_screenshot_captured_at: null,

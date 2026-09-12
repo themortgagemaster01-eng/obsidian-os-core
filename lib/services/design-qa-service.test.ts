@@ -17,10 +17,14 @@ import {
   classifyShaderHeroRenderHealth,
   runStructuredDeterministicChecks,
   assembleDesignQaReport,
+  decideDesignQaOverlapGuardAction,
+  checkDesignQaOverlap,
   type QaStructuredInput,
   type DeterministicCategoryResult,
   type AiDerivedAssessment,
+  type DesignQaServiceDeps,
 } from "@/lib/services/design-qa-service";
+import type { WebsiteDesignRow } from "@/lib/repositories/website-design-repository";
 import {
   generateWireframe,
   assembleComponents,
@@ -1311,5 +1315,144 @@ describe("design-qa-service: assembleDesignQaReport", () => {
   test("every category is present in the report, never silently omitted", () => {
     const report = assembleDesignQaReport({ missionId: "m1", websiteDesignId: "d1", businessName: "Acme" }, allPass() as never, {}, { available: true });
     assert.equal(Object.keys(report.categories).length, 12);
+  });
+});
+
+// ===========================================================================
+// Pipeline audit fix #7 (2026-09-11): Design QA had no overlap guard at
+// all, unlike every other pipeline stage (mission-batch, analysis,
+// design-brief, design-generation). Mirrors design-brief-service.test.ts's
+// own decideDesignBriefOverlapGuardAction/checkDesignBriefOverlap test
+// shape exactly, keyed on qa_status/qa_started_at instead of status/
+// started_at (see 0032_website_designs_qa_overlap_guard.sql).
+// ===========================================================================
+
+const FIFTEEN_MIN_MS = 15 * 60 * 1000;
+
+function fakeWebsiteDesignRow(overrides: Partial<WebsiteDesignRow> = {}): WebsiteDesignRow {
+  const now = new Date().toISOString();
+  return {
+    id: "design-1",
+    design_brief_id: "brief-1",
+    mission_id: "mission-1",
+    organization_id: "org-1",
+    status: "complete",
+    wireframe: null,
+    components: null,
+    refined_design: null,
+    qa_result: null,
+    qa_status: null,
+    qa_started_at: null,
+    preview_screenshot_desktop_path: null,
+    preview_screenshot_mobile_path: null,
+    preview_screenshot_captured_at: null,
+    preview_screenshot_error: null,
+    error_message: null,
+    started_at: now,
+    completed_at: now,
+    created_at: now,
+    ...overrides,
+  } as unknown as WebsiteDesignRow;
+}
+
+describe("design-qa-service: decideDesignQaOverlapGuardAction (overlap protection, mirrors design-brief-service's own guard)", () => {
+  test("no in-flight QA run for this mission — proceed", () => {
+    assert.deepEqual(decideDesignQaOverlapGuardAction(null, Date.now(), FIFTEEN_MIN_MS), { kind: "proceed" });
+  });
+
+  test("the mission's design row has no qa_status set (never run, or already settled) — proceed", () => {
+    const now = Date.now();
+    assert.deepEqual(decideDesignQaOverlapGuardAction(fakeWebsiteDesignRow({ qa_status: null }), now, FIFTEEN_MIN_MS), {
+      kind: "proceed",
+    });
+  });
+
+  test("a fresh in-flight QA run (well within the duration bound) — already_running, never a duplicate", () => {
+    const now = Date.now();
+    const freshRun = fakeWebsiteDesignRow({ qa_status: "running", qa_started_at: new Date(now - 60_000).toISOString() });
+    const result = decideDesignQaOverlapGuardAction(freshRun, now, FIFTEEN_MIN_MS);
+    assert.deepEqual(result, { kind: "already_running", runningRun: freshRun });
+  });
+
+  test("an in-flight QA run older than the max duration bound — reap it, then allow a new one to proceed", () => {
+    const now = Date.now();
+    const staleRun = fakeWebsiteDesignRow({
+      id: "stale-design-1",
+      qa_status: "running",
+      qa_started_at: new Date(now - 20 * 60 * 1000).toISOString(),
+    });
+    const result = decideDesignQaOverlapGuardAction(staleRun, now, FIFTEEN_MIN_MS);
+    assert.deepEqual(result, { kind: "reap_stale_then_proceed", staleRunId: "stale-design-1" });
+  });
+
+  test("exactly at the boundary is treated as still-fresh, not stale (age must exceed, not merely equal, the bound)", () => {
+    const now = Date.now();
+    const boundaryRun = fakeWebsiteDesignRow({ qa_status: "running", qa_started_at: new Date(now - FIFTEEN_MIN_MS).toISOString() });
+    assert.equal(decideDesignQaOverlapGuardAction(boundaryRun, now, FIFTEEN_MIN_MS).kind, "already_running");
+  });
+
+  test("one millisecond past the bound is stale", () => {
+    const now = Date.now();
+    const justPastRun = fakeWebsiteDesignRow({ qa_status: "running", qa_started_at: new Date(now - FIFTEEN_MIN_MS - 1).toISOString() });
+    assert.equal(decideDesignQaOverlapGuardAction(justPastRun, now, FIFTEEN_MIN_MS).kind, "reap_stale_then_proceed");
+  });
+});
+
+describe("design-qa-service: checkDesignQaOverlap (the route-facing guard)", () => {
+  function fakeOverlapDeps(runs: WebsiteDesignRow[]) {
+    const updated: { id: string; values: unknown }[] = [];
+    const websiteDesignRepository = {
+      async findQaInFlightByMission(_client: unknown, missionId: string) {
+        return runs.find((r) => r.mission_id === missionId && r.qa_status === "running") ?? null;
+      },
+      async update(_client: unknown, id: string, values: Record<string, unknown>) {
+        updated.push({ id, values });
+        const index = runs.findIndex((r) => r.id === id);
+        runs[index] = { ...runs[index], ...values } as WebsiteDesignRow;
+        return runs[index];
+      },
+    };
+    return {
+      deps: { client: {}, websiteDesignRepository } as unknown as Pick<DesignQaServiceDeps, "client" | "websiteDesignRepository">,
+      updated,
+      runs,
+    };
+  }
+
+  test("no in-flight QA run — proceed, nothing reaped", async () => {
+    const { deps, updated } = fakeOverlapDeps([]);
+    const result = await checkDesignQaOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "proceed" });
+    assert.equal(updated.length, 0);
+  });
+
+  test("a fresh in-flight QA run for the same mission — already_running, the real row is returned", async () => {
+    const freshRun = fakeWebsiteDesignRow({ mission_id: "mission-1", qa_status: "running", qa_started_at: new Date().toISOString() });
+    const { deps } = fakeOverlapDeps([freshRun]);
+    const result = await checkDesignQaOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "already_running", runningRun: freshRun });
+  });
+
+  test("an in-flight QA run for a DIFFERENT mission never blocks this one", async () => {
+    const otherMissionRun = fakeWebsiteDesignRow({ mission_id: "mission-2", qa_status: "running", qa_started_at: new Date().toISOString() });
+    const { deps } = fakeOverlapDeps([otherMissionRun]);
+    const result = await checkDesignQaOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "proceed" });
+  });
+
+  test("a stale in-flight QA run is actually reaped (qa_status/qa_started_at cleared) before proceeding", async () => {
+    const staleRun = fakeWebsiteDesignRow({
+      id: "stale-design-2",
+      mission_id: "mission-1",
+      qa_status: "running",
+      qa_started_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    });
+    const { deps, updated, runs } = fakeOverlapDeps([staleRun]);
+    const result = await checkDesignQaOverlap(deps, "mission-1");
+    assert.deepEqual(result, { kind: "proceed" });
+    assert.equal(updated.length, 1);
+    assert.equal(updated[0].id, "stale-design-2");
+    assert.equal(runs[0].qa_status, null);
+    assert.equal(runs[0].qa_started_at, null);
   });
 });

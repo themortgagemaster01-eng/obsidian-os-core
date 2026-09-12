@@ -1734,11 +1734,76 @@ async function buildBatchContext(
   return { sectionStructures, otherTypographyFamilies, designSignatures };
 }
 
+/**
+ * How long a claimed-in-flight QA run is trusted before it's treated as
+ * abandoned — mirrors design-brief-service.ts's/design-generation-
+ * service.ts's own 15-minute threshold (pipeline audit finding #7,
+ * 2026-09-11).
+ */
+const DEFAULT_MAX_DESIGN_QA_INFLIGHT_DURATION_MS = 15 * 60 * 1000;
+
+export type DesignQaOverlapGuardAction =
+  | { kind: "proceed" }
+  | { kind: "reap_stale_then_proceed"; staleRunId: string }
+  | { kind: "already_running"; runningRun: WebsiteDesignRow };
+
+/**
+ * decideDesignQaOverlapGuardAction — "is it safe to start Design QA for
+ * this mission," mirroring decideDesignBriefOverlapGuardAction's shape
+ * exactly, keyed on qa_status/qa_started_at (see
+ * 0032_website_designs_qa_overlap_guard.sql's doc comment for why this is
+ * a second, independent marker rather than reusing `status`, which tracks
+ * Generation's own lifecycle on the same row).
+ */
+export function decideDesignQaOverlapGuardAction(
+  currentlyInFlightRun: WebsiteDesignRow | null,
+  nowMs: number,
+  maxInFlightDurationMs: number
+): DesignQaOverlapGuardAction {
+  if (!currentlyInFlightRun || currentlyInFlightRun.qa_status !== "running") {
+    return { kind: "proceed" };
+  }
+  const referenceMs = new Date(currentlyInFlightRun.qa_started_at ?? currentlyInFlightRun.created_at).getTime();
+  const ageMs = nowMs - referenceMs;
+  if (ageMs > maxInFlightDurationMs) {
+    return { kind: "reap_stale_then_proceed", staleRunId: currentlyInFlightRun.id };
+  }
+  return { kind: "already_running", runningRun: currentlyInFlightRun };
+}
+
+/**
+ * checkDesignQaOverlap — the route-facing half: resolves the mission's
+ * currently in-flight QA run (if any), decides what to do, and reaps a
+ * stale one (clears qa_status/qa_started_at) before returning "proceed" —
+ * the caller (POST /api/missions/:id/qa) calls this BEFORE
+ * createDesignQaRun, so it can return a real 409 instead of a duplicate QA
+ * run racing the one already in flight for this mission.
+ */
+export async function checkDesignQaOverlap(
+  deps: Pick<DesignQaServiceDeps, "client" | "websiteDesignRepository">,
+  missionId: string
+): Promise<{ kind: "proceed" } | { kind: "already_running"; runningRun: WebsiteDesignRow }> {
+  const inFlightRun = await deps.websiteDesignRepository.findQaInFlightByMission(deps.client, missionId);
+  const action = decideDesignQaOverlapGuardAction(inFlightRun, Date.now(), DEFAULT_MAX_DESIGN_QA_INFLIGHT_DURATION_MS);
+
+  if (action.kind === "reap_stale_then_proceed") {
+    await deps.websiteDesignRepository.update(deps.client, action.staleRunId, {
+      qa_status: null,
+      qa_started_at: null,
+    });
+    return { kind: "proceed" };
+  }
+  if (action.kind === "already_running") {
+    return { kind: "already_running", runningRun: action.runningRun };
+  }
+  return { kind: "proceed" };
+}
+
 export interface CreateDesignQaRunInput {
   websiteDesignId: string;
 }
 
-/** No separate `design_qa` row: QA's result is persisted directly onto the `website_designs` row it graded (website_designs.qa_result, migration 0015) — one artifact, one row, mirroring how refined_design extended the same row rather than adding a new table. createDesignQaRun exists only for API-route symmetry with the other two /:id/* POST routes (design-brief, generate-design). */
+/** No separate `design_qa` row: QA's result is persisted directly onto the `website_designs` row it graded (website_designs.qa_result, migration 0015) — one artifact, one row, mirroring how refined_design extended the same row rather than adding a new table. createDesignQaRun claims the row (qa_status: 'running', qa_started_at: now) so checkDesignQaOverlap above has something real to guard against — mirrors createDesignBriefRun/createDesignGenerationRun inserting a 'pending' row synchronously, just via an update instead of an insert since the row already exists. */
 export async function createDesignQaRun(
   deps: DesignQaServiceDeps,
   input: CreateDesignQaRunInput
@@ -1747,7 +1812,10 @@ export async function createDesignQaRun(
   if (!run) {
     throw new Error(`Website design ${input.websiteDesignId} not found.`);
   }
-  return run;
+  return deps.websiteDesignRepository.update(deps.client, run.id, {
+    qa_status: "running",
+    qa_started_at: new Date().toISOString(),
+  });
 }
 
 /**
@@ -1921,8 +1989,13 @@ export async function runDesignQa(deps: DesignQaServiceDeps, websiteDesignId: st
 
     const report = assembleDesignQaReport(structuredInput, deterministic, aiDerived, { available: renderedAvailable, reason: renderedReason });
 
+    // Pipeline audit fix #7 (2026-09-11): clears the qa_status claim
+    // createDesignQaRun set — a completed run must release the overlap
+    // guard's lock, same as it releases on failure below.
     const updated = await deps.websiteDesignRepository.update(deps.client, websiteDesignId, {
       qa_result: report as unknown as Json,
+      qa_status: null,
+      qa_started_at: null,
     });
 
     await deps.eventBus.publish({
@@ -1937,6 +2010,16 @@ export async function runDesignQa(deps: DesignQaServiceDeps, websiteDesignId: st
     return updated;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Design QA failed for an unknown reason.";
+
+    // Pipeline audit fix #7 (2026-09-11): releases the qa_status claim
+    // createDesignQaRun set — without this, a failed run would leave the
+    // overlap guard's lock held until the 15-minute staleness reap kicked
+    // in, instead of releasing it immediately like every other guarded
+    // stage in this pipeline does on failure.
+    await deps.websiteDesignRepository.update(deps.client, websiteDesignId, {
+      qa_status: null,
+      qa_started_at: null,
+    });
 
     await deps.eventBus.publish({
       type: "DesignQaFailed",
