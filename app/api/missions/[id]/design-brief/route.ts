@@ -5,12 +5,27 @@ import { createClient } from "@/lib/supabase/server";
 import { createSecretKeyClient } from "@/lib/supabase/service-role";
 import { missionRepository } from "@/lib/repositories/mission-repository";
 import { designBriefRepository } from "@/lib/repositories/design-brief-repository";
+import type { MissionState } from "@/lib/workflow/mission-state";
 import {
   createDesignBriefRun,
   createDesignBriefServiceDeps,
   runDesignBrief,
   checkDesignBriefOverlap,
 } from "@/lib/services/design-brief-service";
+
+/**
+ * Pipeline audit fix #11 (2026-09-11): a Design Brief can only be
+ * (re)generated while the mission hasn't moved past the Founder Approval
+ * Gate yet — "analyzing"/"researching" (first-time generation) or
+ * "reviewing" (a founder regenerating before approving, a real, intended
+ * use case confirmed live — Station Plaza Wine's own 15:06 regeneration).
+ * Real audit finding: nothing blocked a POST here once a mission had
+ * already moved on to "designing" or later — one fired 7 hours after a
+ * mission had already reached "qa", silently burning a real LLM call and
+ * writing an orphaned design_briefs row with no relationship to the
+ * mission's actual, already-further-along state.
+ */
+const VALID_DESIGN_BRIEF_TRIGGER_STATES: readonly MissionState[] = ["analyzing", "researching", "reviewing"];
 
 interface RouteParams {
   params: { id: string };
@@ -150,6 +165,18 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   }
   if (!mission) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
+  }
+
+  // Pipeline audit fix #11 (2026-09-11): reject a regeneration attempt on a
+  // mission that has already moved past the Founder Approval Gate — see
+  // VALID_DESIGN_BRIEF_TRIGGER_STATES's own doc comment above.
+  if (!VALID_DESIGN_BRIEF_TRIGGER_STATES.includes(mission.state)) {
+    return NextResponse.json(
+      {
+        error: `Mission ${mission.id} is at state "${mission.state}" — a Design Brief can only be generated while the mission is at analyzing, researching, or reviewing. This mission has already moved past that stage.`,
+      },
+      { status: 409 }
+    );
   }
 
   // Overlap guard: checked before creating a new row, so a caller gets a
