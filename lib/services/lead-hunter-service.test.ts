@@ -338,6 +338,12 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
     assert.equal(result.qualifiedCount, 1);
     assert.equal(deps.scanRuns[0].status, "complete");
     assert.equal(deps.scanRuns[0].error_message, null);
+    // Regression (2026-09-13 fix): zero skips keeps today's exact summary
+    // format — no dangling empty parenthetical, no "(0 already tracked...)" noise.
+    assert.equal(result.skippedExistingCompanyCount, 0);
+    assert.equal(deps.scanRuns[0].skipped_existing_company_count, 0);
+    assert.doesNotMatch(result.funnelSummary, /already tracked/);
+    assert.match(result.funnelSummary, /^1 businesses scanned → 1 usable websites/);
   });
 
   test("a candidate with no website is rejected, never silently dropped or crawled", async () => {
@@ -369,6 +375,37 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
     assert.equal(result.skippedExistingCompanyCount, 1);
     assert.equal(result.leads.length, 0);
     assert.equal(deps.insertedRows.length, 0);
+    // Lead Hunter false-alarm fix (2026-09-13): this count must actually
+    // reach the persisted lead_scan_runs row, not just the in-memory
+    // return value the fire-and-forget route never reads.
+    assert.equal(deps.scanRuns[0].skipped_existing_company_count, 1);
+    assert.match(result.funnelSummary, /1 already tracked as real companies, correctly skipped/);
+  });
+
+  test("Lead Hunter false-alarm fix (2026-09-13): real bug shape — mostly-already-tracked location produces a real, complete, non-confusing funnel, not the appearance of dropped leads", async () => {
+    // Mirrors the real production incident: mahopac, ny discovered 5
+    // candidates, qualified_count came back 0, and only 1-2 rejected leads
+    // were visible anywhere — with no way to see WHY the other 3-4 vanished.
+    // Reconstructed at smaller scale: 3 discovered, 2 already tracked as
+    // real companies (correctly skipped), 1 genuinely rejected (crawl
+    // failure) — the funnel must now explain all 3, not just 1.
+    const secondExisting: DiscoveredBusiness = { ...REAL_SHAPED_CANDIDATE, externalId: "node/2", name: "Existing Two", websiteUrl: "https://existing-two.test/" };
+    const rejectedCandidate: DiscoveredBusiness = { ...REAL_SHAPED_CANDIDATE, externalId: "node/3", name: "Broken Site", websiteUrl: "https://broken.test/" };
+    const deps = createFakeDeps({
+      discovered: [REAL_SHAPED_CANDIDATE, secondExisting, rejectedCandidate],
+      existingCompanyUrls: ["pepispizza.test", "existing-two.test"],
+      crawlsByUrl: { "https://broken.test/": fakeCrawl({ fetchError: "ETIMEDOUT", statusCode: null }) },
+    });
+    const result = await runLeadHunterScan(deps, { organizationId: "org-1", location: "mahopac, ny", industryBuckets: ["restaurant"] });
+
+    assert.equal(result.discoveredCount, 3);
+    assert.equal(result.skippedExistingCompanyCount, 2);
+    assert.equal(result.rejectedCount, 1);
+    assert.equal(result.qualifiedCount, 0);
+    // The arithmetic that was previously invisible: discovered === skipped + rejected + qualified.
+    assert.equal(result.discoveredCount, result.skippedExistingCompanyCount + result.rejectedCount + result.qualifiedCount);
+    assert.equal(deps.scanRuns[0].skipped_existing_company_count, 2);
+    assert.match(result.funnelSummary, /3 businesses scanned \(2 already tracked as real companies, correctly skipped\)/);
   });
 
   test("a real, reachable candidate is scored and persisted as a real candidate lead with all three distinct scores set", async () => {

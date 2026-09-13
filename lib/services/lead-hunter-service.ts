@@ -230,13 +230,27 @@ function mainWeaknesses(websiteSignals: { label: string; passed: boolean }[]): s
 
 function formatFunnelSummary(counts: {
   discoveredCount: number;
+  skippedExistingCompanyCount: number;
   qualifiedCount: number;
   meaningfulOpportunityCount: number;
   highConfidenceCount: number;
   queuedCount: number;
 }): string {
+  // Lead Hunter false-alarm fix (2026-09-13): discoveredCount can
+  // legitimately be much larger than qualifiedCount + rejectedCount with no
+  // visible explanation once a location has been scanned before — every
+  // candidate whose website_url already matches a tracked company in this
+  // org is deliberately skipped (never re-discovered as a "new" lead), but
+  // that count previously had nowhere to surface at all. Named explicitly
+  // here, not folded silently into "businesses scanned", so the funnel's
+  // own arithmetic is checkable at a glance instead of looking like data
+  // quietly vanished.
+  const skippedClause =
+    counts.skippedExistingCompanyCount > 0
+      ? ` (${counts.skippedExistingCompanyCount} already tracked as real companies, correctly skipped)`
+      : "";
   return (
-    `${counts.discoveredCount} businesses scanned → ${counts.qualifiedCount} usable websites → ` +
+    `${counts.discoveredCount} businesses scanned${skippedClause} → ${counts.qualifiedCount} usable websites → ` +
     `${counts.meaningfulOpportunityCount} meaningful website opportunities → ${counts.highConfidenceCount} high-confidence prospects → ` +
     `${counts.queuedCount} selected for today's queue`
   );
@@ -417,7 +431,14 @@ async function runScanAgainstDiscovered(
   }
 
   const queuedCount = Math.min(queueSize, highConfidenceCount);
-  const funnelCounts = { discoveredCount: discovered.length, qualifiedCount, meaningfulOpportunityCount, highConfidenceCount, queuedCount };
+  const funnelCounts = {
+    discoveredCount: discovered.length,
+    skippedExistingCompanyCount,
+    qualifiedCount,
+    meaningfulOpportunityCount,
+    highConfidenceCount,
+    queuedCount,
+  };
 
   await deps.leadScanRepository.update(deps.client, scanRun.id, {
     status: "complete",
@@ -427,6 +448,7 @@ async function runScanAgainstDiscovered(
     meaningful_opportunity_count: meaningfulOpportunityCount,
     high_confidence_count: highConfidenceCount,
     queued_count: queuedCount,
+    skipped_existing_company_count: skippedExistingCompanyCount,
     completed_at: new Date().toISOString(),
   });
 

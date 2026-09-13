@@ -691,6 +691,8 @@ export interface Database {
           meaningful_opportunity_count: number | null;
           high_confidence_count: number | null;
           queued_count: number | null;
+          /** Discovered candidates whose website_url already matched a tracked company in this org — deliberately skipped, never a lead row (0033_lead_scan_runs_skipped_existing_company_count.sql). Nullable like every other funnel count. */
+          skipped_existing_company_count: number | null;
           error_message: string | null;
           started_at: string;
           completed_at: string | null;
@@ -710,6 +712,7 @@ export interface Database {
           meaningful_opportunity_count?: number | null;
           high_confidence_count?: number | null;
           queued_count?: number | null;
+          skipped_existing_company_count?: number | null;
           error_message?: string | null;
           started_at?: string;
           completed_at?: string | null;
@@ -729,6 +732,7 @@ export interface Database {
           meaningful_opportunity_count?: number | null;
           high_confidence_count?: number | null;
           queued_count?: number | null;
+          skipped_existing_company_count?: number | null;
           error_message?: string | null;
           started_at?: string;
           completed_at?: string | null;

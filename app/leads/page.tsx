@@ -96,7 +96,11 @@ export default async function LeadHunterPage() {
             {latestScan.status === "failed" && <p className="text-sm text-destructive">Scan for &quot;{latestScan.location}&quot; failed: {latestScan.error_message}</p>}
             {latestScan.status === "complete" && (
               <p className="text-sm text-foreground">
-                {latestScan.discovered_count} businesses scanned → {latestScan.qualified_count} usable websites → {latestScan.meaningful_opportunity_count} meaningful website opportunities → {latestScan.high_confidence_count} high-confidence prospects → {latestScan.queued_count} selected for today&apos;s queue
+                {latestScan.discovered_count} businesses scanned
+                {!!latestScan.skipped_existing_company_count && (
+                  <span className="text-muted-foreground"> ({latestScan.skipped_existing_company_count} already tracked as real companies, correctly skipped)</span>
+                )}{" "}
+                → {latestScan.qualified_count} usable websites → {latestScan.meaningful_opportunity_count} meaningful website opportunities → {latestScan.high_confidence_count} high-confidence prospects → {latestScan.queued_count} selected for today&apos;s queue
               </p>
             )}
           </section>
