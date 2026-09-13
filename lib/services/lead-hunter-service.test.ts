@@ -289,6 +289,7 @@ const REAL_SHAPED_CANDIDATE: DiscoveredBusiness = {
   address: "87 Water Street North",
   latitude: 43.45,
   longitude: -80.49,
+  brand: null,
 };
 
 describe("lead-hunter-service: runLeadHunterScan", () => {
@@ -369,14 +370,35 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
     assert.match(result.funnelSummary, /^1 businesses scanned → 1 usable websites/);
   });
 
-  test("a candidate with no website is rejected, never silently dropped or crawled", async () => {
+  test("qualification overhaul (2026-09-14): a candidate with no website at all is a real new-build opportunity, never silently dropped OR auto-rejected", async () => {
+    // Confirmed live: Balsamo-Codovano Funeral Home was auto-rejected for
+    // exactly this before this fix. Robert's own business builds brand-new
+    // sites for businesses without one — the best lead category, not a
+    // rejection.
     const noWebsite: DiscoveredBusiness = { ...REAL_SHAPED_CANDIDATE, websiteUrl: null };
     const deps = createFakeDeps({ discovered: [noWebsite] });
     const result = await runLeadHunterScan(deps, { organizationId: "org-1", location: "Kitchener", industryBuckets: ["restaurant"] });
-    assert.equal(result.rejectedCount, 1);
+    assert.equal(result.newBuildCount, 1);
+    assert.equal(result.rejectedCount, 0);
     assert.equal(result.qualifiedCount, 0);
-    assert.equal(result.leads[0].status, "rejected");
-    assert.match(result.leads[0].rejection_reason!, /No website/);
+    assert.equal(result.leads[0].status, "candidate");
+    assert.equal(result.leads[0].makeover_potential, "new_build");
+    assert.equal(result.leads[0].rejection_reason, null);
+    assert.equal(result.leads[0].website_score, null, "honestly un-scoreable — there is no site to score");
+    assert.equal(result.leads[0].opportunity_score, null);
+    assert.equal(result.leads[0].confidence_score, null);
+    assert.match(result.leads[0].main_opportunity!, /new/i);
+    // A real OSM-captured phone still produces a real, honest conversion
+    // recommendation — never fabricated, but not thrown away either.
+    assert.match(result.leads[0].recommended_conversion_goal!, /phone/i);
+  });
+
+  test("qualification overhaul (2026-09-14): a no-website candidate with no captured phone either still gets an honest, non-fabricated conversion recommendation", async () => {
+    const noWebsiteNoPhone: DiscoveredBusiness = { ...REAL_SHAPED_CANDIDATE, websiteUrl: null, phone: null };
+    const deps = createFakeDeps({ discovered: [noWebsiteNoPhone] });
+    const result = await runLeadHunterScan(deps, { organizationId: "org-1", location: "Kitchener", industryBuckets: ["restaurant"] });
+    assert.equal(result.leads[0].makeover_potential, "new_build");
+    assert.match(result.leads[0].recommended_conversion_goal!, /request more information|no direct contact evidence/i);
   });
 
   test("a candidate whose real crawl fails (site unreachable) is rejected with the real reason, never a generic message", async () => {
@@ -403,6 +425,48 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
     // return value the fire-and-forget route never reads.
     assert.equal(deps.scanRuns[0].skipped_existing_company_count, 1);
     assert.match(result.funnelSummary, /1 already tracked as real companies, correctly skipped/);
+  });
+
+  test("chain filter fix (2026-09-14): a candidate OSM tags with a brand is skipped entirely — never crawled, never a lead row", async () => {
+    // Confirmed live: Stop & Shop, Dollar Tree, and a multi-location urgent
+    // care franchise all surfaced as real "candidate" leads in a town of
+    // ~5 real independent businesses — Robert cold-pitches independent
+    // local businesses only; a chain is never a realistic target regardless
+    // of its score.
+    const chainCandidate: DiscoveredBusiness = { ...REAL_SHAPED_CANDIDATE, brand: "Stop & Shop" };
+    const deps = createFakeDeps({ discovered: [chainCandidate] });
+    const result = await runLeadHunterScan(deps, { organizationId: "org-1", location: "Kitchener", industryBuckets: ["restaurant"] });
+    assert.equal(result.skippedChainCount, 1);
+    assert.equal(result.qualifiedCount, 0);
+    assert.equal(result.leads.length, 0);
+    assert.equal(deps.insertedRows.length, 0);
+    assert.equal(deps.scanRuns[0].skipped_chain_count, 1);
+    assert.match(result.funnelSummary, /1 national\/regional chains, correctly skipped/);
+  });
+
+  test("chain filter fix (2026-09-14): a chain skip is free — never consumes the real crawl budget, same as an existing-company skip", async () => {
+    const chainCandidate: DiscoveredBusiness = { ...REAL_SHAPED_CANDIDATE, externalId: "node/chain-1", brand: "Dollar Tree" };
+    const secondReal: DiscoveredBusiness = { ...REAL_SHAPED_CANDIDATE, externalId: "node/real-1", name: "Genuinely Independent Co", websiteUrl: "https://independent.test/" };
+    const deps = createFakeDeps({ discovered: [chainCandidate, secondReal] });
+    const result = await runLeadHunterScan(deps, {
+      organizationId: "org-1",
+      location: "Kitchener",
+      industryBuckets: ["restaurant"],
+      scanSize: 1, // budget of exactly 1 real crawl — the chain skip must not spend it
+    });
+    assert.equal(result.skippedChainCount, 1);
+    assert.equal(result.qualifiedCount, 1, "the real business right after the chain still gets its real crawl — the chain didn't spend the one-candidate budget");
+    assert.equal(result.leads[0].business_name, "Genuinely Independent Co");
+  });
+
+  test("chain filter fix (2026-09-14): both skip reasons combine cleanly in the funnel summary when both occur in the same scan", async () => {
+    const chainCandidate: DiscoveredBusiness = { ...REAL_SHAPED_CANDIDATE, externalId: "node/chain-2", brand: "Pulse-MD" };
+    const existingCompanyCandidate: DiscoveredBusiness = { ...REAL_SHAPED_CANDIDATE, externalId: "node/existing-1", name: "Already Tracked Co", websiteUrl: "https://already-tracked.test/" };
+    const deps = createFakeDeps({ discovered: [existingCompanyCandidate, chainCandidate], existingCompanyUrls: ["already-tracked.test"] });
+    const result = await runLeadHunterScan(deps, { organizationId: "org-1", location: "Kitchener", industryBuckets: ["restaurant"] });
+    assert.equal(result.skippedExistingCompanyCount, 1);
+    assert.equal(result.skippedChainCount, 1);
+    assert.match(result.funnelSummary, /1 already tracked as real companies, 1 national\/regional chains, correctly skipped/);
   });
 
   test("Lead Hunter false-alarm fix (2026-09-13): real bug shape — mostly-already-tracked location produces a real, complete, non-confusing funnel, not the appearance of dropped leads", async () => {
@@ -525,6 +589,7 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
       address: "1 Main St",
       latitude: 43.45,
       longitude: -80.49,
+      brand: null,
     };
     const richEvidenceWeakSite: DiscoveredBusiness = {
       externalId: "node/2",
@@ -535,6 +600,7 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
       address: "2 Main St",
       latitude: 43.45,
       longitude: -80.49,
+      brand: null,
     };
     const thinEvidenceWeakSite: DiscoveredBusiness = {
       externalId: "node/3",
@@ -545,6 +611,7 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
       address: "3 Main St",
       latitude: 43.45,
       longitude: -80.49,
+      brand: null,
     };
     const noWebsite: DiscoveredBusiness = {
       externalId: "node/4",
@@ -555,6 +622,7 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
       address: "4 Main St",
       latitude: 43.45,
       longitude: -80.49,
+      brand: null,
     };
 
     function buildDeps() {
@@ -606,17 +674,34 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
       const result = await runLeadHunterScan(deps, { organizationId: "org-1", location: "Kitchener", industryBuckets: ["restaurant"] });
 
       assert.equal(result.discoveredCount, 4);
-      assert.equal(result.qualifiedCount, 3, "3 real websites loaded — the 4th (no website) never reaches qualification");
-      assert.equal(result.rejectedCount, 1);
+      // Qualification overhaul (2026-09-14): greatSite's real crawl scores a
+      // genuinely great existing website (opportunity_score 0) — status must
+      // now be "rejected", not "candidate", so it no longer counts toward
+      // qualifiedCount. noWebsite is no longer an automatic rejection either
+      // — it's a real, distinct "new_build" opportunity, counted separately.
+      assert.equal(result.qualifiedCount, 2, "only the two weak-site leads are real opportunities — the great-site lead rejects on zero upside, no-website is a distinct new-build case");
+      assert.equal(result.rejectedCount, 1, "the great-site lead (zero real upside) — not the no-website lead, which is no longer a rejection at all");
+      assert.equal(result.newBuildCount, 1, "the no-website lead is now its own honest bucket, never silently merged into rejectedCount or qualifiedCount");
 
       const greatSiteLead = result.leads.find((l) => l.business_name === "Great Site Co")!;
       assert.equal(greatSiteLead.makeover_potential, "reject", "a genuinely great existing site has no real upside — must not count as a meaningful opportunity");
+      assert.equal(greatSiteLead.status, "rejected", "status must actually respect makeover_potential's own reject verdict — the real bug this fix closes (confirmed live: Pulse-MD Urgent Care, Stop & Shop)");
+      assert.match(greatSiteLead.rejection_reason ?? "", /no real upside/i);
+      assert.doesNotMatch(greatSiteLead.main_opportunity ?? "", /real upside for a redesign/, "must never claim upside exists when the score says it doesn't");
+
+      const noWebsiteLead = result.leads.find((l) => l.business_name === "No Website Co")!;
+      assert.equal(noWebsiteLead.status, "candidate", "a real, distinct opportunity — never silently thrown away");
+      assert.equal(noWebsiteLead.makeover_potential, "new_build");
+      assert.equal(noWebsiteLead.website_score, null, "honestly un-scoreable — there is no site to score");
+      assert.equal(noWebsiteLead.opportunity_score, null);
+      assert.equal(noWebsiteLead.confidence_score, null);
+      assert.match(noWebsiteLead.main_opportunity ?? "", /new/i);
 
       assert.equal(result.meaningfulOpportunityCount, 2, "the two weak-site leads are real, non-reject opportunities; the great-site lead is not");
       assert.equal(result.highConfidenceCount, 1, "only the rich-evidence weak site clears the confidence bar");
       assert.equal(result.queuedCount, 1, "queued is capped at the real high-confidence count, never inflated to a fixed 5");
       assert.match(result.funnelSummary, /4 businesses scanned/);
-      assert.match(result.funnelSummary, /3 usable websites/);
+      assert.match(result.funnelSummary, /2 usable websites/);
       assert.match(result.funnelSummary, /2 meaningful website opportunities/);
       assert.match(result.funnelSummary, /1 high-confidence prospects/);
       assert.match(result.funnelSummary, /1 selected for today's queue/);
@@ -631,8 +716,9 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
       assert.equal(run.id, result.scanRunId);
       assert.equal(run.status, "complete");
       assert.equal(run.discovered_count, 4);
-      assert.equal(run.qualified_count, 3);
+      assert.equal(run.qualified_count, 2);
       assert.equal(run.rejected_count, 1);
+      assert.equal(run.new_build_count, 1);
       assert.equal(run.meaningful_opportunity_count, 2);
       assert.equal(run.high_confidence_count, 1);
       assert.equal(run.queued_count, 1);

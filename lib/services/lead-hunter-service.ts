@@ -187,8 +187,13 @@ export interface LeadHunterScanResult {
   discoveredCount: number;
   /** Candidates already tracked as a real company in this org — skipped, never re-discovered as a "new" lead (a business already in the real pipeline isn't a Lead Hunter candidate anymore). Does not count against the crawl budget — an existing-company check is a cheap DB lookup, so the loop keeps looking for genuinely new candidates instead of stopping here. */
   skippedExistingCompanyCount: number;
+  /** Chain/franchise filter fix (2026-09-14): OSM candidates tagged brand/brand:wikidata/brand:wikipedia — a national/regional chain is never a realistic cold-pitch target regardless of its score, confirmed live (Stop & Shop, Dollar Tree, a multi-location urgent care franchise all surfacing as "candidate" in a town of ~5 real independent businesses). Skipped for free, same as skippedExistingCompanyCount — never counts against the crawl budget. */
+  skippedChainCount: number;
+  /** Qualification overhaul (2026-09-14): a real, "candidate"-status opportunity whose makeover_potential is "reject" — the existing website already has zero real upside — is counted here, not qualifiedCount. The real bug this closes: Pulse-MD Urgent Care and Stop & Shop both scored opportunity_score 0 (makeover_potential: 'reject', correctly computed) yet still landed as status: 'candidate' before this fix. */
   qualifiedCount: number;
   rejectedCount: number;
+  /** Qualification overhaul (2026-09-14): a business with no discoverable website at all — a real, distinct opportunity category (a brand-new build, not a makeover), never a rejection (confirmed live: Balsamo-Codovano Funeral Home was being auto-rejected for exactly this). Persisted with makeover_potential: 'new_build' and website_score/opportunity_score/confidence_score left null — honestly un-scoreable, there is no site to score. */
+  newBuildCount: number;
   /**
    * Phase 3 funnel (CTO Opportunity Intelligence directive): qualified
    * leads whose makeover_potential isn't 'reject' — a real, non-zero
@@ -245,16 +250,29 @@ export async function upsertLead(
  * a single crawl-adapter.ts run can cheaply produce for up to ~100
  * candidates — never the full, expensive Lighthouse/accessibility Analysis
  * Engine run, which stays reserved for a PROMOTED lead's real mission).
- * Rejects a candidate with no website at all, or whose site never
- * successfully loaded — "a real operating business, a real website" (CTO
- * directive §1) is the floor, not just a website that merely exists.
+ *
+ * Three real, distinct outcomes (qualification overhaul, 2026-09-14):
+ * `no_website` (no discoverable website at all — Robert's own business
+ * builds brand-new sites for exactly this case, a real, distinct
+ * opportunity category, never a rejection — confirmed live: Balsamo-
+ * Codovano Funeral Home was being auto-rejected for this alone) is now
+ * genuinely different from `rejected` (a website exists but never
+ * successfully loaded — a real, currently-broken/unreachable site, which
+ * IS still a rejection: this function has no way to tell "temporarily
+ * down" from "gone for good", and either way there's no real content to
+ * build a new-build OR a makeover pitch from). `candidate` is unchanged —
+ * a real, successfully-loaded website, real content to actually score.
  */
 export async function qualifyCandidate(
   deps: Pick<LeadHunterServiceDeps, "runCrawlAdapter">,
   candidate: DiscoveredBusiness
-): Promise<{ status: "rejected"; rejectionReason: string; crawl?: CrawlRawResult } | { status: "candidate"; crawl: CrawlRawResult }> {
+): Promise<
+  | { status: "no_website" }
+  | { status: "rejected"; rejectionReason: string; crawl?: CrawlRawResult }
+  | { status: "candidate"; crawl: CrawlRawResult }
+> {
   if (!candidate.websiteUrl) {
-    return { status: "rejected" as const, rejectionReason: "No website found for this business." };
+    return { status: "no_website" as const };
   }
 
   const crawl = await deps.runCrawlAdapter(candidate.websiteUrl);
@@ -276,7 +294,9 @@ export function mainWeaknesses(websiteSignals: { label: string; passed: boolean 
 function formatFunnelSummary(counts: {
   discoveredCount: number;
   skippedExistingCompanyCount: number;
+  skippedChainCount: number;
   qualifiedCount: number;
+  newBuildCount: number;
   meaningfulOpportunityCount: number;
   highConfidenceCount: number;
   queuedCount: number;
@@ -289,13 +309,28 @@ function formatFunnelSummary(counts: {
   // that count previously had nowhere to surface at all. Named explicitly
   // here, not folded silently into "businesses scanned", so the funnel's
   // own arithmetic is checkable at a glance instead of looking like data
-  // quietly vanished.
-  const skippedClause =
-    counts.skippedExistingCompanyCount > 0
-      ? ` (${counts.skippedExistingCompanyCount} already tracked as real companies, correctly skipped)`
-      : "";
+  // quietly vanished. Chain filter fix (2026-09-14): a second, distinct
+  // skip reason (national/regional chains) joins the same clause, only
+  // ever appended when it actually happened — a scan with zero chain skips
+  // reads exactly as it did before this fix.
+  const skippedParts: string[] = [];
+  if (counts.skippedExistingCompanyCount > 0) {
+    skippedParts.push(`${counts.skippedExistingCompanyCount} already tracked as real companies`);
+  }
+  if (counts.skippedChainCount > 0) {
+    skippedParts.push(`${counts.skippedChainCount} national/regional chains`);
+  }
+  const skippedClause = skippedParts.length > 0 ? ` (${skippedParts.join(", ")}, correctly skipped)` : "";
+
+  // New-build opportunity fix (2026-09-14): surfaced as its own addition to
+  // "usable websites" rather than folded into that count — a no-website
+  // business genuinely isn't a "usable website," it's a different real
+  // opportunity category entirely.
+  const newBuildClause =
+    counts.newBuildCount > 0 ? ` (+${counts.newBuildCount} no-website new-build ${counts.newBuildCount === 1 ? "opportunity" : "opportunities"})` : "";
+
   return (
-    `${counts.discoveredCount} businesses scanned${skippedClause} → ${counts.qualifiedCount} usable websites → ` +
+    `${counts.discoveredCount} businesses scanned${skippedClause} → ${counts.qualifiedCount} usable websites${newBuildClause} → ` +
     `${counts.meaningfulOpportunityCount} meaningful website opportunities → ${counts.highConfidenceCount} high-confidence prospects → ` +
     `${counts.queuedCount} selected for today's queue`
   );
@@ -382,8 +417,10 @@ async function runScanAgainstDiscovered(
   crawlBudget: number
 ): Promise<LeadHunterScanResult> {
   let skippedExistingCompanyCount = 0;
+  let skippedChainCount = 0;
   let qualifiedCount = 0;
   let rejectedCount = 0;
+  let newBuildCount = 0;
   let meaningfulOpportunityCount = 0;
   let highConfidenceCount = 0;
   let examinedCount = 0;
@@ -392,18 +429,21 @@ async function runScanAgainstDiscovered(
 
   // Repeat-scan dead-end fix (2026-09-13): `discovered` is now a wider pool
   // (DISCOVERY_POOL_SIZE) than the real per-candidate crawl budget
-  // (crawlBudget, == scanSize) — an existing-company skip is a cheap DB
-  // lookup, never counted against the budget, so the loop keeps walking
-  // past already-tracked businesses instead of stopping at whatever
-  // Overpass's own fixed top-N happened to return. The real, rate-limited
-  // work (qualifyCandidate's own crawl) still stops at exactly crawlBudget
-  // candidates (crawledCount), same "don't hammer public/target-site APIs"
-  // discipline as before — this widens WHERE the budget is spent, not how
-  // much is spent. examinedCount is deliberately a separate counter,
-  // incremented for every candidate the loop actually reaches a decision on
-  // (skip, reject, or qualify) — so it always equals skippedExistingCompany
-  // Count + qualifiedCount + rejectedCount exactly, keeping the funnel's own
-  // arithmetic self-consistent (see formatFunnelSummary).
+  // (crawlBudget, == scanSize) — an existing-company skip and a chain skip
+  // are both cheap, free checks, never counted against the budget, so the
+  // loop keeps walking past already-tracked/chain businesses instead of
+  // stopping at whatever Overpass's own fixed top-N happened to return.
+  // crawledCount only increments once a real network crawl is actually
+  // attempted (qualification overhaul, 2026-09-14) — a no-website candidate
+  // makes zero real requests to a target site, so it's free too, same as
+  // the other two skips; only a real crawl attempt (successful or failed)
+  // consumes the budget, matching this budget's own documented "don't
+  // hammer public/target-site APIs" purpose exactly. examinedCount is
+  // deliberately a separate counter, incremented for every candidate the
+  // loop reaches a decision on (skip, new-build, reject, or qualify) — so
+  // it always equals skippedExistingCompanyCount + skippedChainCount +
+  // qualifiedCount + rejectedCount + newBuildCount exactly, keeping the
+  // funnel's own arithmetic self-consistent (see formatFunnelSummary).
   for (const candidate of discovered) {
     if (crawledCount >= crawlBudget) break;
     examinedCount += 1;
@@ -420,9 +460,68 @@ async function runScanAgainstDiscovered(
       }
     }
 
-    crawledCount += 1;
+    // Chain filter fix (2026-09-14): a national/regional chain OSM itself
+    // tagged with brand/brand:wikidata/brand:wikipedia is never a
+    // realistic cold-pitch target — Robert pitches independent local
+    // businesses only. Free, same as the existing-company skip above:
+    // never consumes the real crawl budget.
+    if (candidate.brand) {
+      skippedChainCount += 1;
+      continue;
+    }
+
     const industryBucket = industryBucketFromOsmTag(candidate.osmTag);
     const qualification = await qualifyCandidate(deps, candidate);
+
+    if (qualification.status === "no_website") {
+      // New-build opportunity fix (2026-09-14): no discoverable website at
+      // all is Robert's own best lead category, not a rejection. No crawl
+      // ever happened, so website_score/opportunity_score/confidence_score
+      // stay honestly null — there is no site to score. heroPattern/
+      // conversionGoal are resolved the same evidence-gated way a
+      // zero-evidence candidate already would be (resolveHeroPattern's own
+      // hasRealImagery: false path; deriveConversionGoal fed only the real
+      // OSM-captured phone, never fabricated contact evidence).
+      newBuildCount += 1;
+      const heroPattern = resolveHeroPattern(industryBucket, false, 0);
+      const lead = await upsertLead(deps, input.organizationId, DISCOVERY_SOURCE, {
+        business_name: candidate.name,
+        website_url: null,
+        industry: industryBucket,
+        business_category: candidate.osmTag,
+        location: area.displayName,
+        latitude: candidate.latitude,
+        longitude: candidate.longitude,
+        discovery_external_id: candidate.externalId,
+        discovery_phone: candidate.phone,
+        discovery_address: candidate.address,
+        status: "candidate",
+        rejection_reason: null,
+        website_score: null,
+        opportunity_score: null,
+        confidence_score: null,
+        main_weaknesses: [] as unknown as Json,
+        main_opportunity: "No website found for this business at all — the opportunity here is a brand-new site, not a redesign.",
+        recommended_hero_pattern: heroPattern,
+        recommended_design_strategy: HERO_PATTERN_VISUAL_STRATEGY_LABEL[heroPattern],
+        recommended_conversion_goal: deriveConversionGoal(
+          { phones: candidate.phone ? [candidate.phone] : [], emails: [], address: candidate.address, hours: null },
+          []
+        ),
+        makeover_potential: "new_build",
+        makeover_potential_reasons: [
+          "No website found at all — nothing to critique or score structurally; this is a brand-new build, not a makeover.",
+        ] as unknown as Json,
+        contact_evidence: null,
+        social_links: null,
+        crawl_result: null,
+        qualified_at: new Date().toISOString(),
+      });
+      leads.push(lead);
+      continue;
+    }
+
+    crawledCount += 1;
 
     if (qualification.status === "rejected") {
       rejectedCount += 1;
@@ -454,8 +553,24 @@ async function runScanAgainstDiscovered(
     const opportunityResult = computeLeadOpportunityScore(crawl);
     const makeoverPotentialResult = computeMakeoverPotential(websiteScoreResult, opportunityResult, confidenceResult);
     const heroPattern = resolveHeroPattern(industryBucket, crawl.gallery.length > 0, crawl.gallery.length);
+    // Qualification overhaul (2026-09-14): the real bug this closes —
+    // status and main_opportunity's text now derive from the SAME single
+    // source of truth (makeoverPotentialResult.potential) instead of
+    // status being hardcoded to "candidate" regardless, and
+    // main_opportunity independently checking the wrong field
+    // (opportunityResult.legitimacyScore, which measures evidence quality,
+    // not opportunityResult.score, which measures real upside). Confirmed
+    // live: Pulse-MD Urgent Care and Stop & Shop both scored
+    // opportunity_score: 0 / makeover_potential: "reject" yet still landed
+    // as status: "candidate" with "real upside for a redesign" boilerplate.
+    const isRealOpportunity = makeoverPotentialResult.potential !== "reject";
 
-    qualifiedCount += 1;
+    if (isRealOpportunity) {
+      qualifiedCount += 1;
+    } else {
+      rejectedCount += 1;
+    }
+
     const lead = await upsertLead(deps, input.organizationId, DISCOVERY_SOURCE, {
       business_name: candidate.name,
       website_url: candidate.websiteUrl,
@@ -468,15 +583,15 @@ async function runScanAgainstDiscovered(
       // Phase 14 — see the matching comment at the rejected-lead call site above.
       discovery_phone: candidate.phone,
       discovery_address: candidate.address,
-      status: "candidate",
+      status: isRealOpportunity ? "candidate" : "rejected",
+      rejection_reason: isRealOpportunity ? null : makeoverPotentialResult.reasons[0],
       website_score: websiteScoreResult.score,
       opportunity_score: opportunityResult.score,
       confidence_score: confidenceResult.score,
       main_weaknesses: mainWeaknesses(websiteScoreResult.signals) as unknown as Json,
-      main_opportunity:
-        opportunityResult.legitimacyScore > 0
-          ? `Website scores ${websiteScoreResult.score}/100 on real structural signals with ${confidenceResult.evidenceFound.length}/8 real evidence categories captured — real upside for a redesign.`
-          : "Thin evidence captured — needs manual review before this is a credible prospect.",
+      main_opportunity: isRealOpportunity
+        ? `Website scores ${websiteScoreResult.score}/100 on real structural signals with ${confidenceResult.evidenceFound.length}/8 real evidence categories captured — real upside for a redesign.`
+        : makeoverPotentialResult.reasons[0],
       recommended_hero_pattern: heroPattern,
       recommended_design_strategy: HERO_PATTERN_VISUAL_STRATEGY_LABEL[heroPattern],
       recommended_conversion_goal: deriveConversionGoal(crawl.contact, crawl.forms),
@@ -489,7 +604,7 @@ async function runScanAgainstDiscovered(
     });
     leads.push(lead);
 
-    if (makeoverPotentialResult.potential !== "reject") {
+    if (isRealOpportunity) {
       meaningfulOpportunityCount += 1;
       if (confidenceResult.score >= HIGH_CONFIDENCE_MIN_SCORE) {
         highConfidenceCount += 1;
@@ -503,11 +618,14 @@ async function runScanAgainstDiscovered(
   // looks at (see DISCOVERY_POOL_SIZE's own doc comment), so reporting the
   // full raw pool here would just reintroduce a different "the numbers
   // don't add up" confusion. examinedCount keeps the funnel's own arithmetic
-  // exact: discovered === skipped + qualified + rejected, always.
+  // exact: discovered === skipped (existing + chain) + qualified + rejected
+  // + newBuild, always.
   const funnelCounts = {
     discoveredCount: examinedCount,
     skippedExistingCompanyCount,
+    skippedChainCount,
     qualifiedCount,
+    newBuildCount,
     meaningfulOpportunityCount,
     highConfidenceCount,
     queuedCount,
@@ -522,6 +640,8 @@ async function runScanAgainstDiscovered(
     high_confidence_count: highConfidenceCount,
     queued_count: queuedCount,
     skipped_existing_company_count: skippedExistingCompanyCount,
+    skipped_chain_count: skippedChainCount,
+    new_build_count: newBuildCount,
     completed_at: new Date().toISOString(),
   });
 
@@ -529,8 +649,10 @@ async function runScanAgainstDiscovered(
     location: area.displayName,
     discoveredCount: examinedCount,
     skippedExistingCompanyCount,
+    skippedChainCount,
     qualifiedCount,
     rejectedCount,
+    newBuildCount,
     meaningfulOpportunityCount,
     highConfidenceCount,
     queuedCount,

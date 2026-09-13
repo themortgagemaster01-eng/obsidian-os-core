@@ -130,15 +130,36 @@ describe("manual-lead-service: checkManualLeadDuplicate", () => {
 });
 
 describe("manual-lead-service: runManualLeadQualification (reuses the exact same qualifyCandidate/scoring/upsertLead pipeline)", () => {
-  test("no website URL supplied — rejected via qualifyCandidate's own existing check, the same one an OSM candidate with no website tag already gets", async () => {
+  test("qualification overhaul (2026-09-14): no website URL supplied — a real new-build opportunity, never a rejection", async () => {
+    // Robert's own business builds brand-new sites for businesses without
+    // one — the best lead category, not a rejection (confirmed live:
+    // Balsamo-Codovano Funeral Home was being auto-rejected for this alone
+    // before this fix, same real bug on the OSM path).
     const deps = fakeDeps();
     const lead = await runManualLeadQualification(deps, "org-1", { businessName: "No Website Yet", address: "1 Main St, Kitchener, ON" }, FAKE_AREA);
-    assert.equal(lead.status, "rejected");
-    assert.match(lead.rejection_reason!, /No website found/);
+    assert.equal(lead.status, "candidate");
+    assert.equal(lead.makeover_potential, "new_build");
+    assert.equal(lead.rejection_reason, null);
+    assert.equal(lead.website_score, null, "honestly un-scoreable — there is no site to score");
+    assert.equal(lead.opportunity_score, null);
+    assert.equal(lead.confidence_score, null);
+    assert.match(lead.main_opportunity!, /new/i);
     assert.equal(deps.insertedRows[0].discovery_source, MANUAL_DISCOVERY_SOURCE);
     assert.equal(deps.insertedRows[0].location, FAKE_AREA.displayName);
     assert.equal(deps.insertedRows[0].latitude, FAKE_AREA.latitude);
     assert.equal(deps.insertedRows[0].longitude, FAKE_AREA.longitude);
+  });
+
+  test("qualification overhaul (2026-09-14): a real phone captured for a no-website business still produces an honest, non-fabricated conversion recommendation", async () => {
+    const deps = fakeDeps();
+    const lead = await runManualLeadQualification(
+      deps,
+      "org-1",
+      { businessName: "No Website But Real Phone", address: "1 Main St, Kitchener, ON", phone: "555-999-0000" },
+      FAKE_AREA
+    );
+    assert.equal(lead.makeover_potential, "new_build");
+    assert.match(lead.recommended_conversion_goal!, /phone/i);
   });
 
   test("website URL supplied, real crawl fails — rejected with the real reason, never a generic message", async () => {
@@ -173,6 +194,34 @@ describe("manual-lead-service: runManualLeadQualification (reuses the exact same
     assert.ok(deps.insertedRows[0].recommended_hero_pattern);
     assert.equal(deps.insertedRows[0].discovery_phone, "555-123-4567");
     assert.equal(deps.insertedRows[0].discovery_address, "1 Main St, Kitchener, ON");
+  });
+
+  test("qualification overhaul (2026-09-14): a manually-added business whose website already scores 100/100 gets status: 'rejected', not 'candidate' — the same real bug confirmed live on Pulse-MD Urgent Care and Stop & Shop", async () => {
+    const deps = fakeDeps({
+      crawlsByUrl: {
+        "https://great-existing-site.test/": fakeCrawl({
+          requestedUrl: "https://great-existing-site.test/",
+          finalUrl: "https://great-existing-site.test/",
+          metaDescription: "A genuinely great, complete site.",
+          headingCounts: { h1: 1, h2: 2, h3: 0, h4: 0, h5: 0, h6: 0 },
+          robotsTxtFound: true,
+          sitemapFound: true,
+          htmlByteSize: 45_000,
+          contact: { phones: ["555-0001"], emails: ["hi@great-existing-site.test"], address: "1 Main St", hours: null },
+          internalLinkCount: 12,
+        }),
+      },
+    });
+    const lead = await runManualLeadQualification(
+      deps,
+      "org-1",
+      { businessName: "Already Great Manual Entry", address: "1 Main St, Kitchener, ON", websiteUrl: "https://great-existing-site.test/" },
+      FAKE_AREA
+    );
+    assert.equal(lead.makeover_potential, "reject");
+    assert.equal(lead.status, "rejected", "status must respect makeover_potential's own reject verdict, not hardcode 'candidate' regardless");
+    assert.match(lead.rejection_reason ?? "", /no real upside/i);
+    assert.doesNotMatch(lead.main_opportunity ?? "", /real upside for a redesign/, "must never claim upside exists when the score says it doesn't");
   });
 
   test("each manual entry gets a fresh, unique discovery_external_id — never collides with, or reuses, another manual entry's row", async () => {

@@ -27,7 +27,7 @@ export type GenerationStatus = "pending" | "running" | "complete" | "failed";
 /** Lead Hunter's own lifecycle (supabase/migrations/0018_lead_hunter.sql) — deliberately not AnalysisStatus/GenerationStatus, which are job-execution states; a lead's status is a business/qualification outcome, a different kind of state entirely. */
 export type LeadStatus = "pending" | "candidate" | "rejected" | "promoted";
 /** The fourth lead score (0020_lead_makeover_potential.sql) — how strong a makeover opportunity this lead is, derived from the other three scores plus evidence richness (lib/services/lead-scoring-service.ts::computeMakeoverPotential), never an arbitrary threshold alone. */
-export type MakeoverPotential = "very_high" | "high" | "medium" | "low" | "reject";
+export type MakeoverPotential = "very_high" | "high" | "medium" | "low" | "reject" | "new_build";
 /** Phase 8 (0024_proposals.sql) — a live, editable-until-decided value, not permanent history (that's the existing `decisions` table's job). */
 export type ProposalStatus = "draft" | "approved" | "rejected";
 /** Phase 9 (0025_mission_batch_runs.sql) — mirrors LeadScanRunRow's own status discipline exactly. */
@@ -693,6 +693,10 @@ export interface Database {
           queued_count: number | null;
           /** Discovered candidates whose website_url already matched a tracked company in this org — deliberately skipped, never a lead row (0033_lead_scan_runs_skipped_existing_company_count.sql). Nullable like every other funnel count. */
           skipped_existing_company_count: number | null;
+          /** OSM candidates tagged brand/brand:wikidata/brand:wikipedia — chains/franchises, deliberately skipped, never crawled (0034_lead_qualification_new_build_and_chain_filter.sql). Nullable like every other funnel count. */
+          skipped_chain_count: number | null;
+          /** Candidates with no discoverable website at all — a real, distinct opportunity category (new-build, not makeover), never a rejection (0034). Nullable like every other funnel count. */
+          new_build_count: number | null;
           error_message: string | null;
           started_at: string;
           completed_at: string | null;
@@ -713,6 +717,8 @@ export interface Database {
           high_confidence_count?: number | null;
           queued_count?: number | null;
           skipped_existing_company_count?: number | null;
+          skipped_chain_count?: number | null;
+          new_build_count?: number | null;
           error_message?: string | null;
           started_at?: string;
           completed_at?: string | null;
@@ -733,6 +739,8 @@ export interface Database {
           high_confidence_count?: number | null;
           queued_count?: number | null;
           skipped_existing_company_count?: number | null;
+          skipped_chain_count?: number | null;
+          new_build_count?: number | null;
           error_message?: string | null;
           started_at?: string;
           completed_at?: string | null;

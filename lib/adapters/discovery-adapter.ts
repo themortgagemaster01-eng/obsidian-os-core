@@ -203,6 +203,8 @@ export interface DiscoveredBusiness {
   address: string | null;
   latitude: number;
   longitude: number;
+  /** Chain/franchise filter fix (2026-09-14): OSM's own brand/brand:wikidata/brand:wikipedia tag, when present — real, only ever read from OSM data, never inferred from the name. Non-null here means a national/regional chain OSM itself has tagged as one; lead-hunter-service.ts's own scan loop skips these before spending a real crawl on them. A real, disclosed limitation: a chain that never got tagged with any of these three OSM keys still slips through — this catches what OSM itself already knows, not every chain that exists. */
+  brand: string | null;
 }
 
 /** Exported for direct unit testing of parseOverpassElements against a real, captured response shape, same precedent as crawl-adapter.ts's own raw-response types. */
@@ -306,6 +308,7 @@ export function parseOverpassElements(elements: OverpassElement[], searchedTags:
       address: addressFromTags(tags),
       latitude: lat,
       longitude: lon,
+      brand: tags.brand ?? tags["brand:wikidata"] ?? tags["brand:wikipedia"] ?? null,
     });
   }
 

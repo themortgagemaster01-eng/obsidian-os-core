@@ -302,7 +302,7 @@ export interface RankableLead {
 // legitimate business with nothing left to sell a redesign on.
 // ===========================================================================
 
-export type MakeoverPotential = "very_high" | "high" | "medium" | "low" | "reject";
+export type MakeoverPotential = "very_high" | "high" | "medium" | "low" | "reject" | "new_build";
 
 export interface MakeoverPotentialResult {
   potential: MakeoverPotential;

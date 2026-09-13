@@ -18,6 +18,10 @@ const MAKEOVER_POTENTIAL_LABEL: Record<string, string> = {
   medium: "Medium",
   low: "Low",
   reject: "Reject",
+  // Qualification overhaul (2026-09-14): a business with no discoverable
+  // website at all — a real, distinct opportunity category (a brand-new
+  // build, not a makeover), never a rejection.
+  new_build: "New Build",
 };
 
 const MAKEOVER_POTENTIAL_VARIANT: Record<string, "success" | "warning" | "outline" | "destructive"> = {
@@ -26,6 +30,7 @@ const MAKEOVER_POTENTIAL_VARIANT: Record<string, "success" | "warning" | "outlin
   medium: "warning",
   low: "outline",
   reject: "destructive",
+  new_build: "success",
 };
 
 /**

@@ -98,17 +98,22 @@ type QualifyDeps = Pick<LeadHunterServiceDeps, "client" | "leadRepository" | "ru
 /**
  * runManualLeadQualification — hands a founder-typed business straight to
  * the exact same qualifyCandidate + scoring + upsertLead pipeline an
- * OSM-discovered DiscoveredBusiness already goes through. If no website
- * URL was supplied, qualifyCandidate's own existing "no website found"
- * check rejects it — the identical honest outcome an OSM candidate with no
- * website tag already gets; no separate "search the web for a website"
- * step exists, or is needed, since this function never forks that logic.
- * `area` is the caller's already-geocoded result for `input.address` (the
- * same geocodeLocation Nominatim call the OSM path already uses) — kept as
- * a separate, explicit argument rather than geocoding again here, so a
- * geocode failure can be reported to the caller before any background work
- * starts, mirroring runLeadHunterScan's own "resolve the area first"
- * ordering.
+ * OSM-discovered DiscoveredBusiness already goes through, including the
+ * qualification overhaul's own three real outcomes (2026-09-14): no
+ * website at all is a real, distinct "new_build" opportunity (Robert's own
+ * business builds brand-new sites for exactly this case — never a
+ * rejection), a website that exists but fails to load is still a genuine
+ * rejection, and a website that loads gets scored — with status and
+ * main_opportunity both deriving from the SAME makeoverPotentialResult
+ * verdict, never two independently-checked fields that can drift apart.
+ * No parallel logic is forked here; this function stays a thin adapter
+ * from founder-typed input to the identical decision points the OSM scan
+ * loop uses. `area` is the caller's already-geocoded result for
+ * `input.address` (the same geocodeLocation Nominatim call the OSM path
+ * already uses) — kept as a separate, explicit argument rather than
+ * geocoding again here, so a geocode failure can be reported to the caller
+ * before any background work starts, mirroring runLeadHunterScan's own
+ * "resolve the area first" ordering.
  */
 export async function runManualLeadQualification(
   deps: QualifyDeps,
@@ -129,10 +134,50 @@ export async function runManualLeadQualification(
     address: input.address,
     latitude: area.latitude,
     longitude: area.longitude,
+    // A manually-typed business has no OSM data at all — never a chain
+    // signal to check, by construction (Robert isn't going to type in an
+    // OSM brand tag). Chain filtering only applies to the OSM scan path.
+    brand: null,
   };
 
   const industryBucket = industryBucketFromOsmTag(candidate.osmTag);
   const qualification = await qualifyCandidate(deps, candidate);
+
+  if (qualification.status === "no_website") {
+    const heroPattern = resolveHeroPattern(industryBucket, false, 0);
+    return upsertLead(deps, organizationId, MANUAL_DISCOVERY_SOURCE, {
+      business_name: candidate.name,
+      website_url: null,
+      industry: industryBucket,
+      location: area.displayName,
+      latitude: candidate.latitude,
+      longitude: candidate.longitude,
+      discovery_external_id: candidate.externalId,
+      discovery_phone: candidate.phone,
+      discovery_address: input.address,
+      status: "candidate",
+      rejection_reason: null,
+      website_score: null,
+      opportunity_score: null,
+      confidence_score: null,
+      main_weaknesses: [] as unknown as Json,
+      main_opportunity: "No website found for this business at all — the opportunity here is a brand-new site, not a redesign.",
+      recommended_hero_pattern: heroPattern,
+      recommended_design_strategy: HERO_PATTERN_VISUAL_STRATEGY_LABEL[heroPattern],
+      recommended_conversion_goal: deriveConversionGoal(
+        { phones: candidate.phone ? [candidate.phone] : [], emails: [], address: candidate.address, hours: null },
+        []
+      ),
+      makeover_potential: "new_build",
+      makeover_potential_reasons: [
+        "No website found at all — nothing to critique or score structurally; this is a brand-new build, not a makeover.",
+      ] as unknown as Json,
+      contact_evidence: null,
+      social_links: null,
+      crawl_result: null,
+      qualified_at: new Date().toISOString(),
+    });
+  }
 
   if (qualification.status === "rejected") {
     return upsertLead(deps, organizationId, MANUAL_DISCOVERY_SOURCE, {
@@ -156,6 +201,7 @@ export async function runManualLeadQualification(
   const opportunityResult = computeLeadOpportunityScore(crawl);
   const makeoverPotentialResult = computeMakeoverPotential(websiteScoreResult, opportunityResult, confidenceResult);
   const heroPattern = resolveHeroPattern(industryBucket, crawl.gallery.length > 0, crawl.gallery.length);
+  const isRealOpportunity = makeoverPotentialResult.potential !== "reject";
 
   return upsertLead(deps, organizationId, MANUAL_DISCOVERY_SOURCE, {
     business_name: candidate.name,
@@ -167,15 +213,15 @@ export async function runManualLeadQualification(
     discovery_external_id: candidate.externalId,
     discovery_phone: candidate.phone,
     discovery_address: input.address,
-    status: "candidate",
+    status: isRealOpportunity ? "candidate" : "rejected",
+    rejection_reason: isRealOpportunity ? null : makeoverPotentialResult.reasons[0],
     website_score: websiteScoreResult.score,
     opportunity_score: opportunityResult.score,
     confidence_score: confidenceResult.score,
     main_weaknesses: mainWeaknesses(websiteScoreResult.signals) as unknown as Json,
-    main_opportunity:
-      opportunityResult.legitimacyScore > 0
-        ? `Website scores ${websiteScoreResult.score}/100 on real structural signals with ${confidenceResult.evidenceFound.length}/8 real evidence categories captured — real upside for a redesign.`
-        : "Thin evidence captured — needs manual review before this is a credible prospect.",
+    main_opportunity: isRealOpportunity
+      ? `Website scores ${websiteScoreResult.score}/100 on real structural signals with ${confidenceResult.evidenceFound.length}/8 real evidence categories captured — real upside for a redesign.`
+      : makeoverPotentialResult.reasons[0],
     recommended_hero_pattern: heroPattern,
     recommended_design_strategy: HERO_PATTERN_VISUAL_STRATEGY_LABEL[heroPattern],
     recommended_conversion_goal: deriveConversionGoal(crawl.contact, crawl.forms),
