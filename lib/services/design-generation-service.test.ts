@@ -11,6 +11,7 @@ import {
   hasUnrenderedEvidenceSection,
   decideDesignGenerationOverlapGuardAction,
   checkDesignGenerationOverlap,
+  runDesignGeneration,
   type SectionType,
   type DesignGenerationServiceDeps,
 } from "@/lib/services/design-generation-service";
@@ -1338,5 +1339,93 @@ describe("design-generation-service: checkDesignGenerationOverlap (the route-fac
     assert.equal(runs[0].status, "failed");
     assert.ok(runs[0].completed_at);
     assert.match(runs[0].error_message ?? "", /abandoned/);
+  });
+});
+
+/**
+ * Bug fix (2026-09-13): confirmed live on Video Game Plus
+ * (mission.state === "qa") — forceRegenerate already let the Design Brief
+ * step run on a mission past reviewing (Fix #11), but runDesignGeneration's
+ * own mission.state !== "designing" check had no matching bypass, so every
+ * comparison run's Wireframe/Component Assembly died immediately after a
+ * successful forced Design Brief. runDesignGeneration never rethrows to its
+ * caller — any failure is caught internally, persisted onto the row via
+ * websiteDesignRepository.update(status: "failed", error_message), and the
+ * failed row is returned — so these tests assert on the RETURNED row, not
+ * a thrown exception.
+ */
+describe("design-generation-service: runDesignGeneration comparisonRun bypass (Regenerate for Comparison bug fix)", () => {
+  function fakeRunDeps(mission: { id: string; state: string; organization_id: string }, brief: unknown) {
+    const run = fakeWebsiteDesignRun({
+      id: "design-1",
+      mission_id: mission.id,
+      design_brief_id: "brief-1",
+      status: "pending",
+    });
+    const updates: Record<string, unknown>[] = [];
+    const websiteDesignRepository = {
+      async findById(_client: unknown, id: string) {
+        return id === run.id ? run : null;
+      },
+      async update(_client: unknown, id: string, values: Record<string, unknown>) {
+        updates.push(values);
+        Object.assign(run, values);
+        return run;
+      },
+    };
+    const missionRepository = {
+      async findById(_client: unknown, id: string) {
+        return id === mission.id ? mission : null;
+      },
+    };
+    const designBriefRepository = {
+      async findById(_client: unknown, _id: string) {
+        return brief;
+      },
+    };
+    const eventBus = { publish: async (_event: unknown) => {} };
+    return {
+      deps: {
+        client: {},
+        websiteDesignRepository,
+        missionRepository,
+        designBriefRepository,
+        eventBus,
+      } as unknown as DesignGenerationServiceDeps,
+      run,
+      updates,
+    };
+  }
+
+  test("regression: no comparisonRun flag — mission at 'qa' still fails with today's exact message (normal flow untouched)", async () => {
+    const { deps, run } = fakeRunDeps({ id: "mission-1", state: "qa", organization_id: "org-1" }, null);
+    const result = await runDesignGeneration(deps, run.id);
+    assert.equal(result.status, "failed");
+    assert.match(result.error_message ?? "", /is at state "qa", not "designing"/);
+  });
+
+  test("comparisonRun: true — mission at 'qa' bypasses the state check and proceeds to the next real check instead", async () => {
+    const { deps, run } = fakeRunDeps({ id: "mission-1", state: "qa", organization_id: "org-1" }, null);
+    const result = await runDesignGeneration(deps, run.id, { comparisonRun: true });
+    // Still fails (no completed Design Brief in this fixture), but with a
+    // DIFFERENT message — proving the state check specifically was skipped,
+    // not that every check was skipped.
+    assert.equal(result.status, "failed");
+    assert.doesNotMatch(result.error_message ?? "", /not "designing"/);
+    assert.match(result.error_message ?? "", /No completed Design Brief found/);
+  });
+
+  test("comparisonRun: true has no effect when the mission is already at 'designing' — same real path either way", async () => {
+    const briefRow = { status: "complete", brief: null, design_memory: null };
+    const withoutFlag = fakeRunDeps({ id: "mission-1", state: "designing", organization_id: "org-1" }, briefRow);
+    const withFlag = fakeRunDeps({ id: "mission-1", state: "designing", organization_id: "org-1" }, briefRow);
+    // Both reach the same "brief has no real content" failure further downstream
+    // (this fixture's brief is intentionally minimal) — comparisonRun changes
+    // nothing when the mission is genuinely already designing.
+    const resultWithout = await runDesignGeneration(withoutFlag.deps, withoutFlag.run.id);
+    const resultWith = await runDesignGeneration(withFlag.deps, withFlag.run.id, { comparisonRun: true });
+    assert.equal(resultWithout.status, resultWith.status);
+    assert.doesNotMatch(resultWithout.error_message ?? "", /not "designing"/);
+    assert.doesNotMatch(resultWith.error_message ?? "", /not "designing"/);
   });
 });

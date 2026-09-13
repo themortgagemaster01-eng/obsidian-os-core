@@ -96,7 +96,17 @@ export function RegenerateForComparison({ missionId }: { missionId: string }) {
       }
 
       if (finished.status === "complete") {
-        const genRes = await fetch(`/api/missions/${missionId}/generate-design`, { method: "POST" });
+        // forceRegenerate here mirrors the design-brief call above — bypasses
+        // ONLY generate-design's mission.state === "designing" requirement
+        // (bug fix, 2026-09-13: without this, every comparison run's
+        // Wireframe/Component Assembly step died immediately after a
+        // successful forced Design Brief, since a mission already past
+        // reviewing is never actually "designing").
+        const genRes = await fetch(`/api/missions/${missionId}/generate-design`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ forceRegenerate: true }),
+        });
         if (!genRes.ok) {
           const genBody = (await genRes.json().catch(() => null)) as { error?: string } | null;
           throw new Error(genBody?.error ?? "Design Brief regenerated, but starting website generation failed");

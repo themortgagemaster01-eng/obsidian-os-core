@@ -108,8 +108,22 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
  * .../analyze exactly (ADR-012): creates the `website_designs` row
  * synchronously and returns 202 Accepted immediately; the actual
  * generation work is invoked afterward without being awaited.
+ *
+ * `forceRegenerate` (bug fix, 2026-09-13): mirrors the design-brief route's
+ * own flag of the same name — set by RegenerateForComparison's own
+ * auto-chain after a forced design-brief regeneration completes. Bypasses
+ * ONLY runDesignGeneration's `mission.state !== "designing"` check (see
+ * that function's own doc comment) — every other check in this route
+ * (auth, the completed-brief check, the overlap guard) still runs
+ * unchanged. Real bug this closes: forceRegenerate already let the design
+ * brief step run on a mission sitting anywhere past reviewing (Fix #11),
+ * but this route's own background job still hard-required
+ * mission.state === "designing" — so every comparison run's Design Brief
+ * succeeded and its Wireframe/Component Assembly died one step later with
+ * a WebsiteDesignFailed event, confirmed live on Video Game Plus
+ * (mission.state === "qa" at the time).
  */
-export async function POST(_request: NextRequest, { params }: RouteParams) {
+export async function POST(request: NextRequest, { params }: RouteParams) {
   const supabase = createClient();
 
   let user;
@@ -175,6 +189,19 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     );
   }
 
+  // Regeneration-for-comparison feature (2026-09-12): mirrors the
+  // design-brief route's own forceRegenerate flag. An absent or
+  // unparseable body is exactly today's behavior (no flag, normal
+  // mission.state === "designing" requirement) — never a 400, since the
+  // normal auto-chain from Approve sends no body at all.
+  let forceRegenerate = false;
+  try {
+    const body = (await request.json()) as { forceRegenerate?: boolean };
+    forceRegenerate = body?.forceRegenerate === true;
+  } catch {
+    forceRegenerate = false;
+  }
+
   let websiteDesign;
   try {
     websiteDesign = await createDesignGenerationRun(createDesignGenerationServiceDeps(supabase), {
@@ -213,7 +240,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
   waitUntil(
-    runDesignGeneration(backgroundDeps, websiteDesign.id).catch((err) => {
+    runDesignGeneration(backgroundDeps, websiteDesign.id, { comparisonRun: forceRegenerate }).catch((err) => {
       // eslint-disable-next-line no-console
       console.error(`[website-design ${websiteDesign!.id}] background run failed unexpectedly:`, err);
     })

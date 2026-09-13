@@ -1389,6 +1389,20 @@ export async function createDesignGenerationRun(
  * it doesn't judge; only a future design-qa-service.ts (Phase 3) owns the
  * `designing -> qa` transition.
  *
+ * `options.comparisonRun` (bug fix, 2026-09-13): the regeneration-for-
+ * comparison feature's forceRegenerate flag already lets a Design Brief run
+ * on a mission sitting anywhere past reviewing (Fix #11) — but this
+ * function's own `mission.state !== "designing"` check below had no matching
+ * escape hatch, so every comparison run's Wireframe/Component Assembly
+ * step died immediately after a successful forced Design Brief (confirmed
+ * live: Video Game Plus, mission.state === "qa", WebsiteDesignFailed fired
+ * 4 seconds after DesignBriefReady). `comparisonRun: true` bypasses ONLY
+ * this one check — the completed-Design-Brief check right below it still
+ * runs unchanged, and this never touches mission state (this function
+ * never did, before or after this fix). Defaults to false/undefined, so
+ * every existing call site — the real, non-comparison generation flow —
+ * keeps today's exact behavior, byte-for-byte.
+ *
  * realTestimonials is real, evidence-driven: hasRealTestimonials and the
  * testimonial text itself come from brief.testimonials (the crawler's
  * mergeStructuredFacts output — homepage plus already-fetched sub-pages,
@@ -1399,7 +1413,8 @@ export async function createDesignGenerationRun(
  */
 export async function runDesignGeneration(
   deps: DesignGenerationServiceDeps,
-  websiteDesignId: string
+  websiteDesignId: string,
+  options: { comparisonRun?: boolean } = {}
 ): Promise<WebsiteDesignRow> {
   const run = await deps.websiteDesignRepository.findById(deps.client, websiteDesignId);
   if (!run) {
@@ -1417,7 +1432,7 @@ export async function runDesignGeneration(
   });
 
   try {
-    if (mission.state !== "designing") {
+    if (mission.state !== "designing" && !options.comparisonRun) {
       throw new Error(
         `Mission ${mission.id} is at state "${mission.state}", not "designing" — Wireframe/Component Assembly requires a completed Design Brief to have already moved the mission into designing.`
       );
