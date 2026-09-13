@@ -27,9 +27,11 @@
  *   this paragraph describes was still happening in practice. toSafeCssColor
  *   now also tries a small, closed NAMED_COLOR_VOCABULARY of real color-
  *   family terms (terracotta, olive, amber, aged wood, cream, charcoal,
- *   forest green, burgundy, navy, warm white, brass, gold) before falling
- *   back — never unrestricted natural-language color interpretation, never
- *   an LLM call, never an invented color outside this fixed list.
+ *   forest green, burgundy, navy, warm white, brass, gold, and — Fix #9 —
+ *   gray/grey, brown, tan, beige, rust, red, blue, green, black, white, off
+ *   white) before falling back — never unrestricted natural-language color
+ *   interpretation, never an LLM call, never an invented color outside this
+ *   fixed list.
  * - toSafeFontFamilyStack had a quieter version of the identical bug: an
  *   arbitrary quoted string is syntactically valid CSS wherever a
  *   font-family is expected, so the old code never "failed," but a
@@ -105,6 +107,28 @@ const EMBEDDED_FUNCTIONAL_COLOR = /(?:rgb|rgba|hsl|hsla)\([^)]+\)/i;
  * than the fallback — confirmed by direct verification against that
  * mission's actual persisted data, not speculative.
  */
+/**
+ * Fix #9 (Design Intelligence -> Production Decisions Audit) — Fix #7's
+ * original 12 terms are all curated, "premium"-sounding compound phrases
+ * (terracotta, aged wood, forest green, warm white...). Real production data
+ * confirmed the model also very commonly reaches for plain, single-word
+ * color terms these never covered at all — Video Game Plus's own real,
+ * live colorPalette.accent ("a controlled cartridge-red or arcade-blue")
+ * and .neutral ("Mid-gray for secondary text and dividers"), and Brooklyn
+ * Organic Kitchen's own real .primary ("Deep soil brown / near-black") and
+ * .neutral ("Soft warm gray for secondary text and rules") — four real,
+ * live fields across two real missions, none containing a single Fix #7
+ * vocabulary term, all four silently falling through to the shared fallback
+ * instead of the business's own real color. The 11 plain terms below close
+ * that gap with the exact same mechanism Fix #7 already established: no new
+ * parsing logic, no new precedence, no unrestricted interpretation — only
+ * additional closed vocabulary entries. "gray"/"grey" are two separate keys
+ * mapping to one identical hex (a real spelling variant, not a different
+ * color). Distinct from, and deliberately close in tone to, their nearest
+ * Fix #7 relative where one already exists (e.g. "brown" near "aged wood",
+ * "green" near "olive"/"forest green", "red" near "terracotta") — genuinely
+ * different real colors, not the same value repeated under a new key.
+ */
 const NAMED_COLOR_VOCABULARY: Record<string, string> = {
   terracotta: "#C2571B",
   olive: "#6B7A3A",
@@ -118,6 +142,18 @@ const NAMED_COLOR_VOCABULARY: Record<string, string> = {
   "warm white": "#F7F3EC",
   brass: "#B08D57",
   gold: "#C9A227",
+  gray: "#8A8A8A",
+  grey: "#8A8A8A",
+  brown: "#6F4E37",
+  tan: "#C9A66B",
+  beige: "#DDD0B8",
+  rust: "#A8471F",
+  red: "#A13D2C",
+  blue: "#3F6B8C",
+  green: "#4F6F52",
+  black: "#1A1A1A",
+  white: "#F5F4F0",
+  "off white": "#EFEAE1",
 };
 
 const NAMED_COLOR_ENTRIES: { term: string; hex: string; pattern: RegExp }[] = Object.entries(

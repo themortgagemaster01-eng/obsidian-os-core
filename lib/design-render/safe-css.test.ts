@@ -137,6 +137,198 @@ describe("safe-css", () => {
   });
 
   // ===========================================================================
+  // Fix #9 (Design Intelligence -> Production Decisions Audit) — Fix #7's own
+  // 12 terms are all curated, "premium" compound phrases; real production
+  // data (Video Game Plus, Brooklyn Organic Kitchen) proved the model also
+  // very commonly reaches for plain, single-word color terms none of those
+  // 12 covered at all, so those real fields were silently falling back to
+  // the shared default. Fix #9 adds 11 plain terms to the SAME closed
+  // vocabulary, with no change to the matching mechanism, precedence, or
+  // fallback behavior itself.
+  // ===========================================================================
+  describe("toSafeCssColor — Fix #9 (expanded named color vocabulary: plain color terms)", () => {
+    const FALLBACK = "#1E3A5F";
+
+    test("gray resolves to a real, non-fallback color", () => {
+      assert.notEqual(toSafeCssColor("A cool gray palette", FALLBACK), FALLBACK);
+    });
+
+    test("grey (alternate spelling) resolves to the identical color gray does — a real spelling variant, not a different color", () => {
+      const gray = toSafeCssColor("A cool gray palette", FALLBACK);
+      const grey = toSafeCssColor("A cool grey palette", FALLBACK);
+      assert.equal(grey, gray);
+      assert.notEqual(grey, FALLBACK);
+    });
+
+    test("brown resolves to a real, non-fallback color", () => {
+      assert.notEqual(toSafeCssColor("A rich brown tone", FALLBACK), FALLBACK);
+    });
+
+    test("tan resolves to a real, non-fallback color", () => {
+      assert.notEqual(toSafeCssColor("A soft tan background", FALLBACK), FALLBACK);
+    });
+
+    test("beige resolves to a real, non-fallback color", () => {
+      assert.notEqual(toSafeCssColor("A quiet beige neutral", FALLBACK), FALLBACK);
+    });
+
+    test("rust resolves to a real, non-fallback color", () => {
+      assert.notEqual(toSafeCssColor("A rust accent for calls to action", FALLBACK), FALLBACK);
+    });
+
+    test("red resolves to a real, non-fallback color", () => {
+      assert.notEqual(toSafeCssColor("A confident red for the primary accent", FALLBACK), FALLBACK);
+    });
+
+    test("blue resolves to a real, non-fallback color", () => {
+      assert.notEqual(toSafeCssColor("A calm blue for structure and text", FALLBACK), FALLBACK);
+    });
+
+    test("green resolves to a real, non-fallback color", () => {
+      assert.notEqual(toSafeCssColor("A muted green for the secondary tone", FALLBACK), FALLBACK);
+    });
+
+    test("black resolves to a real, non-fallback color", () => {
+      assert.notEqual(toSafeCssColor("Near-black for headline text", FALLBACK), FALLBACK);
+    });
+
+    test("white resolves to a real, non-fallback color", () => {
+      assert.notEqual(toSafeCssColor("A clean white background", FALLBACK), FALLBACK);
+    });
+
+    test("off-white (hyphenated, as the model actually writes it) resolves to a real, non-fallback color", () => {
+      assert.notEqual(toSafeCssColor("An off-white backdrop for the whole page", FALLBACK), FALLBACK);
+    });
+
+    test("every new term maps to a genuinely distinct hex value, not one term silently matching all of them", () => {
+      // Wrapped in a descriptive sentence, not passed as a bare single word
+      // — a bare word like "gray" is already syntactically valid CSS
+      // (isPlausibleCssColor's own SINGLE_WORD check) and would short-circuit
+      // straight through toSafeCssColor unchanged, never actually reaching
+      // NAMED_COLOR_VOCABULARY at all. Real DesignMemory prose is never a
+      // bare single word either, so this fixture shape matches reality.
+      const resolved = [
+        toSafeCssColor("A palette built around gray", FALLBACK),
+        toSafeCssColor("A palette built around brown", FALLBACK),
+        toSafeCssColor("A palette built around tan", FALLBACK),
+        toSafeCssColor("A palette built around beige", FALLBACK),
+        toSafeCssColor("A palette built around rust", FALLBACK),
+        toSafeCssColor("A palette built around red", FALLBACK),
+        toSafeCssColor("A palette built around blue", FALLBACK),
+        toSafeCssColor("A palette built around green", FALLBACK),
+        toSafeCssColor("A palette built around black", FALLBACK),
+        toSafeCssColor("A palette built around white", FALLBACK),
+        toSafeCssColor("A palette built around off-white", FALLBACK),
+      ];
+      assert.ok(resolved.every((r) => r !== FALLBACK), "every one of these real color words must resolve to something other than the shared fallback");
+      assert.equal(new Set(resolved).size, resolved.length);
+    });
+
+    test("existing Fix #7 compound vocabulary still resolves exactly as before — Fix #9 is purely additive", () => {
+      assert.equal(toSafeCssColor("Warm terracotta, no hex given", "#C9A227"), "#C2571B");
+      assert.notEqual(toSafeCssColor("Muted brass/gold used sparingly for the call-to-action only", FALLBACK), FALLBACK);
+    });
+
+    test("embedded hex tokens still take precedence over the expanded vocabulary, exactly as before", () => {
+      assert.equal(toSafeCssColor("A warm gray, close to #445566 in practice.", "#000000"), "#445566");
+      assert.equal(toSafeCssColor("A confident red, roughly #ABCDEF in tone.", "#000000"), "#ABCDEF");
+    });
+
+    test("functional-color tokens still take precedence over the expanded vocabulary, exactly as before", () => {
+      assert.equal(toSafeCssColor("A muted blue, like rgb(50, 80, 120) for the base.", "#000000"), "rgb(50, 80, 120)");
+    });
+
+    test("unmatched color language still falls back to the exact caller-supplied fallback, unaffected by the expanded vocabulary", () => {
+      assert.equal(toSafeCssColor("A moody mauve and dusty rose palette", FALLBACK), FALLBACK);
+      assert.equal(toSafeCssColor("Something turquoise and coral", FALLBACK), FALLBACK);
+    });
+
+    test("word-boundary matching holds for the new bare terms too — no false match inside an unrelated longer word", () => {
+      // 'red' must not match inside 'bred'/'credit'; 'green' must not match inside 'evergreen' or 'greenhouse'.
+      assert.equal(toSafeCssColor("The chef has bred a loyal following over the years", FALLBACK), FALLBACK);
+      assert.equal(toSafeCssColor("Financing available, ask about store credit", FALLBACK), FALLBACK);
+      assert.equal(toSafeCssColor("Framed by a row of evergreen trees out front", FALLBACK), FALLBACK);
+    });
+
+    test("when a Fix #7 compound term and a new Fix #9 bare term both appear, the leftmost (first-mentioned) one still wins", () => {
+      // 'aged wood' (Fix #7) starts earlier in this string than the bare
+      // 'brown' that follows it — the exact real Carriage House Mahopac
+      // phrasing. Compared against the literal hex values, not a bare-word
+      // call to toSafeCssColor (see the comment above this describe block).
+      const result = toSafeCssColor("Deep aged-wood brown, sampled from real interior photography", FALLBACK);
+      assert.equal(result, "#6B4A32"); // aged wood — must win over the later bare "brown"
+      assert.notEqual(result, "#6F4E37"); // brown's own hex — must NOT be what's returned
+    });
+
+    // -------------------------------------------------------------------
+    // Real production fixtures — the exact colorPalette prose pulled
+    // directly from these two missions' live, persisted DesignMemory
+    // during the read-only audit. Neither string was altered to make
+    // these tests pass; both previously fell all the way through to the
+    // shared fallback and now resolve to a real, distinct color.
+    // -------------------------------------------------------------------
+    describe("real production fixtures", () => {
+      // Compared against the literal mapped hex, not against
+      // toSafeCssColor("red", FALLBACK) / (...)("gray", ...) / etc. — a bare
+      // single word like "red" or "gray" is ALREADY a syntactically valid
+      // CSS color keyword (isPlausibleCssColor's own SINGLE_WORD check), so
+      // toSafeCssColor short-circuits and returns it completely unchanged
+      // before ever reaching the named-vocabulary path at all. Only prose
+      // that ISN'T already plausible CSS syntax (i.e. every real
+      // DesignMemory field this fix actually targets) reaches
+      // NAMED_COLOR_VOCABULARY — so the real fixtures below are compared
+      // against the vocabulary's own literal hex value instead.
+      test("Video Game Plus — colorPalette.accent ('a controlled cartridge-red or arcade-blue') now resolves to red's real hex (leftmost real color term), not the fallback", () => {
+        const result = toSafeCssColor(
+          "One saturated accent (e.g. a controlled cartridge-red or arcade-blue), used sparingly for CTAs and focus states",
+          FALLBACK
+        );
+        assert.notEqual(result, FALLBACK);
+        assert.equal(result, "#A13D2C");
+      });
+
+      test("Video Game Plus — colorPalette.neutral ('Mid-gray for secondary text and dividers') now resolves to gray's real hex, not the fallback", () => {
+        const result = toSafeCssColor("Mid-gray for secondary text and dividers, tuned to meet contrast minimums", FALLBACK);
+        assert.notEqual(result, FALLBACK);
+        assert.equal(result, "#8A8A8A");
+      });
+
+      test("Brooklyn Organic Kitchen — colorPalette.primary ('Deep soil brown / near-black') now resolves to brown's real hex (leftmost real color term), not the fallback", () => {
+        const result = toSafeCssColor("Deep soil brown / near-black for text and structure", FALLBACK);
+        assert.notEqual(result, FALLBACK);
+        assert.equal(result, "#6F4E37");
+      });
+
+      test("Brooklyn Organic Kitchen — colorPalette.neutral ('Soft warm gray for secondary text and rules') now resolves to gray's real hex, not the fallback", () => {
+        const result = toSafeCssColor("Soft warm gray for secondary text and rules", FALLBACK);
+        assert.notEqual(result, FALLBACK);
+        assert.equal(result, "#8A8A8A");
+      });
+
+      test("before Fix #9: all four real fields above would have fallen through to the identical shared fallback (proves this was a real, live gap, not a hypothetical one)", () => {
+        // Reproduces the pre-Fix-#9 vocabulary inline to demonstrate the
+        // actual prior behavior against these four real strings, without
+        // re-implementing the resolver itself.
+        const PRE_FIX_9_TERMS = [
+          "terracotta", "olive", "amber", "aged wood", "cream", "charcoal",
+          "forest green", "burgundy", "navy", "warm white", "brass", "gold",
+        ];
+        const realFields = [
+          "One saturated accent (e.g. a controlled cartridge-red or arcade-blue), used sparingly for CTAs and focus states",
+          "Mid-gray for secondary text and dividers, tuned to meet contrast minimums",
+          "Deep soil brown / near-black for text and structure",
+          "Soft warm gray for secondary text and rules",
+        ];
+        for (const field of realFields) {
+          const normalized = field.toLowerCase().replace(/-/g, " ");
+          const hadOldVocabTerm = PRE_FIX_9_TERMS.some((term) => normalized.includes(term));
+          assert.equal(hadOldVocabTerm, false, `expected "${field}" to contain no Fix #7 vocabulary term`);
+        }
+      });
+    });
+  });
+
+  // ===========================================================================
   // Issue 1's typography half — quoting an entire descriptive sentence as a
   // literal font-family never resolves to a real font, so every business
   // fell through to the same fixed default stack (functionally the same
