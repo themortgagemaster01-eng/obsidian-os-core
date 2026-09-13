@@ -23,6 +23,7 @@ import {
   safeAccentTextColor,
 } from "@/lib/design-render/safe-css";
 import { assignColorRoles } from "@/lib/design-render/color-roles";
+import { resolveHeroCtaLabel } from "@/lib/design-render/cta-label";
 import { SlotValue, isRealSlot } from "@/components/design-preview/slot-value";
 import { ScrollRevealRuntime } from "@/components/design-preview/scroll-reveal-runtime";
 import { ShaderHeroRuntime } from "@/components/design-preview/shader-hero-runtime";
@@ -250,6 +251,15 @@ export function DesignPreview({
   const headingFontStack = toSafeFontFamilyStack(designMemory?.typography.headingFamily, FALLBACK_HEADING_STACK);
   const bodyFontStack = toSafeFontFamilyStack(designMemory?.typography.bodyFamily, FALLBACK_BODY_STACK);
 
+  // Fix #10: the hero CTA label now comes from this mission's own real
+  // ctaHierarchy.primary reasoning, reduced to safe button copy by the same
+  // bounded-resolver discipline toSafeFontFamilyStack/toSafeCssColor above
+  // already use. Resolved once here (same pattern as the font stacks) and
+  // passed down; falls back to the exact legacy string for any input the
+  // closed vocabulary can't safely reduce. Only the LABEL changes — the
+  // hero CTA's destination is untouched.
+  const heroCtaLabel = resolveHeroCtaLabel(designMemory?.ctaHierarchy?.primary);
+
   const bodyRole = findTypeRole(refinedDesign, "body");
   const desktopBodyPx = bodyRole?.sizePx ?? 16;
   const mobileBodyPx = refinedDesign.mobile.bodyFontSizePx;
@@ -431,6 +441,7 @@ export function DesignPreview({
           heroImageUrl={type === "hero" ? heroImageUrl : null}
           ctaVariant={variant.ctaVariant}
           quickFacts={type === "hero" ? heroQuickFacts : null}
+          heroCtaLabel={heroCtaLabel}
         />
       </SectionShell>
     );
@@ -1024,11 +1035,22 @@ function SectionHeading({
 
 /**
  * A real, styled call-to-action button — sized from RefinedDesign.mobile's
- * own real computed touch-target dimensions. `label` is deliberately always
- * generic, standard interface copy ("Contact Us", "Get in Touch") rather
- * than a business-specific claim — that's UI convention, not evidence, so
- * it's never subject to the fabrication rule the slot values above it are
- * held to.
+ * own real computed touch-target dimensions.
+ *
+ * `label` for every NON-hero section is deliberately generic, standard
+ * interface copy ("Contact Us", "Book Now", "View Listing") rather than a
+ * business-specific claim — that's UI convention, not evidence, so it's
+ * never subject to the fabrication rule the slot values above it are held
+ * to, and Fix #10 deliberately left all of those untouched.
+ *
+ * The HERO's label is the one exception (Fix #10): it comes from
+ * resolveHeroCtaLabel (lib/design-render/cta-label.ts) applied to this
+ * mission's own real DesignMemory.ctaHierarchy.primary — a structured field
+ * whose entire purpose is to state the recommended primary action. That
+ * resolver is bounded and deterministic and never fabricates: a phone number
+ * reaches this button only when those exact digits are literally present in
+ * that same CTA source text, and anything it can't safely reduce falls back
+ * to the identical "Get in Touch" string this prop used to be hardcoded to.
  *
  * Text color intentionally reuses the section's own already-chosen
  * foreground (`textColor`, the same value every heading/label in this
@@ -1154,6 +1176,7 @@ function SectionBody({
   heroImageUrl,
   ctaVariant,
   quickFacts,
+  heroCtaLabel,
 }: {
   node: ComponentNode;
   refinedDesign: RefinedDesign;
@@ -1168,6 +1191,8 @@ function SectionBody({
   ctaVariant: "outline" | "filled" | "text-link";
   /** Real, evidence-gated hours/phone/address summary (DesignPreview's heroQuickFacts) — only ever passed for "hero", and only when contact is genuinely buried deep in the section order AND all three fields are real. */
   quickFacts: { phone: string; phoneHref: string | null; address: string; hoursLines: string[] } | null;
+  /** Fix #10: this mission's own real ctaHierarchy.primary reasoning, already reduced to safe short button copy by resolveHeroCtaLabel (lib/design-render/cta-label.ts) — or the exact legacy "Get in Touch" string when the bounded vocabulary couldn't safely reduce it. Hero only; every other section's CTA label is unchanged. */
+  heroCtaLabel: string;
 }) {
   const section = node.section;
 
@@ -1306,7 +1331,7 @@ function SectionBody({
             ))}
           </div>
         )}
-        <TouchAffordance refinedDesign={refinedDesign} section="hero" label="Get in Touch" accent={accent} textColor={textColor} href={`#${sectionAnchorId("contact")}`} variant={ctaVariant} />
+        <TouchAffordance refinedDesign={refinedDesign} section="hero" label={heroCtaLabel} accent={accent} textColor={textColor} href={`#${sectionAnchorId("contact")}`} variant={ctaVariant} />
         </div>
         {isSplit && <img src={heroImageUrl!} alt="" style={{ width: "100%", minHeight: "22rem", objectFit: "cover", display: "block" }} />}
       </div>

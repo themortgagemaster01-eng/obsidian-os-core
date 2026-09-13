@@ -903,6 +903,49 @@ describe("design-qa-service: qaConversion", () => {
     assert.equal(result.verdict, "FAIL");
   });
 
+  // =========================================================================
+  // Fix #10 — QA's CTA contract. Before this, QA only checked that
+  // ctaHierarchy.primary was non-empty, which is why four real missions could
+  // state a verified-phone CTA, render "Get in Touch" instead, and still pass
+  // QA clean. QA now verifies the rendered hero label IS the bounded
+  // resolution of that stated CTA (or the exact legacy fallback).
+  // =========================================================================
+  test("(22) reports the resolved hero CTA label as real evidence — the renderer and QA read the same stated CTA through the same resolver, so a silent hardcode mismatch is detectable", () => {
+    const input = buildValidInput();
+    const withPhoneCta: QaStructuredInput = {
+      ...input,
+      designMemory: {
+        ...(input.designMemory as NonNullable<QaStructuredInput["designMemory"]>),
+        ctaHierarchy: { primary: "Call 845-803-8728", secondary: "View hours" },
+      },
+    };
+    const result = qaConversion(withPhoneCta);
+    const ctaEvidence = result.evidence.find((e) => e.source === "hero CTA label resolution (Fix #10)");
+    assert.ok(ctaEvidence, "QA must report what the hero CTA actually resolves to");
+    assert.match(ctaEvidence!.detail, /Call 845-803-8728/);
+    // The pre-Fix-#10 hardcoded literal is NOT what this mission renders —
+    // which is exactly the disconnect this evidence line makes visible.
+    assert.ok(!ctaEvidence!.detail.includes("legacy generic label"));
+  });
+
+  test("(22b) a mission whose stated CTA can't be safely reduced reports the legacy fallback honestly, and still passes", () => {
+    const input = buildValidInput();
+    const withGenericCta: QaStructuredInput = {
+      ...input,
+      designMemory: {
+        ...(input.designMemory as NonNullable<QaStructuredInput["designMemory"]>),
+        ctaHierarchy: {
+          primary: "A single clear 'Get in touch' action point, phrased generically without asserting any unverified phone, email, or address.",
+          secondary: "Learn about the food philosophy",
+        },
+      },
+    };
+    const result = qaConversion(withGenericCta);
+    const ctaEvidence = result.evidence.find((e) => e.source === "hero CTA label resolution (Fix #10)");
+    assert.ok(ctaEvidence!.detail.includes("legacy generic label"));
+    assert.equal(result.verdict, "PASS", "a legitimately generic CTA is not a QA failure");
+  });
+
   test("still detects duplicate touch-target names — the pre-existing check, unchanged by the Phase 6.8 narrative-aware extension", () => {
     const input = buildValidInput();
     const withDuplicateName: QaStructuredInput = {

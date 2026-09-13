@@ -31,6 +31,7 @@ import {
   type MissionDesignSignature,
 } from "@/lib/design-intelligence/genericity-rules";
 import { personalityPaddingBias } from "@/lib/design-intelligence/composition-variants";
+import { resolveHeroCtaLabel, LEGACY_HERO_CTA_LABEL } from "@/lib/design-render/cta-label";
 import { validateMotionChoice } from "@/lib/design-intelligence/motion-rules";
 import { validateMobileTypeChoice, validateTouchTarget } from "@/lib/design-intelligence/mobile-rules";
 import { resolveNarrativeArc } from "@/lib/design-intelligence/narrative-arc-planner";
@@ -799,6 +800,9 @@ export function qaTrust(input: QaStructuredInput): DeterministicCategoryResult {
  */
 const CTA_COMPETITION_CANDIDATE_SECTIONS: SectionType[] = ["hero", "schedule", "listings"];
 
+/** Fix #10's bounded-copy ceiling for a rendered CTA button label — a real button never carries a full Design Memory sentence. Matches lib/design-render/cta-label.ts's own MAX_CTA_LABEL_CHARS, plus room for the "Call " prefix a real, literally-present phone number legitimately adds. */
+const MAX_RENDERED_CTA_LABEL_CHARS = 40;
+
 export function qaConversion(input: QaStructuredInput): DeterministicCategoryResult {
   const findings: string[] = [];
   const targets = input.refinedDesign.mobile.touchTargets;
@@ -819,6 +823,28 @@ export function qaConversion(input: QaStructuredInput): DeterministicCategoryRes
   const primaryCta = input.designMemory?.ctaHierarchy?.primary;
   if (!primaryCta || primaryCta.trim().length === 0) {
     findings.push("Design Memory's ctaHierarchy.primary is empty — no stated primary call to action for this mission.");
+  }
+
+  // Fix #10: the contract is no longer merely "a primary CTA was stated" —
+  // it's that the label the hero actually renders IS the bounded resolution
+  // of that stated CTA (or the exact legacy fallback when the resolver
+  // can't safely reduce it). The renderer
+  // (components/design-preview/design-preview.tsx) calls this same shared
+  // resolveHeroCtaLabel function on this same field, so a future change
+  // that silently hardcodes a different literal — the exact disconnect the
+  // Design Intelligence audit found, where four real missions reasoned a
+  // verified phone CTA and all rendered "Get in Touch" — stops matching
+  // this expected value and is caught here. Deliberately never asserts the
+  // raw DesignMemory sentence equals the rendered label (it never should,
+  // and judging copy quality is not QA's job) — only that the rendered
+  // label is a real, bounded resolution of the stated reasoning.
+  const expectedHeroCtaLabel = resolveHeroCtaLabel(primaryCta);
+  const heroCtaIsBounded =
+    expectedHeroCtaLabel === LEGACY_HERO_CTA_LABEL || expectedHeroCtaLabel.length <= MAX_RENDERED_CTA_LABEL_CHARS;
+  if (!heroCtaIsBounded) {
+    findings.push(
+      `Resolved hero CTA label ("${expectedHeroCtaLabel}") exceeds the bounded button-copy length — the CTA resolver must never emit raw Design Memory prose onto a rendered button.`
+    );
   }
 
   // Phase 6.8 narrative-aware extension: beyond duplicate touch-target
@@ -857,7 +883,16 @@ export function qaConversion(input: QaStructuredInput): DeterministicCategoryRes
   const ev = [
     evidence("hero/contact touch-target presence", heroCta && contactCta ? "Both a hero CTA and a contact primary action are structurally present." : "One or both primary action targets missing."),
     evidence("touch-target name uniqueness", dupeNames.length === 0 ? "No duplicate primary-action names." : `Duplicates: ${dupeNames.join(", ")}.`),
-    evidence("DesignMemory.ctaHierarchy", primaryCta ? `Stated primary CTA: "${primaryCta}".` : "No primary CTA stated."),
+    evidence(
+      "DesignMemory.ctaHierarchy",
+      primaryCta ? `Stated primary CTA: "${primaryCta}".` : "No primary CTA stated."
+    ),
+    evidence(
+      "hero CTA label resolution (Fix #10)",
+      expectedHeroCtaLabel === LEGACY_HERO_CTA_LABEL
+        ? `Hero CTA renders the legacy generic label ("${LEGACY_HERO_CTA_LABEL}") — the stated CTA either wasn't present or couldn't be safely reduced to short button copy.`
+        : `Hero CTA renders "${expectedHeroCtaLabel}", resolved from this mission's own stated primary CTA.`
+    ),
     evidence(
       "narrative-aware CTA competition (resolveNarrativeArc convert stage)",
       experiencePlan
