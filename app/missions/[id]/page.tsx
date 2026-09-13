@@ -78,7 +78,7 @@ export default async function MissionDetailPage({ params }: PageParams) {
   let report = null;
   let screenshotUrl: string | null = null;
 
-  if (analysis?.status === "complete") {
+  if (analysis?.status === "complete" && mission.website_url) {
     const normalized = normalizedAnalysisFromRow(analysis, mission.website_url);
     const insights = generateInsights(normalized);
     const scoreResult = computeOpportunityScore(normalized);
@@ -119,15 +119,21 @@ export default async function MissionDetailPage({ params }: PageParams) {
       </header>
 
       <div className="container max-w-3xl space-y-6 py-10">
-        <AnalysisPanel
-          missionId={mission.id}
-          initialAnalysis={analysis}
-          initialReport={report}
-          initialScreenshotUrl={screenshotUrl}
-        />
+        {mission.website_url && (
+          <AnalysisPanel
+            missionId={mission.id}
+            initialAnalysis={analysis}
+            initialReport={report}
+            initialScreenshotUrl={screenshotUrl}
+          />
+        )}
         <DesignBriefPanel
           missionId={mission.id}
-          analysisComplete={analysis?.status === "complete"}
+          // A confirmed no-website mission (mission.website_url === null)
+          // never goes through the Analysis Engine at all (nothing to
+          // crawl) — it's ready for a Design Brief immediately, using
+          // verified discovery-fact evidence instead of a website analysis.
+          analysisComplete={mission.website_url === null ? true : analysis?.status === "complete"}
           initialMissionState={mission.state}
           initialDesignBrief={designBrief}
           initialWebsiteDesign={design}

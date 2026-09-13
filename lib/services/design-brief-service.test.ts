@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildCitations,
+  buildNoWebsiteCitations,
   findWeakestMeasuredCategory,
   applyDesignBriefEdits,
   runDesignBrief,
@@ -11,6 +12,7 @@ import {
   type DesignBrief,
   type DesignBriefServiceDeps,
 } from "@/lib/services/design-brief-service";
+import { normalizedAnalysisFromDiscoveryFacts } from "@/lib/services/analysis-types";
 import type { NormalizedAnalysis } from "@/lib/services/analysis-types";
 import type { Insight } from "@/lib/services/insight-service";
 import type { WebsiteAnalysisRow } from "@/lib/repositories/website-analysis-repository";
@@ -307,12 +309,12 @@ function fakeLlmProvider(): LlmProvider & { callCount: number } {
 }
 
 /** A minimal, mutable in-memory mission "row" + repository, so transitionMissionState/rejectMission's own internal findById->validate->update sequence works correctly across one runDesignBrief call. */
-function makeMissionFixture(initialState: string) {
+function makeMissionFixture(initialState: string, websiteUrl: string | null = "https://acmediner.test/") {
   let mission: Record<string, unknown> = {
     id: "mission-1",
     organization_id: "org-1",
     business_name: "Acme Diner",
-    website_url: "https://acmediner.test/",
+    website_url: websiteUrl,
     company_id: null,
     state: initialState,
   };
@@ -333,14 +335,23 @@ function makeMissionFixture(initialState: string) {
 function buildTestDeps(overrides: {
   analysisRow?: WebsiteAnalysisRow;
   missionState?: string;
+  websiteUrl?: string | null;
   lead?: { location: string | null; discovery_phone: string | null; discovery_address: string | null } | null;
   llmProvider?: LlmProvider & { callCount: number };
   identityInserts?: Record<string, unknown>[];
+  analysisLookupCalls?: number[];
 }): { deps: DesignBriefServiceDeps; mission: ReturnType<typeof makeMissionFixture>; llmProvider: LlmProvider & { callCount: number } } {
-  const missionFixture = makeMissionFixture(overrides.missionState ?? "analyzing");
+  // `??` would treat an explicit `websiteUrl: null` (a deliberate no-website
+  // test case) identically to "not provided" — this must distinguish the
+  // two, so `undefined` (key omitted) is the only thing that falls back.
+  const missionFixture = makeMissionFixture(
+    overrides.missionState ?? "analyzing",
+    overrides.websiteUrl === undefined ? "https://acmediner.test/" : overrides.websiteUrl
+  );
   const llmProvider = overrides.llmProvider ?? fakeLlmProvider();
   const identityInserts = overrides.identityInserts ?? [];
   const publishedEvents: unknown[] = [];
+  const analysisLookupCalls = overrides.analysisLookupCalls ?? [];
 
   const deps = {
     client: {} as never,
@@ -349,7 +360,10 @@ function buildTestDeps(overrides: {
       update: async (_client: unknown, _id: string, values: Record<string, unknown>) => ({ id: "brief-1", mission_id: "mission-1", organization_id: "org-1", ...values }) as never,
     },
     websiteAnalysisRepository: {
-      findLatestByMission: async () => overrides.analysisRow ?? fakeAnalysisRow(),
+      findLatestByMission: async () => {
+        analysisLookupCalls.push(1);
+        return overrides.analysisRow ?? fakeAnalysisRow();
+      },
     } as never,
     missionRepository: missionFixture.repository as never,
     companyRepository: { findById: async () => null } as never,
@@ -790,5 +804,111 @@ describe("design-brief-service: runDesignBrief regenerated after the mission alr
 
     assert.equal(result.status, "complete");
     assert.equal(mission.current.state, "reviewing", "the normal, first-run transition must still happen");
+  });
+});
+
+describe("design-brief-service: buildNoWebsiteCitations (Robert's locked spec, §6)", () => {
+  test("always includes the no-website fact itself, even with no phone or address", () => {
+    const citations = buildNoWebsiteCitations(normalizedAnalysisFromDiscoveryFacts({ phone: null, address: null }));
+    assert.equal(citations.length, 1);
+    assert.match(citations[0].statement, /does not currently have a website/);
+  });
+
+  test("adds a citation for a verified phone number when present", () => {
+    const citations = buildNoWebsiteCitations(normalizedAnalysisFromDiscoveryFacts({ phone: "555-0100", address: null }));
+    assert.equal(citations.length, 2);
+    assert.ok(citations.some((c) => c.statement.includes("555-0100")));
+  });
+
+  test("adds a citation for a verified address when present, and both when both exist", () => {
+    const citations = buildNoWebsiteCitations(normalizedAnalysisFromDiscoveryFacts({ phone: "555-0100", address: "12 Main St" }));
+    assert.equal(citations.length, 3);
+    assert.ok(citations.some((c) => c.statement.includes("12 Main St")));
+  });
+
+  test("never empty — satisfies the same 'no empty evidence set reaches generation' discipline as buildCitations", () => {
+    const citations = buildNoWebsiteCitations(normalizedAnalysisFromDiscoveryFacts({ phone: null, address: null }));
+    assert.ok(citations.length > 0);
+  });
+});
+
+describe("design-brief-service: runDesignBrief — no-website path (Robert's locked spec, §1/§3/§5/§6/§7)", () => {
+  test("CONFIRMED (verified phone on record): skips runAnalysis entirely (no website_analyses lookup at all), uses discovery-fact evidence, does BOTH discovered->analyzing and analyzing->researching before reaching reviewing", async () => {
+    const analysisLookupCalls: number[] = [];
+    const { deps, mission, llmProvider } = buildTestDeps({
+      websiteUrl: null,
+      missionState: "discovered",
+      lead: { location: "Mahopac, NY", discovery_phone: "555-0100", discovery_address: null },
+      analysisLookupCalls,
+    });
+
+    const result = await runDesignBrief(deps, "brief-1");
+
+    assert.equal(result.status, "complete", "a CONFIRMED no-website mission must reach a real 'complete' Design Brief");
+    assert.equal(mission.current.state, "reviewing", "must reach reviewing exactly like the existing-website path — discovered -> analyzing -> researching -> reviewing, all in this one call");
+    assert.equal(llmProvider.callCount, 2, "same 2-call (Pass 1 + critique) shape as the existing-website path — no extra LLM call for the no-website path");
+    assert.equal(analysisLookupCalls.length, 0, "crawl bypass: the no-website path must never even look up a website_analyses row, let alone crawl anything");
+
+    const brief = (result as unknown as { brief: DesignBrief }).brief;
+    assert.equal(brief.websiteUrl, null);
+    assert.deepEqual(brief.contactEvidence, { phones: ["555-0100"], emails: [], address: null, hours: null });
+    assert.ok(brief.citedInsights.some((c) => c.statement.includes("does not currently have a website")));
+    assert.ok(brief.citedInsights.some((c) => c.statement.includes("555-0100")));
+  });
+
+  test("CONFIRMED (verified address on record, no phone): same successful outcome", async () => {
+    const { deps, mission } = buildTestDeps({
+      websiteUrl: null,
+      missionState: "discovered",
+      lead: { location: "Mahopac, NY", discovery_phone: null, discovery_address: "12 Main St, Mahopac NY" },
+    });
+
+    const result = await runDesignBrief(deps, "brief-1");
+
+    assert.equal(result.status, "complete");
+    assert.equal(mission.current.state, "reviewing");
+    const brief = (result as unknown as { brief: DesignBrief }).brief;
+    assert.equal(brief.contactEvidence.address, "12 Main St, Mahopac NY");
+  });
+
+  test("UNCERTAIN (name + category + town-level geocode only — Skyline Towing / Frasers Hardware / Keller William Realty Partners' real, currently-discovered evidence profile): rejects the mission, marks the brief failed, and NEVER calls the LLM — no fabricated preview from thin evidence", async () => {
+    const { deps, mission, llmProvider } = buildTestDeps({
+      websiteUrl: null,
+      missionState: "discovered",
+      lead: { location: "Mahopac, Mahopac Falls, Town of Carmel, Putnam County, New York, United States", discovery_phone: null, discovery_address: null },
+    });
+
+    const result = await runDesignBrief(deps, "brief-1");
+
+    assert.equal(result.status, "failed", "insufficient evidence must never produce a 'complete' Design Brief");
+    assert.equal(mission.current.state, "rejected", "must reject the mission exactly like IDENTITY_FAILED does — never leave it silently stuck");
+    assert.equal(llmProvider.callCount, 0, "the LLM must never be invoked for insufficient no-website evidence");
+    assert.match(result.error_message as string, /Insufficient business evidence/);
+  });
+
+  test("no originating lead at all for a no-website mission: throws a clear error rather than fabricating evidence out of nothing", async () => {
+    const { deps } = buildTestDeps({
+      websiteUrl: null,
+      missionState: "discovered",
+      lead: null,
+    });
+
+    const result = await runDesignBrief(deps, "brief-1");
+    assert.equal(result.status, "failed");
+    assert.match(result.error_message as string, /No originating lead found/);
+  });
+
+  test("existing-website regression: a normal website mission is completely unaffected by the no-website branch — still requires a completed website analysis, still runs identity verification, still uses buildCitations", async () => {
+    const { deps, mission, llmProvider } = buildTestDeps({
+      lead: { location: "Springfield, IL", discovery_phone: null, discovery_address: null },
+    });
+
+    const result = await runDesignBrief(deps, "brief-1");
+
+    assert.equal(result.status, "complete");
+    assert.equal(mission.current.state, "reviewing");
+    assert.equal(llmProvider.callCount, 2);
+    const brief = (result as unknown as { brief: DesignBrief }).brief;
+    assert.equal(brief.websiteUrl, "https://acmediner.test/");
   });
 });

@@ -110,11 +110,18 @@ async function runOneCandidate(client: TypedClient, lead: LeadRow, ownerId: stri
     const mission = await missionRepository.findById(client, missionId);
     if (!mission) throw new Error(`Mission ${missionId} not found immediately after promotion.`);
 
-    const analysisDeps = createAnalysisServiceDeps(client);
-    const analysis = await createAnalysisRun(analysisDeps, { missionId, organizationId: mission.organization_id, companyId: mission.company_id });
-    const completedAnalysis = await runAnalysis(analysisDeps, analysis.id);
-    if (completedAnalysis.status !== "complete") {
-      throw new Error(completedAnalysis.error_message ?? "Analysis did not complete.");
+    // No-website evidence gate (Robert's locked spec, §5): a confirmed
+    // no-website mission has nothing to crawl — runAnalysis is skipped
+    // entirely, exactly like the manual per-mission UI does. Its evidence
+    // gate + discovery-fact NormalizedAnalysis are handled inside
+    // runDesignBrief, called by the next stage below unchanged.
+    if (mission.website_url !== null) {
+      const analysisDeps = createAnalysisServiceDeps(client);
+      const analysis = await createAnalysisRun(analysisDeps, { missionId, organizationId: mission.organization_id, companyId: mission.company_id });
+      const completedAnalysis = await runAnalysis(analysisDeps, analysis.id);
+      if (completedAnalysis.status !== "complete") {
+        throw new Error(completedAnalysis.error_message ?? "Analysis did not complete.");
+      }
     }
   } catch (err) {
     throw new StageError("analyze", err, missionId);

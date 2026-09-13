@@ -158,7 +158,7 @@ export function ApprovalPanel({
       <CardContent className="space-y-6">
         <div className="space-y-1">
           <p className="text-sm font-medium text-foreground">{content.businessName}</p>
-          <p className="text-sm text-muted-foreground">{content.websiteUrl}</p>
+          <p className="text-sm text-muted-foreground">{content.websiteUrl ?? "No existing website — new build"}</p>
           <Link
             href={`/missions/${missionId}/preview`}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground transition-colors duration-200 ease-in-out hover:text-muted-foreground"

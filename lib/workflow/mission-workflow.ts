@@ -54,7 +54,8 @@ export interface CreateMissionInput {
   ownerId: string;
   organizationId: string;
   businessName: string;
-  websiteUrl: string;
+  /** Null for a confirmed no-website business (no-website evidence gate) — never an empty-string placeholder. */
+  websiteUrl: string | null;
   /** Optional Memory Vault seeding (Phase 2: a lead promoted into a mission already knows its own industry bucket/category from qualification — see lib/services/lead-promotion-service.ts). Never required; a mission created from a bare URL (the existing "new mission" flow) passes neither and findOrCreateCompany falls back to its own null defaults, unchanged. */
   industry?: string;
   businessCategory?: string;

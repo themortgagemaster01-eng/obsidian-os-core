@@ -150,7 +150,8 @@ export interface Database {
           organization_id: string;
           company_id: string | null;
           business_name: string;
-          website_url: string;
+          /** Nullable since the no-website evidence gate (0035_no_website_evidence_gate.sql) — null means a confirmed no-website business, never an unset/unknown value. */
+          website_url: string | null;
           state: MissionState;
           state_changed_at: string;
           /** Phase 9 (0025_mission_batch_runs.sql) — which batch run (if any) created this mission. Null for a mission created the normal, one-at-a-time way. */
@@ -164,7 +165,7 @@ export interface Database {
           organization_id: string;
           company_id?: string | null;
           business_name: string;
-          website_url: string;
+          website_url?: string | null;
           state?: MissionState;
           state_changed_at?: string;
           batch_run_id?: string | null;
@@ -177,7 +178,7 @@ export interface Database {
           organization_id?: string;
           company_id?: string | null;
           business_name?: string;
-          website_url?: string;
+          website_url?: string | null;
           state?: MissionState;
           state_changed_at?: string;
           batch_run_id?: string | null;
@@ -346,7 +347,8 @@ export interface Database {
           id: string;
           organization_id: string;
           business_name: string;
-          website_url: string;
+          /** Nullable since the no-website evidence gate (0035_no_website_evidence_gate.sql) — null means a confirmed no-website business, deduplicated by business_name instead (see lib/services/company-service.ts). */
+          website_url: string | null;
           industry: string | null;
           business_category: string | null;
           first_discovered_at: string;
@@ -366,7 +368,7 @@ export interface Database {
           id?: string;
           organization_id: string;
           business_name: string;
-          website_url: string;
+          website_url?: string | null;
           industry?: string | null;
           business_category?: string | null;
           first_discovered_at?: string;
@@ -386,7 +388,7 @@ export interface Database {
           id?: string;
           organization_id?: string;
           business_name?: string;
-          website_url?: string;
+          website_url?: string | null;
           industry?: string | null;
           business_category?: string | null;
           first_discovered_at?: string;

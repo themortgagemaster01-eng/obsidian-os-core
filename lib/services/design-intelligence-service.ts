@@ -198,6 +198,16 @@ export interface DesignIntelligenceInput {
   reviews?: ReviewsSummary;
   /** Real photos the business itself publishes (crawl-adapter.ts's extractGallery) — the only real evidence this prompt's own "real photography suggests an image-led hospitality direction" guidance (below) can actually be grounded in; empty/absent means honestly no real photography was found. */
   gallery?: GalleryImage[];
+  /**
+   * True for a confirmed no-website business (Robert's locked spec, §7) —
+   * there is no existing site to redesign, improve, or critique, and no
+   * deficiencies of an existing website to reference. Design Intelligence
+   * must build a first-site concept from the verified evidence given below
+   * instead. Defaults to false/undefined for the existing-website path,
+   * which is unaffected — this only adds a framing line to the prompt, it
+   * never changes what Design Intelligence is capable of producing.
+   */
+  isNewBuild?: boolean;
 }
 
 const VALID_LAYOUT_FAMILIES: LayoutFamily[] = [
@@ -365,7 +375,11 @@ function buildUserPrompt(input: DesignIntelligenceInput): string {
     )
     .join("\n");
 
-  return `Business: ${input.businessName}
+  const noWebsiteFraming = input.isNewBuild
+    ? `IMPORTANT: This business does not currently have a website. There is no existing site to redesign, improve, or critique, and no deficiencies of an existing website to reference — none exist. You are building a concept for its FIRST website from scratch, grounded only in the verified public business facts given below. Never mention an "old site," "current site," "existing site," or any website deficiency in heroThesis, positioning, or reasoning.\n\n`
+    : "";
+
+  return `${noWebsiteFraming}Business: ${input.businessName}
 Industry (as recorded, may be imprecise): ${input.industry ?? "unknown"}
 Industry bucket (already classified): ${input.industryBucket}
 

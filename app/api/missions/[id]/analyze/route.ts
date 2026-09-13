@@ -81,6 +81,20 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Mission not found" }, { status: 404 });
   }
 
+  // No-website evidence gate (Robert's locked spec, §5): a confirmed
+  // no-website mission has nothing to crawl — skip straight to generating
+  // a Design Brief instead (POST /api/missions/:id/design-brief), which
+  // gathers discovery-fact evidence in place of a website analysis.
+  if (!mission.website_url) {
+    return NextResponse.json(
+      {
+        error:
+          "This mission has no website to analyze — it originated from a confirmed no-website lead. Generate a Design Brief directly instead; it will use verified discovery-fact evidence in place of a website analysis.",
+      },
+      { status: 400 }
+    );
+  }
+
   // Overlap guard: checked before creating a new row, so a caller gets a
   // real 409 instead of a duplicate analysis racing the one already in
   // flight for this mission. The DB's own partial unique index

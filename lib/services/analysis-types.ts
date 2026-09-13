@@ -64,7 +64,8 @@ export interface MeasurementStatus {
 }
 
 export interface NormalizedAnalysis {
-  websiteUrl: string;
+  /** Null for a confirmed no-website business (see normalizedAnalysisFromDiscoveryFacts) — never a placeholder URL standing in for one that doesn't exist. */
+  websiteUrl: string | null;
   /** `null` when the SEO check never ran (see analysis-service.ts's normalizeSeoScore) — never a fake 0 standing in for a measurement that didn't happen. */
   seoScore: number | null;
   seoFindings: string[];
@@ -246,7 +247,7 @@ export function computeTechnicalHealth(
  */
 export function normalizedAnalysisFromRow(
   row: WebsiteAnalysisRow,
-  websiteUrl: string
+  websiteUrl: string | null
 ): NormalizedAnalysis {
   const crawl = row.crawl_result ? normalizeCrawlRawResult(row.crawl_result) : null;
   const mobile = (row.mobile_result as unknown as MobileRawResult | null) ?? null;
@@ -349,5 +350,70 @@ export function normalizedAnalysisFromRawResults(
     reviews: raw.crawl.reviews,
     gallery: raw.crawl.gallery ?? [],
     menu: raw.crawl.menu ?? [],
+  };
+}
+
+export interface DiscoveryFactsInput {
+  /** leads.discovery_phone — a verified, business-specific phone number, or null when never captured. */
+  phone: string | null;
+  /** leads.discovery_address — a specific street address, or null when never captured. */
+  address: string | null;
+}
+
+/**
+ * No-website path: builds NormalizedAnalysis directly from verified
+ * discovery facts, with no crawl and no database involved — the smallest
+ * possible producer of the SAME NormalizedAnalysis shape the existing
+ * website workflow already uses (Robert's locked spec, §2), so every
+ * downstream consumer (insight-service.ts, design-brief-service.ts,
+ * proposal-service.ts) keeps working completely unchanged.
+ *
+ * Every score that can only legitimately come from crawling a real website
+ * stays honestly null — this is not "analysis failed," it's "there was
+ * never a website to analyze," and measurementStatus reflects that
+ * (everything false, since no check of any kind ran). Only the two facts
+ * design-brief-service.ts's own evidence gate (lib/services/no-website-
+ * evidence-gate.ts) already required to be present — a verified phone
+ * number or a specific street address — populate contactEvidence; nothing
+ * else is fabricated to fill out the shape (no services, testimonials,
+ * certifications, team, FAQ, reviews, gallery, or menu — none of that
+ * exists for a business that was never crawled).
+ */
+export function normalizedAnalysisFromDiscoveryFacts(input: DiscoveryFactsInput): NormalizedAnalysis {
+  return {
+    websiteUrl: null,
+    seoScore: null,
+    seoFindings: [],
+    mobileScore: null,
+    mobileFindings: [],
+    accessibilityScore: null,
+    accessibilityFindings: [],
+    technicalHealthScore: null,
+    technicalHealthFindings: [],
+    lighthouse: { performance: null, accessibility: null, bestPractices: null, seo: null },
+    technologyStack: [],
+    measurementStatus: {
+      crawl: false,
+      mobile: false,
+      seo: false,
+      accessibility: false,
+      lighthouse: false,
+      techDetection: false,
+    },
+    contactEvidence: {
+      phones: input.phone ? [input.phone] : [],
+      emails: [],
+      address: input.address,
+      hours: null,
+    },
+    metaDescription: null,
+    services: [],
+    testimonials: [],
+    certifications: [],
+    team: [],
+    faqEvidence: [],
+    reviews: undefined,
+    gallery: [],
+    menu: [],
   };
 }

@@ -51,7 +51,8 @@ export type DomainEventType =
 
 export interface MissionStartedPayload {
   businessName: string;
-  websiteUrl: string;
+  /** Null for a confirmed no-website mission (no-website evidence gate). */
+  websiteUrl: string | null;
 }
 
 /**

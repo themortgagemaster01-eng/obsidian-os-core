@@ -39,7 +39,8 @@ type TypedClient = SupabaseClient<Database>;
 
 export interface ProposalContent {
   businessName: string;
-  websiteUrl: string;
+  /** Null for a confirmed no-website business — see assembleNewBuildProposalContent. */
+  websiteUrl: string | null;
   /** Relative path — this demo is only ever opened by the founder inside the app in Phase 8; the existing preview route sits behind the app's own auth middleware (see docs/PHASE_8_PROSPECT_TO_APPROVAL_AUDIT.md §A5/§H) — a real, disclosed, deliberately out-of-scope limitation for this phase, not solved here. */
   demoUrl: string;
   generatedAt: string;
@@ -81,6 +82,57 @@ export function assembleProposalContent(input: AssembleProposalContentInput): Pr
     valueProposition: [input.report.executiveConclusion, input.report.businessOpportunity.potentialBusinessValue]
       .filter((s) => s && s.trim().length > 0)
       .join(" "),
+    proposedNextStep: PROPOSED_NEXT_STEP,
+    qaSummary: {
+      overallVerdict: input.qaReport.overallVerdict,
+      passedCategories,
+      totalCategories: categories.length,
+    },
+  };
+}
+
+export interface AssembleNewBuildProposalContentInput {
+  businessName: string;
+  missionId: string;
+  qaReport: DesignQaReport;
+  /** buildBusinessIntelligenceProfile's own output — a no-website mission always originates from a promoted lead, so this is never null in practice, but kept optional for the same honesty discipline assembleProposalContent already uses. */
+  businessIntelligence: { opportunityReasons: string[] } | null;
+}
+
+/**
+ * assembleNewBuildProposalContent — the no-website counterpart to
+ * assembleProposalContent (Robert's locked spec, §9): "Distinguish: Existing
+ * website → redesign/improve the existing site. No website → create a
+ * polished first website based on verified public business information."
+ *
+ * Deliberately a separate, small composer rather than a branch inside
+ * assembleProposalContent — a no-website business has no OpportunityReport
+ * to draw from (there is no website to score; running
+ * computeOpportunityScore/assembleOpportunityReport against an
+ * all-unmeasurable NormalizedAnalysis produces honest but wrongly-framed
+ * "this analysis wasn't able to fully assess this business's website" copy,
+ * which reads as a failed assessment attempt rather than the true state —
+ * there was never a website to assess). Same `ProposalContent` output shape
+ * as the existing-website path, so every downstream consumer (the Founder
+ * Review panel, email-draft-service.ts) needs no new branching beyond
+ * checking `websiteUrl === null`.
+ */
+export function assembleNewBuildProposalContent(input: AssembleNewBuildProposalContentInput): ProposalContent {
+  const categories = Object.values(input.qaReport.categories);
+  const passedCategories = categories.filter((c) => c.deterministic.verdict === "PASS").length;
+
+  return {
+    businessName: input.businessName,
+    websiteUrl: null,
+    demoUrl: `/missions/${input.missionId}/preview`,
+    generatedAt: new Date().toISOString(),
+    currentWebsiteObservations: [
+      "This business does not currently have a website — there is nothing to redesign, so this proposal presents a concept for its first website instead.",
+    ],
+    whyQualified: input.businessIntelligence?.opportunityReasons ?? [],
+    keyOpportunities: [],
+    valueProposition:
+      "This business has no online presence today. A polished, professional first website is a strong opportunity to establish credibility and start capturing customers who are already searching for what it offers.",
     proposedNextStep: PROPOSED_NEXT_STEP,
     qaSummary: {
       overallVerdict: input.qaReport.overallVerdict,
@@ -133,15 +185,6 @@ export async function createProposal(deps: ProposalServiceDeps, missionId: strin
     throw new Error(`Mission ${missionId} is at state "${mission.state}", not "qa" — proposal assembly requires a completed Design QA run first.`);
   }
 
-  const analysis = await deps.websiteAnalysisRepository.findLatestByMission(deps.client, missionId);
-  if (!analysis || analysis.status !== "complete") {
-    throw new Error(`Mission ${missionId} has no completed website analysis — cannot assemble an OpportunityReport without it.`);
-  }
-  const normalized = normalizedAnalysisFromRow(analysis, mission.website_url);
-  const insights = generateInsights(normalized);
-  const scoreResult = computeOpportunityScore(normalized);
-  const report = assembleOpportunityReport(normalized, insights, scoreResult);
-
   const websiteDesign = await deps.websiteDesignRepository.findLatestByMission(deps.client, missionId);
   if (!websiteDesign || !websiteDesign.qa_result) {
     throw new Error(`Mission ${missionId} has no persisted Design QA result — cannot assemble a proposal without it.`);
@@ -150,15 +193,40 @@ export async function createProposal(deps: ProposalServiceDeps, missionId: strin
 
   const lead = await deps.leadRepository.findByMission(deps.client, missionId);
   const businessIntelligence = lead ? buildBusinessIntelligenceProfile(lead) : null;
+  const businessIntelligenceInput = businessIntelligence ? { opportunityReasons: businessIntelligence.opportunityReasons } : null;
 
-  const content = assembleProposalContent({
-    businessName: mission.business_name,
-    websiteUrl: mission.website_url,
-    missionId,
-    report,
-    qaReport,
-    businessIntelligence: businessIntelligence ? { opportunityReasons: businessIntelligence.opportunityReasons } : null,
-  });
+  // No-website path (Robert's locked spec, §9): a confirmed no-website
+  // mission never has a website_analyses row (§5 — nothing was ever
+  // crawled), so there is no OpportunityReport to build here — a separate,
+  // honestly-framed composer is used instead of computeOpportunityScore/
+  // assembleOpportunityReport against an all-unmeasurable analysis.
+  let content: ProposalContent;
+  if (mission.website_url === null) {
+    content = assembleNewBuildProposalContent({
+      businessName: mission.business_name,
+      missionId,
+      qaReport,
+      businessIntelligence: businessIntelligenceInput,
+    });
+  } else {
+    const analysis = await deps.websiteAnalysisRepository.findLatestByMission(deps.client, missionId);
+    if (!analysis || analysis.status !== "complete") {
+      throw new Error(`Mission ${missionId} has no completed website analysis — cannot assemble an OpportunityReport without it.`);
+    }
+    const normalized = normalizedAnalysisFromRow(analysis, mission.website_url);
+    const insights = generateInsights(normalized);
+    const scoreResult = computeOpportunityScore(normalized);
+    const report = assembleOpportunityReport(normalized, insights, scoreResult);
+
+    content = assembleProposalContent({
+      businessName: mission.business_name,
+      websiteUrl: mission.website_url,
+      missionId,
+      report,
+      qaReport,
+      businessIntelligence: businessIntelligenceInput,
+    });
+  }
 
   const existing = await deps.proposalRepository.findByMission(deps.client, missionId);
   const proposal = existing

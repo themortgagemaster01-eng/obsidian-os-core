@@ -1,7 +1,12 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { assembleProposalContent, type AssembleProposalContentInput } from "@/lib/services/proposal-service";
+import {
+  assembleProposalContent,
+  assembleNewBuildProposalContent,
+  type AssembleProposalContentInput,
+  type AssembleNewBuildProposalContentInput,
+} from "@/lib/services/proposal-service";
 import type { OpportunityReport } from "@/lib/services/opportunity-report-service";
 import type { DesignQaReport, QaCategoryId, QaCategoryReport } from "@/lib/services/design-qa-service";
 
@@ -135,6 +140,54 @@ describe("proposal-service: assembleProposalContent", () => {
 
   test("proposedNextStep is a fixed, business-agnostic instruction, never a fabricated claim about this specific business", () => {
     const content = assembleProposalContent(buildInput());
+    assert.equal(content.proposedNextStep, "Review the attached demo and QA results, then reply to schedule a short call to discuss next steps.");
+  });
+});
+
+function buildNewBuildInput(overrides: Partial<AssembleNewBuildProposalContentInput> = {}): AssembleNewBuildProposalContentInput {
+  return {
+    businessName: "Skyline Towing And Auto Repair",
+    missionId: "mission-1",
+    qaReport: buildQaReport(),
+    businessIntelligence: null,
+    ...overrides,
+  };
+}
+
+describe("proposal-service: assembleNewBuildProposalContent (Robert's locked spec, §9 — no-website framing)", () => {
+  test("websiteUrl is null — never a placeholder URL for a business that has none", () => {
+    const content = assembleNewBuildProposalContent(buildNewBuildInput());
+    assert.equal(content.websiteUrl, null);
+  });
+
+  test("demoUrl and qaSummary are assembled exactly like the existing-website path — the same renderer, the same QA result, no second system", () => {
+    const content = assembleNewBuildProposalContent(buildNewBuildInput({ qaReport: buildQaReport({ motion: "WARN" }) }));
+    assert.equal(content.demoUrl, "/missions/mission-1/preview");
+    assert.equal(content.qaSummary.passedCategories, 11);
+    assert.equal(content.qaSummary.totalCategories, 12);
+  });
+
+  test("currentWebsiteObservations and valueProposition never say 'current website' — framed as a new-site opportunity, not a redesign of something that exists", () => {
+    const content = assembleNewBuildProposalContent(buildNewBuildInput());
+    const allText = [...content.currentWebsiteObservations, content.valueProposition].join(" ").toLowerCase();
+    assert.ok(!allText.includes("current website"), "must never reference a 'current website' that doesn't exist");
+    assert.ok(allText.includes("does not currently have a website") || allText.includes("no online presence"));
+  });
+
+  test("keyOpportunities is honestly empty — there is no crawl-derived Insight to recommend fixing", () => {
+    const content = assembleNewBuildProposalContent(buildNewBuildInput());
+    assert.deepEqual(content.keyOpportunities, []);
+  });
+
+  test("whyQualified reuses the real lead-layer qualification evidence when this mission came from a promoted lead, exactly like the existing-website path", () => {
+    const content = assembleNewBuildProposalContent(
+      buildNewBuildInput({ businessIntelligence: { opportunityReasons: ["No website found for this business at all — the opportunity here is a brand-new site, not a redesign."] } })
+    );
+    assert.deepEqual(content.whyQualified, ["No website found for this business at all — the opportunity here is a brand-new site, not a redesign."]);
+  });
+
+  test("proposedNextStep is the same fixed instruction as the existing-website path — no separate sales workflow", () => {
+    const content = assembleNewBuildProposalContent(buildNewBuildInput());
     assert.equal(content.proposedNextStep, "Review the attached demo and QA results, then reply to schedule a short call to discuss next steps.");
   });
 });

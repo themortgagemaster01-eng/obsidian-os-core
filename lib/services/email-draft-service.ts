@@ -28,21 +28,37 @@ export interface EmailDraftContent {
   body: string;
 }
 
-/** Pure — no I/O. Independently testable against a hand-built ProposalContent fixture. */
+/**
+ * Pure — no I/O. Independently testable against a hand-built ProposalContent
+ * fixture. Branches on `content.websiteUrl === null` (Robert's locked spec,
+ * §9) — a confirmed no-website prospect is framed as a new-site opportunity,
+ * never "I took a look at your current website…" language, which would be
+ * false for a business that has never had one.
+ */
 export function assembleEmailDraft(content: ProposalContent): EmailDraftContent {
+  const isNewBuild = content.websiteUrl === null;
   const topOpportunities = content.keyOpportunities.slice(0, 2);
-  const opportunityLines = topOpportunities.length > 0
-    ? topOpportunities.map((o) => `- ${o.title}: ${o.detail}`).join("\n")
-    : "- A few concrete opportunities to improve the current site's performance and presentation.";
+  const opportunityLines =
+    topOpportunities.length > 0
+      ? topOpportunities.map((o) => `- ${o.title}: ${o.detail}`).join("\n")
+      : isNewBuild
+        ? "- A modern, professional first website built around this business's own real, verified information."
+        : "- A few concrete opportunities to improve the current site's performance and presentation.";
 
-  const subject = `A quick redesign concept for ${content.businessName}`;
+  const subject = isNewBuild
+    ? `A first website concept for ${content.businessName}`
+    : `A quick redesign concept for ${content.businessName}`;
+
+  const introLine = isNewBuild
+    ? `I noticed ${content.businessName} doesn't have a website yet, so I put together a concept for what a first site could look like.`
+    : `I took a look at ${content.businessName}'s current website (${content.websiteUrl}) and put together a redesign concept along with a short review of what's working well and what could be improved.`;
 
   const body = [
     `Hi there,`,
     ``,
-    `I took a look at ${content.businessName}'s current website (${content.websiteUrl}) and put together a redesign concept along with a short review of what's working well and what could be improved.`,
+    introLine,
     ``,
-    `A few things that stood out:`,
+    isNewBuild ? `A few things this concept focuses on:` : `A few things that stood out:`,
     opportunityLines,
     ``,
     `You can view the concept here: ${content.demoUrl}`,

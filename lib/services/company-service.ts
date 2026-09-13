@@ -35,18 +35,23 @@ export function normalizeWebsiteUrl(rawUrl: string): string {
 export interface FindOrCreateCompanyInput {
   organizationId: string;
   businessName: string;
-  websiteUrl: string;
+  /** Null for a confirmed no-website business (no-website evidence gate) — dedup then falls back to business_name, the same pattern lib/services/manual-lead-service.ts's checkManualLeadDuplicate already established. */
+  websiteUrl: string | null;
   industry?: string;
   businessCategory?: string;
 }
 
 /**
- * Looks up a company by (organization_id, normalized website_url); creates
- * it if missing, otherwise returns the existing record. When an existing
- * company is found and `missionId` is supplied (a new mission is linking
- * to it), bumps `total_missions_count` and `last_mission_id` — cheap and
- * obviously correct to do here, since this is the one call site that knows
- * a mission just started referencing this company.
+ * Looks up a company by (organization_id, normalized website_url) when a
+ * website exists; a confirmed no-website business has no website_url to key
+ * on at all, so it falls back to a case-insensitive business_name match
+ * within the org instead — the existing manual-lead dedup pattern, not a
+ * new identity system (Robert's locked spec, §4). Creates the company if
+ * missing, otherwise returns the existing record. When an existing company
+ * is found and `missionId` is supplied (a new mission is linking to it),
+ * bumps `total_missions_count` and `last_mission_id` — cheap and obviously
+ * correct to do here, since this is the one call site that knows a mission
+ * just started referencing this company.
  *
  * This is the one piece of real Sprint 2 integration wiring: without it,
  * the Memory Vault is a dead table nothing ever writes to. Wired into
@@ -57,13 +62,11 @@ export async function findOrCreateCompany(
   input: FindOrCreateCompanyInput,
   missionId?: string
 ): Promise<CompanyRow> {
-  const normalizedUrl = normalizeWebsiteUrl(input.websiteUrl);
+  const normalizedUrl = input.websiteUrl ? normalizeWebsiteUrl(input.websiteUrl) : null;
 
-  const existing = await deps.companyRepository.findByOrgAndUrl(
-    deps.client,
-    input.organizationId,
-    normalizedUrl
-  );
+  const existing = normalizedUrl
+    ? await deps.companyRepository.findByOrgAndUrl(deps.client, input.organizationId, normalizedUrl)
+    : await deps.companyRepository.findByOrgAndBusinessName(deps.client, input.organizationId, input.businessName);
 
   if (existing) {
     if (!missionId) return existing;

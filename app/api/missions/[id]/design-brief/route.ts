@@ -24,8 +24,18 @@ import {
  * mission had already reached "qa", silently burning a real LLM call and
  * writing an orphaned design_briefs row with no relationship to the
  * mission's actual, already-further-along state.
+ *
+ * `discovered` was added for the no-website evidence gate (Robert's locked
+ * spec, §3/§5): a confirmed no-website mission never goes through
+ * runAnalysis (nothing to crawl) and so is still at `discovered` when a
+ * founder is ready to generate its Design Brief — runDesignBrief itself
+ * does both the discovered -> analyzing and analyzing -> researching hops
+ * in that case. This is safe for the existing-website path too: attempting
+ * a Design Brief from `discovered` still requires a completed website
+ * analysis inside runDesignBrief, which fails with its own clear,
+ * pre-existing error message exactly as it always has.
  */
-const VALID_DESIGN_BRIEF_TRIGGER_STATES: readonly MissionState[] = ["analyzing", "researching", "reviewing"];
+const VALID_DESIGN_BRIEF_TRIGGER_STATES: readonly MissionState[] = ["discovered", "analyzing", "researching", "reviewing"];
 
 interface RouteParams {
   params: { id: string };

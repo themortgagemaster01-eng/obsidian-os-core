@@ -23,15 +23,22 @@ export function MissionHeader({
         <h1 className="truncate text-2xl font-semibold tracking-tight text-foreground">
           {mission.business_name}
         </h1>
-        <a
-          href={mission.website_url}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-1.5 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors duration-200 ease-in-out hover:text-foreground"
-        >
-          <Globe className="h-3.5 w-3.5" />
-          {mission.website_url}
-        </a>
+        {mission.website_url ? (
+          <a
+            href={mission.website_url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1.5 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors duration-200 ease-in-out hover:text-foreground"
+          >
+            <Globe className="h-3.5 w-3.5" />
+            {mission.website_url}
+          </a>
+        ) : (
+          <p className="mt-1.5 inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Globe className="h-3.5 w-3.5" />
+            No existing website — new build
+          </p>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-4">
         {screenshotUrl && (

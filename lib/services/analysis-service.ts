@@ -343,6 +343,20 @@ export async function runAnalysis(
       await transitionMissionState(deps.workflowDeps, mission.id, "analyzing");
     }
 
+    // No-website evidence gate (Robert's locked spec, §5): a confirmed
+    // no-website mission has nothing to crawl at all — runAnalysis is never
+    // meant to be invoked for one (lib/services/mission-batch-service.ts and
+    // the manual "Run Website Analysis" trigger both skip this call
+    // entirely for a no-website mission; app/missions/[id]/page.tsx hides
+    // the button). This is a defensive last-line check, not a new code
+    // path an existing-website mission can ever hit — it also narrows
+    // `mission.website_url` to a real string for the adapters below, which
+    // genuinely require one.
+    if (!mission.website_url) {
+      throw new Error(
+        `Mission ${mission.id} has no website_url — this is a confirmed no-website mission and has nothing to crawl. runAnalysis should never be called for one.`
+      );
+    }
     const websiteUrl = mission.website_url;
 
     const uploadScreenshot: ScreenshotUploader = async (fileName, buffer) => {

@@ -3,13 +3,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import type { AnalysisCategory, NormalizedAnalysis } from "@/lib/services/analysis-types";
 import type { ContactInfo, ContentSection, ReviewsSummary, GalleryImage, MenuCategory } from "@/lib/adapters/types";
-import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
+import { normalizedAnalysisFromRow, normalizedAnalysisFromDiscoveryFacts } from "@/lib/services/analysis-types";
 import { normalizeCrawlRawResult } from "@/lib/adapters/types";
 import { generateInsights, type Insight } from "@/lib/services/insight-service";
 import type { LayoutFamily } from "@/lib/design-intelligence/layout-rules";
 import { resolveIndustryBucket, selectReferenceDirections, type IndustryBucket } from "@/lib/design-references/reference-library";
 import { generateDesignIntelligence, type DesignMemory } from "@/lib/services/design-intelligence-service";
 import { verifyBusinessIdentity } from "@/lib/services/identity-verification-service";
+import { evaluateNoWebsiteEvidence } from "@/lib/services/no-website-evidence-gate";
 import type { LlmProvider } from "@/lib/llm/provider";
 import { createAnthropicProviderFromEnv } from "@/lib/llm/anthropic-provider";
 import { MetricsLlmProvider } from "@/lib/llm/metrics";
@@ -69,7 +70,8 @@ export interface DesignBriefCitation {
 export interface DesignBrief {
   missionId: string;
   businessName: string;
-  websiteUrl: string;
+  /** Null for a confirmed no-website business — never a placeholder URL. */
+  websiteUrl: string | null;
   /** As recorded on the company record — may be null; never guessed. */
   industry: string | null;
   industryBucket: IndustryBucket;
@@ -209,6 +211,51 @@ export function buildCitations(analysis: NormalizedAnalysis, insights: Insight[]
       category: c.category,
       statement: `${CATEGORY_LABEL[c.category]} measured ${c.score}/100 — no significant issues found.`,
     }));
+}
+
+/**
+ * buildNoWebsiteCitations — the no-website counterpart to buildCitations
+ * (Robert's locked spec, §6): "the source should explicitly communicate
+ * the verified fact that the business has no website and the
+ * business-specific evidence that was actually verified." A confirmed
+ * no-website mission never reaches generateInsights/buildCitations at all
+ * (there is no crawl-derived Insight or measured score to cite), so this is
+ * a genuinely separate, small citation source — not a modification of
+ * buildCitations' own crawl/Insight-based logic, which stays exactly as it
+ * is for the existing-website path.
+ *
+ * Always returns at least one citation (the no-website fact itself is
+ * always real and always citable), and by construction is only ever called
+ * after the no-website evidence gate has already confirmed a verified phone
+ * and/or address exists — so §6's "never let an empty evidence set reach
+ * generation" is satisfied by the gate that runs before this, not by this
+ * function guessing. `technicalHealth` is reused as the closest existing
+ * AnalysisCategory label (a pure display concern — design-brief-view.tsx's
+ * CATEGORY_LABEL badge — never a scoring input; opportunity-scoring-
+ * service.ts's five-category blend is never invoked for a no-website
+ * mission, so this label choice cannot skew any score).
+ */
+export function buildNoWebsiteCitations(analysis: NormalizedAnalysis): DesignBriefCitation[] {
+  const citations: DesignBriefCitation[] = [
+    {
+      category: "technicalHealth",
+      statement:
+        "This business does not currently have a website — confirmed during business discovery. The opportunity here is a brand-new first website, not a redesign.",
+    },
+  ];
+  if (analysis.contactEvidence.phones.length > 0) {
+    citations.push({
+      category: "technicalHealth",
+      statement: `Verified business phone number on record: ${analysis.contactEvidence.phones[0]}.`,
+    });
+  }
+  if (analysis.contactEvidence.address) {
+    citations.push({
+      category: "technicalHealth",
+      statement: `Verified business address on record: ${analysis.contactEvidence.address}.`,
+    });
+  }
+  return citations;
 }
 
 /** The business's single most pressing measured gap, or null if nothing was measurable — passed to Design Intelligence as a fact, never computed or guessed by it. */
@@ -392,133 +439,199 @@ export async function runDesignBrief(
   });
 
   try {
-    const analysisRow = await deps.websiteAnalysisRepository.findLatestByMission(deps.client, mission.id);
-    if (!analysisRow || analysisRow.status !== "complete") {
-      throw new Error(
-        "No completed website analysis found for this mission — the Design Brief step requires the Analysis Engine to have completed first."
-      );
-    }
-
+    const isNoWebsiteMission = mission.website_url === null;
     const company = mission.company_id
       ? await deps.companyRepository.findById(deps.client, mission.company_id)
       : null;
 
-    let normalized = normalizedAnalysisFromRow(analysisRow, mission.website_url);
+    let normalized: NormalizedAnalysis;
+    let citedInsights: DesignBriefCitation[];
 
-    // ===================================================================
-    // Phase 14 (docs/PHASE_14_IMPLEMENTATION_PLAN.md §1/§7) — the identity
-    // verification gate. Runs BEFORE the analyzing -> researching
-    // transition (moved here from directly after the "running" update
-    // above, deliberately — a FAILED verdict must mean this mission never
-    // even reaches `researching`) and before any citedInsights/LLM work.
-    // A completed website analysis is required for both this gate and the
-    // rest of the function, so it stays inside the same try/catch as
-    // everything else — an identity-check failure (a thrown error, not an
-    // identity_verifications "failed" verdict) degrades exactly like any
-    // other failure in this function already does.
-    // ===================================================================
-    const lead = await deps.leadRepository.findByMission(deps.client, mission.id);
-    const rawCrawl = normalizeCrawlRawResult(analysisRow.crawl_result);
-    const identityResult = verifyBusinessIdentity({
-      businessName: mission.business_name,
-      expectedLocation: lead ? { raw: lead.location, countryHint: null } : null,
-      osmPhone: lead?.discovery_phone ?? null,
-      osmAddress: lead?.discovery_address ?? null,
-      crawl: {
-        requestedUrl: rawCrawl.requestedUrl,
-        finalUrl: rawCrawl.finalUrl,
-        title: rawCrawl.title,
-        metaDescription: rawCrawl.metaDescription,
-        jsonLdName: rawCrawl.jsonLdName ?? null,
-        jsonLdType: rawCrawl.jsonLdType ?? null,
-        contact: rawCrawl.contact,
-        services: rawCrawl.services,
-        team: rawCrawl.team,
-        certifications: rawCrawl.certifications,
-      },
-    });
+    if (isNoWebsiteMission) {
+      // ===================================================================
+      // No-website path (Robert's locked spec, §1-§3, §6) — a confirmed
+      // no-website business skips crawling entirely and is evaluated
+      // against the deterministic no-website evidence gate instead. This
+      // is the authoritative, last-line gate: promoteLeadToMission already
+      // checked it once before a mission could even be created, but this
+      // is the actual point right before any LLM call, which is what the
+      // spec requires the gate to guard.
+      // ===================================================================
+      const lead = await deps.leadRepository.findByMission(deps.client, mission.id);
+      if (!lead) {
+        throw new Error(
+          `No originating lead found for mission ${mission.id} — a no-website mission's evidence comes entirely from its originating lead's discovery facts, and none exists.`
+        );
+      }
 
-    await deps.identityVerificationRepository.insert(deps.client, {
-      mission_id: mission.id,
-      organization_id: mission.organization_id,
-      verdict: identityResult.verdict,
-      signals: identityResult.signals as unknown as Json,
-      suppressed_evidence_categories: identityResult.suppressedEvidenceCategories,
-    });
-
-    if (identityResult.verdict === "failed") {
-      // IDENTITY_FAILED: rejectMission() (the existing, unmodified
-      // any-non-terminal-state -> "rejected" side-transition) instead of
-      // transitionMissionState(..., "researching") — citedInsights,
-      // generateDesignIntelligence, Website Generation, and QA are never
-      // invoked for this mission at all.
-      const reason = `Identity verification failed: ${identityResult.signals
-        .filter((s) => s.verdict === "mismatch")
-        .map((s) => s.detail)
-        .join(" ")}`;
-      await rejectMission(deps.workflowDeps, mission.id, reason);
-      const failed = await deps.designBriefRepository.update(deps.client, designBriefId, {
-        status: "failed",
-        completed_at: new Date().toISOString(),
-        error_message: reason,
+      const evidence = evaluateNoWebsiteEvidence({
+        businessName: mission.business_name,
+        phone: lead.discovery_phone,
+        address: lead.discovery_address,
       });
-      await deps.eventBus.publish({
-        type: "DesignBriefFailed",
-        missionId: mission.id,
-        organizationId: mission.organization_id,
-        payload: { errorMessage: reason },
+
+      if (evidence.verdict !== "CONFIRMED") {
+        // Never generate a customer-facing preview from insufficient
+        // evidence — reject the mission the same way an IDENTITY_FAILED
+        // verdict does (rejectMission(), never a fabricated preview).
+        const reason = `Insufficient business evidence to safely build a preview yet (${evidence.verdict}) — ${evidence.reason}`;
+        await rejectMission(deps.workflowDeps, mission.id, reason);
+        const failed = await deps.designBriefRepository.update(deps.client, designBriefId, {
+          status: "failed",
+          completed_at: new Date().toISOString(),
+          error_message: reason,
+        });
+        await deps.eventBus.publish({
+          type: "DesignBriefFailed",
+          missionId: mission.id,
+          organizationId: mission.organization_id,
+          payload: { errorMessage: reason },
+        });
+        return failed;
+      }
+
+      normalized = normalizedAnalysisFromDiscoveryFacts({
+        phone: lead.discovery_phone,
+        address: lead.discovery_address,
       });
-      return failed;
+      citedInsights = buildNoWebsiteCitations(normalized);
+
+      // A no-website mission never went through runAnalysis (§5 — nothing
+      // to crawl), so it's still sitting at `discovered`. This step does
+      // both hops runAnalysis would otherwise have done for an
+      // existing-website mission (discovered -> analyzing) plus this
+      // step's own (analyzing -> researching) — a re-run on a mission
+      // already past `researching` shouldn't attempt either again.
+      if (mission.state === "discovered") {
+        await transitionMissionState(deps.workflowDeps, mission.id, "analyzing");
+        await transitionMissionState(deps.workflowDeps, mission.id, "researching");
+      }
+    } else {
+      const analysisRow = await deps.websiteAnalysisRepository.findLatestByMission(deps.client, mission.id);
+      if (!analysisRow || analysisRow.status !== "complete") {
+        throw new Error(
+          "No completed website analysis found for this mission — the Design Brief step requires the Analysis Engine to have completed first."
+        );
+      }
+
+      normalized = normalizedAnalysisFromRow(analysisRow, mission.website_url);
+
+      // ===================================================================
+      // Phase 14 (docs/PHASE_14_IMPLEMENTATION_PLAN.md §1/§7) — the identity
+      // verification gate. Runs BEFORE the analyzing -> researching
+      // transition (moved here from directly after the "running" update
+      // above, deliberately — a FAILED verdict must mean this mission never
+      // even reaches `researching`) and before any citedInsights/LLM work.
+      // A completed website analysis is required for both this gate and the
+      // rest of the function, so it stays inside the same try/catch as
+      // everything else — an identity-check failure (a thrown error, not an
+      // identity_verifications "failed" verdict) degrades exactly like any
+      // other failure in this function already does.
+      // ===================================================================
+      const lead = await deps.leadRepository.findByMission(deps.client, mission.id);
+      const rawCrawl = normalizeCrawlRawResult(analysisRow.crawl_result);
+      const identityResult = verifyBusinessIdentity({
+        businessName: mission.business_name,
+        expectedLocation: lead ? { raw: lead.location, countryHint: null } : null,
+        osmPhone: lead?.discovery_phone ?? null,
+        osmAddress: lead?.discovery_address ?? null,
+        crawl: {
+          requestedUrl: rawCrawl.requestedUrl,
+          finalUrl: rawCrawl.finalUrl,
+          title: rawCrawl.title,
+          metaDescription: rawCrawl.metaDescription,
+          jsonLdName: rawCrawl.jsonLdName ?? null,
+          jsonLdType: rawCrawl.jsonLdType ?? null,
+          contact: rawCrawl.contact,
+          services: rawCrawl.services,
+          team: rawCrawl.team,
+          certifications: rawCrawl.certifications,
+        },
+      });
+
+      await deps.identityVerificationRepository.insert(deps.client, {
+        mission_id: mission.id,
+        organization_id: mission.organization_id,
+        verdict: identityResult.verdict,
+        signals: identityResult.signals as unknown as Json,
+        suppressed_evidence_categories: identityResult.suppressedEvidenceCategories,
+      });
+
+      if (identityResult.verdict === "failed") {
+        // IDENTITY_FAILED: rejectMission() (the existing, unmodified
+        // any-non-terminal-state -> "rejected" side-transition) instead of
+        // transitionMissionState(..., "researching") — citedInsights,
+        // generateDesignIntelligence, Website Generation, and QA are never
+        // invoked for this mission at all.
+        const reason = `Identity verification failed: ${identityResult.signals
+          .filter((s) => s.verdict === "mismatch")
+          .map((s) => s.detail)
+          .join(" ")}`;
+        await rejectMission(deps.workflowDeps, mission.id, reason);
+        const failed = await deps.designBriefRepository.update(deps.client, designBriefId, {
+          status: "failed",
+          completed_at: new Date().toISOString(),
+          error_message: reason,
+        });
+        await deps.eventBus.publish({
+          type: "DesignBriefFailed",
+          missionId: mission.id,
+          organizationId: mission.organization_id,
+          payload: { errorMessage: reason },
+        });
+        return failed;
+      }
+
+      if (identityResult.verdict === "uncertain" && identityResult.suppressedEvidenceCategories.length > 0) {
+        // "Don't let questionable evidence into the generated proposal" — the
+        // specific NormalizedAnalysis fields the identity check itself
+        // flagged are cleared to the exact same honest-empty shape this
+        // codebase already uses for a business that genuinely has none.
+        // generateInsights/buildCitations/design-intelligence-service.ts are
+        // never modified and have no awareness this happened — they simply
+        // receive an honestly-thinner `normalized` than they otherwise would.
+        normalized = {
+          ...normalized,
+          gallery: identityResult.suppressedEvidenceCategories.includes("gallery") ? [] : normalized.gallery,
+          contactEvidence: identityResult.suppressedEvidenceCategories.includes("contactEvidence")
+            ? { phones: [], emails: [], address: null, hours: null }
+            : normalized.contactEvidence,
+          // Identity-verification suppression gap fix (2026-09-12, confirmed
+          // live on Video Game Plus): services/team/certifications can now
+          // also be suppressed, via the new content_ownership signal only
+          // (a domain not relating to the business name is never, by
+          // itself, grounds to suppress anything — see
+          // resolveContentOwnershipSignal's own doc comment).
+          services: identityResult.suppressedEvidenceCategories.includes("services") ? [] : normalized.services,
+          team: identityResult.suppressedEvidenceCategories.includes("team") ? [] : normalized.team,
+          certifications: identityResult.suppressedEvidenceCategories.includes("certifications")
+            ? []
+            : normalized.certifications,
+        };
+      }
+
+      // Only advance analyzing -> researching for a mission that just passed
+      // (confirmed/uncertain) the identity gate; a re-run on a mission
+      // already past `researching` shouldn't attempt a second, now-invalid
+      // transition.
+      if (mission.state === "analyzing") {
+        await transitionMissionState(deps.workflowDeps, mission.id, "researching");
+      }
+
+      const insights = generateInsights(normalized);
+
+      // --- Deterministic fact-gathering (this file's job, §2's "Analysis
+      // only gathers facts" principle applied to what Design Intelligence
+      // consumes) ---
+      citedInsights = buildCitations(normalized, insights);
+      if (citedInsights.length === 0) {
+        throw new Error(
+          "Cannot build a Design Brief with no citable Insight or Normalized Analysis finding — " +
+            "a brief that can't point to what it's addressing shouldn't generate anything (docs/SPRINT_4_DESIGN_REVIEW.md §10)."
+        );
+      }
     }
 
-    if (identityResult.verdict === "uncertain" && identityResult.suppressedEvidenceCategories.length > 0) {
-      // "Don't let questionable evidence into the generated proposal" — the
-      // specific NormalizedAnalysis fields the identity check itself
-      // flagged are cleared to the exact same honest-empty shape this
-      // codebase already uses for a business that genuinely has none.
-      // generateInsights/buildCitations/design-intelligence-service.ts are
-      // never modified and have no awareness this happened — they simply
-      // receive an honestly-thinner `normalized` than they otherwise would.
-      normalized = {
-        ...normalized,
-        gallery: identityResult.suppressedEvidenceCategories.includes("gallery") ? [] : normalized.gallery,
-        contactEvidence: identityResult.suppressedEvidenceCategories.includes("contactEvidence")
-          ? { phones: [], emails: [], address: null, hours: null }
-          : normalized.contactEvidence,
-        // Identity-verification suppression gap fix (2026-09-12, confirmed
-        // live on Video Game Plus): services/team/certifications can now
-        // also be suppressed, via the new content_ownership signal only
-        // (a domain not relating to the business name is never, by
-        // itself, grounds to suppress anything — see
-        // resolveContentOwnershipSignal's own doc comment).
-        services: identityResult.suppressedEvidenceCategories.includes("services") ? [] : normalized.services,
-        team: identityResult.suppressedEvidenceCategories.includes("team") ? [] : normalized.team,
-        certifications: identityResult.suppressedEvidenceCategories.includes("certifications")
-          ? []
-          : normalized.certifications,
-      };
-    }
-
-    // Only advance analyzing -> researching for a mission that just passed
-    // (confirmed/uncertain) the identity gate; a re-run on a mission
-    // already past `researching` shouldn't attempt a second, now-invalid
-    // transition.
-    if (mission.state === "analyzing") {
-      await transitionMissionState(deps.workflowDeps, mission.id, "researching");
-    }
-
-    const insights = generateInsights(normalized);
-
-    // --- Deterministic fact-gathering (this file's job, §2's "Analysis
-    // only gathers facts" principle applied to what Design Intelligence
-    // consumes) ---
-    const citedInsights = buildCitations(normalized, insights);
-    if (citedInsights.length === 0) {
-      throw new Error(
-        "Cannot build a Design Brief with no citable Insight or Normalized Analysis finding — " +
-          "a brief that can't point to what it's addressing shouldn't generate anything (docs/SPRINT_4_DESIGN_REVIEW.md §10)."
-      );
-    }
     const industryBucket = resolveIndustryBucket(
       company?.industry ?? null,
       company?.business_category ?? null,
@@ -548,6 +661,7 @@ export async function runDesignBrief(
         faqEvidence: normalized.faqEvidence,
         reviews: normalized.reviews,
         gallery: normalized.gallery,
+        isNewBuild: isNoWebsiteMission,
       },
       // Real spend once a live key is configured — logged per run so cost
       // is visible in server logs rather than invisible until a bill
@@ -626,8 +740,10 @@ export async function runDesignBrief(
     // analyzing -> researching transition above — confirmed live: Station
     // Plaza Wine (Sep 10 2026) had already reached `reviewing` from its
     // first successful run; a second, successful regenerate still crashed
-    // here because this call was unconditional.
-    if (mission.state === "analyzing" || mission.state === "researching") {
+    // here because this call was unconditional. `discovered` is included
+    // for the no-website path, which never went through runAnalysis and so
+    // starts this function still at `discovered`, not `analyzing`.
+    if (mission.state === "discovered" || mission.state === "analyzing" || mission.state === "researching") {
       await transitionMissionState(deps.workflowDeps, mission.id, "reviewing");
     }
 

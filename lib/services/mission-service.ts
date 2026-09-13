@@ -15,7 +15,8 @@ export interface CreateMissionRequest {
   ownerId: string;
   organizationId: string;
   businessName: string;
-  websiteUrl: string;
+  /** Null for a confirmed no-website business (no-website evidence gate) — never an empty-string placeholder. */
+  websiteUrl: string | null;
   /** Phase 2: optional Memory Vault seeding from a promoted lead's own qualification evidence — see lib/services/lead-promotion-service.ts. */
   industry?: string;
   businessCategory?: string;

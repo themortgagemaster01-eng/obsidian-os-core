@@ -153,6 +153,26 @@ describe("design-intelligence-service: buildDesignIntelligencePrompt", () => {
   });
 });
 
+describe("design-intelligence-service: buildDesignIntelligencePrompt — isNewBuild source-aware framing (Robert's locked spec, §7)", () => {
+  test("isNewBuild:true prepends an explicit no-existing-site framing instruction the model must follow", () => {
+    const { userPrompt } = buildDesignIntelligencePrompt({ ...SAMPLE_INPUT, isNewBuild: true });
+    assert.match(userPrompt, /does not currently have a website/);
+    assert.match(userPrompt, /building a concept for its FIRST website from scratch/);
+    assert.match(userPrompt, /Never mention an "old site," "current site," "existing site,"/);
+  });
+
+  test("isNewBuild:false (existing-website path) has no such framing — unaffected by this addition", () => {
+    const { userPrompt } = buildDesignIntelligencePrompt(SAMPLE_INPUT);
+    assert.doesNotMatch(userPrompt, /does not currently have a website/);
+  });
+
+  test("isNewBuild:undefined (every existing call site) behaves identically to false — no regression", () => {
+    const withFlag = buildDesignIntelligencePrompt({ ...SAMPLE_INPUT, isNewBuild: false }).userPrompt;
+    const withoutFlag = buildDesignIntelligencePrompt(SAMPLE_INPUT).userPrompt;
+    assert.equal(withFlag, withoutFlag);
+  });
+});
+
 describe("design-intelligence-service: parseDesignIntelligenceResponse", () => {
   test("parses a clean, valid response", () => {
     const result = parseDesignIntelligenceResponse(validResponseJson());

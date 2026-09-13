@@ -140,8 +140,42 @@ describe("lead-promotion-service: promoteLeadToMission (CTO Phase 2 directive §
     await assert.rejects(() => promoteLeadToMission(deps, { leadId: "lead-404", ownerId: "user-1" }), /not found/);
   });
 
-  test("throws for a candidate lead with no captured website_url", async () => {
-    const deps = createFakeDeps(fakeLead({ website_url: null }));
-    await assert.rejects(() => promoteLeadToMission(deps, { leadId: "lead-1", ownerId: "user-1" }), /no website_url/);
+  describe("no-website evidence gate (Robert's locked spec, §1/§3)", () => {
+    test("throws for a no-website lead with no phone or address on record (UNCERTAIN) — never generates a customer-facing preview from name/category/town alone", async () => {
+      const deps = createFakeDeps(fakeLead({ website_url: null, discovery_phone: null, discovery_address: null }));
+      await assert.rejects(
+        () => promoteLeadToMission(deps, { leadId: "lead-1", ownerId: "user-1" }),
+        /does not clear the no-website evidence gate \(UNCERTAIN\)/
+      );
+      assert.equal(deps.createMissionCalls.length, 0);
+    });
+
+    test("succeeds (CONFIRMED) for a no-website lead with a verified phone number, even with no address", async () => {
+      const deps = createFakeDeps(fakeLead({ website_url: null, discovery_phone: "555-0100", discovery_address: null }));
+      const { mission } = await promoteLeadToMission(deps, { leadId: "lead-1", ownerId: "user-1" });
+      assert.equal(mission.id, "mission-1");
+      assert.equal(deps.createMissionCalls.length, 1);
+      assert.equal(deps.createMissionCalls[0].websiteUrl, null);
+    });
+
+    test("succeeds (CONFIRMED) for a no-website lead with a specific street address, even with no phone", async () => {
+      const deps = createFakeDeps(fakeLead({ website_url: null, discovery_phone: null, discovery_address: "123 Main St, Mahopac NY" }));
+      const { mission } = await promoteLeadToMission(deps, { leadId: "lead-1", ownerId: "user-1" });
+      assert.equal(deps.createMissionCalls.length, 1);
+      assert.equal(deps.createMissionCalls[0].websiteUrl, null);
+    });
+
+    test("real, currently-discovered no-website leads (Skyline Towing / Frasers Hardware / Keller William Realty Partners' actual evidence profile: name + category + town-level geocode only, no phone, no address) are correctly rejected, not fabricated around", async () => {
+      const deps = createFakeDeps(
+        fakeLead({
+          business_name: "Skyline Towing And Auto Repair",
+          website_url: null,
+          discovery_phone: null,
+          discovery_address: null,
+          location: "Mahopac, Mahopac Falls, Town of Carmel, Putnam County, New York, United States",
+        })
+      );
+      await assert.rejects(() => promoteLeadToMission(deps, { leadId: "lead-1", ownerId: "user-1" }), /UNCERTAIN/);
+    });
   });
 });

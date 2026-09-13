@@ -42,7 +42,7 @@ function MissionRowItem({ mission, hasPreview, needsReview }: MissionRowItemProp
         <p className="truncate font-serif text-xl font-medium text-foreground transition-colors duration-200 ease-in-out group-hover:text-foreground/75 sm:text-2xl">
           {mission.business_name}
         </p>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">{mission.website_url}</p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">{mission.website_url ?? "No existing website — new build"}</p>
         {track && (
           <div className="mt-2.5">
             <StageTracker steps={track} />

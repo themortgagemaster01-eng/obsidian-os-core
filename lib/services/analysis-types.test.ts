@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizedAnalysisFromRow } from "@/lib/services/analysis-types";
+import { normalizedAnalysisFromRow, normalizedAnalysisFromDiscoveryFacts } from "@/lib/services/analysis-types";
 import type { WebsiteAnalysisRow } from "@/lib/repositories/website-analysis-repository";
 
 function fakeRow(overrides: Partial<WebsiteAnalysisRow> = {}): WebsiteAnalysisRow {
@@ -133,5 +133,53 @@ describe("normalizedAnalysisFromRow", () => {
     assert.equal(normalized.mobileScore, 50);
     assert.equal(normalized.seoScore, 60);
     assert.equal(normalized.accessibilityScore, 70);
+  });
+});
+
+describe("normalizedAnalysisFromDiscoveryFacts (Robert's locked spec, §2 — no-website evidence, same NormalizedAnalysis shape)", () => {
+  test("websiteUrl is null and every crawl-derived score is honestly null — never a fabricated measurement", () => {
+    const normalized = normalizedAnalysisFromDiscoveryFacts({ phone: "555-0100", address: "12 Main St" });
+    assert.equal(normalized.websiteUrl, null);
+    assert.equal(normalized.seoScore, null);
+    assert.equal(normalized.mobileScore, null);
+    assert.equal(normalized.accessibilityScore, null);
+    assert.equal(normalized.technicalHealthScore, null);
+    assert.deepEqual(normalized.lighthouse, { performance: null, accessibility: null, bestPractices: null, seo: null });
+  });
+
+  test("measurementStatus is false across the board — no check of any kind ran, this is not a failed analysis", () => {
+    const normalized = normalizedAnalysisFromDiscoveryFacts({ phone: null, address: null });
+    assert.deepEqual(normalized.measurementStatus, {
+      crawl: false,
+      mobile: false,
+      seo: false,
+      accessibility: false,
+      lighthouse: false,
+      techDetection: false,
+    });
+  });
+
+  test("a verified phone number surfaces in contactEvidence.phones", () => {
+    const normalized = normalizedAnalysisFromDiscoveryFacts({ phone: "555-0100", address: null });
+    assert.deepEqual(normalized.contactEvidence.phones, ["555-0100"]);
+    assert.equal(normalized.contactEvidence.address, null);
+  });
+
+  test("a verified address surfaces in contactEvidence.address", () => {
+    const normalized = normalizedAnalysisFromDiscoveryFacts({ phone: null, address: "12 Main St, Mahopac NY" });
+    assert.equal(normalized.contactEvidence.address, "12 Main St, Mahopac NY");
+    assert.deepEqual(normalized.contactEvidence.phones, []);
+  });
+
+  test("no services/testimonials/certifications/team/faq/gallery/menu are fabricated — all honestly empty", () => {
+    const normalized = normalizedAnalysisFromDiscoveryFacts({ phone: "555-0100", address: "12 Main St" });
+    assert.deepEqual(normalized.services, []);
+    assert.deepEqual(normalized.testimonials, []);
+    assert.deepEqual(normalized.certifications, []);
+    assert.deepEqual(normalized.team, []);
+    assert.deepEqual(normalized.faqEvidence, []);
+    assert.deepEqual(normalized.gallery, []);
+    assert.deepEqual(normalized.menu, []);
+    assert.equal(normalized.metaDescription, null);
   });
 });
