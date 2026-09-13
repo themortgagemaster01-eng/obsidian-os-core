@@ -112,8 +112,24 @@ export const PHOTO_DEPENDENT_HERO_PATTERNS = new Set<HeroPatternId>(["centered-c
  * library — out of scope for this pass) and are intentionally not mapped.
  */
 export const INDUSTRY_HERO_PREFERENCE: Record<IndustryBucket, HeroPatternId[]> = {
-  // CTO: "Restaurant -> Editorial/Local Story/Cinematic"
-  restaurant: ["editorial-typographic", "split-media-text", "centered-cinematic"],
+  // CTO: "Restaurant -> Editorial/Local Story/Cinematic". Hero Archetype
+  // Bottleneck fix (2026-09-12): added image-full-bleed. Real production
+  // data (Dante's Trattoria, Carriage House Mahopac, The Freight House
+  // Cafe) showed Design Intelligence's own real photographyStyle text
+  // already saying "full-bleed"/"large" for this exact business type — the
+  // resolveCompositionArchetype -> resolveHeroPatternArchetypeOverride
+  // machinery (Gap Map Fix #2/#3, below) was already correctly detecting
+  // that "photo-led" signal, but had no industry-sanctioned candidate to
+  // apply it to, since neither image-full-bleed nor offset-overlap was ever
+  // listed here — so the override was silently discarded every time.
+  // centered-cinematic stays listed (unchanged) but remains structurally
+  // unreachable: it shares "split-focus" archetype with split-media-text
+  // (ARCHETYPE_BY_HERO_PATTERN below), so the override mechanism can never
+  // treat reaching it as a genuine archetype change from split-media-text's
+  // own default. Deliberately not widened further (never manufacture a
+  // signal real DesignMemory output doesn't already produce) — see
+  // docs/DESIGN_INTELLIGENCE.md's disclosed-gap discipline.
+  restaurant: ["editorial-typographic", "split-media-text", "image-full-bleed", "centered-cinematic"],
   // CTO: "Law Firm -> Editorial/Luxury Minimal"
   lawFirm: ["editorial-typographic", "oversized-typographic"],
   // CTO: "HVAC -> Service/Product/Bold Commerce" blended with "Contractor -> Cinematic/Service-Product"

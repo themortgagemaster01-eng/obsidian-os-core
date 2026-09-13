@@ -318,9 +318,13 @@ describe("composition-variants: resolveHeroPatternArchetypeOverride (Gap Map Fix
   });
 
   test("no industry-sanctioned candidate for the resolved archetype -> today's hero pattern wins", () => {
-    // restaurant's own INDUSTRY_HERO_PREFERENCE never ranks image-full-bleed
-    // or offset-overlap (photo-led's only candidates) at all — a real signal
-    // toward photo-led must not introduce either pattern for this industry.
+    // Hero Archetype Bottleneck fix (2026-09-12): restaurant's list now
+    // includes image-full-bleed (see section-patterns.ts's own comment), so
+    // a photo-led signal CAN reach it now — but only under real evidence.
+    // This test's own input has hasRealImagery: false, which still fails
+    // the override's evidence gate (line ~475 of composition-variants.ts)
+    // regardless of list membership — offset-overlap remains excluded from
+    // restaurant's list either way, so it's never a candidate here at all.
     const legacy = resolveHeroPattern("restaurant", false, 0);
     assert.equal(legacy, "editorial-typographic");
 
@@ -351,6 +355,140 @@ describe("composition-variants: resolveHeroPatternArchetypeOverride (Gap Map Fix
     assert.equal(variant.heroPattern, legacy);
 
     assert.equal(resolveHeroPatternArchetypeOverride(legacy, "split-focus", "realEstate", false), legacy);
+  });
+});
+
+/**
+ * Hero Archetype Bottleneck fix (2026-09-12): restaurant's own real
+ * production data showed 7 of 7 photo-rich restaurant missions ever
+ * completed converging on the identical split-media-text hero pattern,
+ * traced to INDUSTRY_HERO_PREFERENCE.restaurant never listing
+ * image-full-bleed at all — even though 3 of those real missions'
+ * Design Intelligence output already said "full-bleed" in their own real,
+ * persisted photographyStyle text. Fix: add image-full-bleed to
+ * restaurant's list (section-patterns.ts) so the ALREADY-EXISTING Gap Map
+ * Fix #2/#3 archetype-override machinery — which was already correctly
+ * detecting the "photo-led" signal — has an industry-sanctioned candidate
+ * to apply it to. No new keyword list, no new resolver function; this
+ * suite proves the existing machinery now does the right thing with real
+ * input, and that every other bucket/behavior is untouched.
+ */
+describe("composition-variants: Hero Archetype Bottleneck fix — restaurant image-full-bleed reachability", () => {
+  // Verbatim real photographyStyle text pulled from production (design_briefs.design_memory), 2026-09-12/13.
+  const DANTES_PHOTOGRAPHY_STYLE =
+    "Real, unedited-feeling trattoria photography — food, interior, room atmosphere — treated large and full-bleed as the primary visual voice of the site.";
+  const CARRIAGE_HOUSE_PHOTOGRAPHY_STYLE =
+    "Use the business's own 11 real photos full-bleed and large — warm, ambient, unretouched-feeling interior/atmosphere shots; never generic stock or illustration.";
+  const FREIGHT_HOUSE_PHOTOGRAPHY_STYLE =
+    "Full-bleed, natural-light interior/exterior shots of the actual freight house building and food, unretouched-feeling, no stock or AI imagery";
+  const COUNTRYSIDE_KITCHEN_PHOTOGRAPHY_STYLE =
+    "The business's own real, unstaged photos of food and interior, cropped generously and warmly lit — no stock or AI-generated imagery";
+
+  test("real case: Dante's Trattoria (20 real photos, real 'full-bleed' photographyStyle) now resolves image-full-bleed", () => {
+    const variant = resolveCompositionVariant({
+      industryBucket: "restaurant",
+      hasRealImagery: true,
+      evidence: { services: 0, certifications: 0, hasReviews: false, galleryCount: 20 },
+      photographyStyle: DANTES_PHOTOGRAPHY_STYLE,
+    });
+    assert.equal(variant.heroPattern, "image-full-bleed");
+  });
+
+  test("real case: Carriage House Mahopac (11 real photos, real 'full-bleed' photographyStyle) now resolves image-full-bleed", () => {
+    const variant = resolveCompositionVariant({
+      industryBucket: "restaurant",
+      hasRealImagery: true,
+      evidence: { services: 0, certifications: 0, hasReviews: false, galleryCount: 11 },
+      photographyStyle: CARRIAGE_HOUSE_PHOTOGRAPHY_STYLE,
+    });
+    assert.equal(variant.heroPattern, "image-full-bleed");
+  });
+
+  test("real case: The Freight House Cafe (19 real photos, real 'full-bleed' photographyStyle) now resolves image-full-bleed", () => {
+    const variant = resolveCompositionVariant({
+      industryBucket: "restaurant",
+      hasRealImagery: true,
+      evidence: { services: 0, certifications: 0, hasReviews: false, galleryCount: 19 },
+      photographyStyle: FREIGHT_HOUSE_PHOTOGRAPHY_STYLE,
+    });
+    assert.equal(variant.heroPattern, "image-full-bleed");
+  });
+
+  test("real case: Countryside Kitchen (17 real photos, real photographyStyle with NO full-bleed/photo-led signal) stays split-media-text, unchanged", () => {
+    const variant = resolveCompositionVariant({
+      industryBucket: "restaurant",
+      hasRealImagery: true,
+      evidence: { services: 0, certifications: 0, hasReviews: false, galleryCount: 17 },
+      photographyStyle: COUNTRYSIDE_KITCHEN_PHOTOGRAPHY_STYLE,
+    });
+    assert.equal(variant.heroPattern, "split-media-text");
+  });
+
+  test("regression: restaurant with no real imagery still resolves editorial-typographic, exactly as before this fix", () => {
+    const variant = resolveCompositionVariant({
+      industryBucket: "restaurant",
+      hasRealImagery: false,
+      evidence: { services: 0, certifications: 0, hasReviews: false, galleryCount: 0 },
+      photographyStyle: DANTES_PHOTOGRAPHY_STYLE, // even a strong signal can't override the evidence gate
+    });
+    assert.equal(variant.heroPattern, "editorial-typographic");
+  });
+
+  test("regression: restaurant with real imagery but thin evidence (below the 3-photo bar) and no signal still resolves split-media-text's own bucket default path unchanged", () => {
+    // galleryCount below MIN_GALLERY_FOR_PHOTO_HERO_PREFERENCE (3) — resolveHeroPattern's
+    // own Stage-3 bump never fires, so the plain fallback loop still returns
+    // editorial-typographic (first non-photo-dependent candidate), exactly as
+    // before this fix. Unaffected by the list widening.
+    const legacy = resolveHeroPattern("restaurant", true, 1);
+    assert.equal(legacy, "editorial-typographic");
+  });
+
+  test("offset-overlap is never introduced for restaurant, even with a strong photo-led signal — scope discipline (only image-full-bleed was added)", () => {
+    const variant = resolveCompositionVariant({
+      industryBucket: "restaurant",
+      hasRealImagery: true,
+      evidence: { services: 0, certifications: 0, hasReviews: false, galleryCount: 20 },
+      photographyStyle: DANTES_PHOTOGRAPHY_STYLE,
+    });
+    assert.notEqual(variant.heroPattern, "offset-overlap");
+  });
+
+  test("centered-cinematic remains structurally unreachable for restaurant after this fix — unchanged, not manufactured", () => {
+    // centered-cinematic shares "split-focus" archetype with split-media-text
+    // (ARCHETYPE_BY_HERO_PATTERN), so no real DesignMemory signal can make the
+    // override mechanism treat reaching it as a genuine archetype change from
+    // split-media-text's own default — this fix does not attempt to change that.
+    const variant = resolveCompositionVariant({
+      industryBucket: "restaurant",
+      hasRealImagery: true,
+      evidence: { services: 0, certifications: 0, hasReviews: false, galleryCount: 20 },
+      componentVariants: ["A side-by-side split-screen, dual-focus layout for the story section"],
+    });
+    assert.notEqual(variant.heroPattern, "centered-cinematic");
+  });
+
+  test("no randomness: the same real input resolves to the identical hero pattern across repeated, independent calls", () => {
+    const input = {
+      industryBucket: "restaurant" as const,
+      hasRealImagery: true,
+      evidence: { services: 0, certifications: 0, hasReviews: false, galleryCount: 20 },
+      photographyStyle: DANTES_PHOTOGRAPHY_STYLE,
+    };
+    const results = Array.from({ length: 5 }, () => resolveCompositionVariant({ ...input }));
+    for (const result of results) {
+      assert.equal(result.heroPattern, "image-full-bleed");
+      assert.deepEqual(result, results[0]);
+    }
+  });
+
+  test("every other industry bucket's reachable/unreachable hero patterns are unaffected by this restaurant-only change", () => {
+    assert.equal(resolveHeroPattern("homeService", true, 5), "image-full-bleed");
+    assert.equal(resolveHeroPattern("lawFirm", true, 5), "editorial-typographic");
+    assert.equal(resolveHeroPattern("dentistMedical", true, 5), "oversized-typographic");
+    assert.equal(resolveHeroPattern("realEstate", true, 5), "split-media-text");
+    assert.equal(resolveHeroPattern("fitness", true, 5), "centered-cinematic");
+    assert.equal(resolveHeroPattern("luxuryServices", true, 5), "oversized-typographic");
+    assert.equal(resolveHeroPattern("general", true, 5), "image-full-bleed");
   });
 });
 
