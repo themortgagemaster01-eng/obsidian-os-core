@@ -120,12 +120,24 @@ function createFakeDeps(overrides: {
     async findBySourceAndExternalId(_client, _orgId, source, externalId) {
       return rows.get(`${source}:${externalId}`) ?? null;
     },
+    // Manual-lead dedup methods (Add a Business feature) — never exercised
+    // by the OSM scan path itself, so a simple "never a match" fake is
+    // sufficient here; manual-lead-service.test.ts covers the real behavior.
+    async findByOrgAndWebsiteUrl(_client, _orgId, _normalizedUrl) {
+      return null;
+    },
+    async findByOrgAndBusinessName(_client, _orgId, _businessName) {
+      return null;
+    },
   };
 
   const existingCompanyUrls = new Set(overrides.existingCompanyUrls ?? []);
   const companyRepository: LeadHunterServiceDeps["companyRepository"] = {
     async findByOrgAndUrl(_client, _orgId, normalizedUrl) {
       return existingCompanyUrls.has(normalizedUrl) ? ({ id: "existing-company" } as CompanyRow) : null;
+    },
+    async findByOrgAndBusinessName(_client, _orgId, _businessName) {
+      return null;
     },
   };
 

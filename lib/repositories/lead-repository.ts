@@ -96,6 +96,30 @@ export const leadRepository = {
     return data;
   },
 
+  /** Manual-entry dedup check (Add a Business feature, 2026-09-14) — an exact, normalized website-URL match within this org, regardless of which discovery_source originally found it. */
+  async findByOrgAndWebsiteUrl(client: TypedClient, organizationId: string, normalizedWebsiteUrl: string): Promise<LeadRow | null> {
+    const { data, error } = await client
+      .from("leads")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .eq("website_url", normalizedWebsiteUrl)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
+  /** Manual-entry dedup check (Add a Business feature, 2026-09-14) — a case-insensitive exact business_name match within this org, regardless of discovery_source. Deliberately name-only (not name+location) since `location` is free text with no consistent format across sources — a real limitation, not a silent gap: the website-URL check above is the more precise signal when a URL is available. */
+  async findByOrgAndBusinessName(client: TypedClient, organizationId: string, businessName: string): Promise<LeadRow | null> {
+    const { data, error } = await client
+      .from("leads")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .ilike("business_name", businessName.trim())
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
   async listByOrganization(client: TypedClient, organizationId: string): Promise<LeadRow[]> {
     const { data, error } = await client
       .from("leads")

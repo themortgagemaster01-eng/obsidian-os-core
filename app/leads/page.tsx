@@ -8,6 +8,7 @@ import { leadScanRepository, type LeadScanRunRow } from "@/lib/repositories/lead
 import { rankLeads } from "@/lib/services/lead-scoring-service";
 import { Badge } from "@/components/ui/badge";
 import { ScanForm } from "@/components/lead-hunter/scan-form";
+import { AddBusinessForm } from "@/components/lead-hunter/add-business-form";
 import { AutoRefreshWhileScanning } from "@/components/lead-hunter/auto-refresh-while-scanning";
 import { PageLoadError } from "@/components/ui/page-load-error";
 
@@ -88,6 +89,7 @@ export default async function LeadHunterPage() {
       <div className="container flex flex-col gap-8 py-8">
         <AutoRefreshWhileScanning isRunning={latestScan?.status === "running"} />
         <ScanForm />
+        <AddBusinessForm />
 
         {latestScan && (
           <section className="rounded-md border border-border p-4">

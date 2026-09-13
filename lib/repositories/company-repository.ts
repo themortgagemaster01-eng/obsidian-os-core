@@ -48,6 +48,18 @@ export const companyRepository = {
     return data;
   },
 
+  /** Manual-entry dedup check (Add a Business feature, 2026-09-14) — a case-insensitive exact business_name match within this org. Deliberately name-only, same limitation as leadRepository.findByOrgAndBusinessName: `companies` has no free-text "location" field precise enough to safely combine with name here. */
+  async findByOrgAndBusinessName(client: TypedClient, organizationId: string, businessName: string): Promise<CompanyRow | null> {
+    const { data, error } = await client
+      .from("companies")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .ilike("business_name", businessName.trim())
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
   /** Looks up a company by its (organization_id, normalized website_url) unique key. */
   async findByOrgAndUrl(
     client: TypedClient,

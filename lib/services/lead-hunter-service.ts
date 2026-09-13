@@ -44,9 +44,10 @@ type TypedClient = SupabaseClient<Database>;
 
 export interface LeadHunterServiceDeps {
   client: TypedClient;
-  /** Narrowed to exactly what this orchestration calls — a smaller, more honest test-mock surface than the full repository. */
-  leadRepository: Pick<typeof leadRepository, "insert" | "update" | "findBySourceAndExternalId">;
-  companyRepository: Pick<typeof companyRepository, "findByOrgAndUrl">;
+  /** Narrowed to exactly what this orchestration calls — a smaller, more honest test-mock surface than the full repository. findByOrgAndWebsiteUrl/findByOrgAndBusinessName added for manual-lead-service.ts's own dedup check (Add a Business feature, 2026-09-14) — never used by the OSM scan path itself. */
+  leadRepository: Pick<typeof leadRepository, "insert" | "update" | "findBySourceAndExternalId" | "findByOrgAndWebsiteUrl" | "findByOrgAndBusinessName">;
+  /** findByOrgAndBusinessName added for manual-lead-service.ts's own dedup check — never used by the OSM scan path itself. */
+  companyRepository: Pick<typeof companyRepository, "findByOrgAndUrl" | "findByOrgAndBusinessName">;
   /** Phase 3: the scan's own funnel-progress record (supabase/migrations/0021_lead_scan_runs.sql) — narrowed the same way; findRunningByOrganization added for the overlap guard (checkScanOverlap). */
   leadScanRepository: Pick<typeof leadScanRepository, "insert" | "update" | "findRunningByOrganization">;
   /**
@@ -205,18 +206,37 @@ export interface LeadHunterScanResult {
   leads: LeadRow[];
 }
 
-/** A lead this scan already has a row for (same discovery_source + discovery_external_id) gets its existing row updated in place, never duplicated — the migration's own unique index is the hard backstop; this is the same-intent application-level check. */
-async function upsertLead(deps: LeadHunterServiceDeps, organizationId: string, values: Record<string, unknown>): Promise<LeadRow> {
+/**
+ * A lead this scan already has a row for (same discovery_source +
+ * discovery_external_id) gets its existing row updated in place, never
+ * duplicated — the migration's own unique index is the hard backstop; this
+ * is the same-intent application-level check.
+ *
+ * `discoverySource` (Add a Business feature, 2026-09-14): explicit, not the
+ * module's own DISCOVERY_SOURCE constant — manual-lead-service.ts reuses
+ * this exact function for manually-added businesses ("manual") without
+ * forking a parallel persistence path, per the same "reuse the real
+ * pipeline" discipline qualifyCandidate/the scoring functions already
+ * follow. Every existing call site in this file still passes
+ * DISCOVERY_SOURCE explicitly, so the OSM scan path's behavior is
+ * byte-for-byte unchanged.
+ */
+export async function upsertLead(
+  deps: Pick<LeadHunterServiceDeps, "client" | "leadRepository">,
+  organizationId: string,
+  discoverySource: string,
+  values: Record<string, unknown>
+): Promise<LeadRow> {
   const existing = await deps.leadRepository.findBySourceAndExternalId(
     deps.client,
     organizationId,
-    DISCOVERY_SOURCE,
+    discoverySource,
     values.discovery_external_id as string
   );
   if (existing) {
     return deps.leadRepository.update(deps.client, existing.id, values);
   }
-  return deps.leadRepository.insert(deps.client, { organization_id: organizationId, discovery_source: DISCOVERY_SOURCE, ...values } as never);
+  return deps.leadRepository.insert(deps.client, { organization_id: organizationId, discovery_source: discoverySource, ...values } as never);
 }
 
 /**
@@ -229,7 +249,7 @@ async function upsertLead(deps: LeadHunterServiceDeps, organizationId: string, v
  * successfully loaded — "a real operating business, a real website" (CTO
  * directive §1) is the floor, not just a website that merely exists.
  */
-async function qualifyCandidate(
+export async function qualifyCandidate(
   deps: Pick<LeadHunterServiceDeps, "runCrawlAdapter">,
   candidate: DiscoveredBusiness
 ): Promise<{ status: "rejected"; rejectionReason: string; crawl?: CrawlRawResult } | { status: "candidate"; crawl: CrawlRawResult }> {
@@ -249,7 +269,7 @@ async function qualifyCandidate(
   return { status: "candidate" as const, crawl };
 }
 
-function mainWeaknesses(websiteSignals: { label: string; passed: boolean }[]): string[] {
+export function mainWeaknesses(websiteSignals: { label: string; passed: boolean }[]): string[] {
   return websiteSignals.filter((s) => !s.passed).map((s) => s.label);
 }
 
@@ -406,7 +426,7 @@ async function runScanAgainstDiscovered(
 
     if (qualification.status === "rejected") {
       rejectedCount += 1;
-      const lead = await upsertLead(deps, input.organizationId, {
+      const lead = await upsertLead(deps, input.organizationId, DISCOVERY_SOURCE, {
         business_name: candidate.name,
         website_url: candidate.websiteUrl,
         business_category: candidate.osmTag,
@@ -436,7 +456,7 @@ async function runScanAgainstDiscovered(
     const heroPattern = resolveHeroPattern(industryBucket, crawl.gallery.length > 0, crawl.gallery.length);
 
     qualifiedCount += 1;
-    const lead = await upsertLead(deps, input.organizationId, {
+    const lead = await upsertLead(deps, input.organizationId, DISCOVERY_SOURCE, {
       business_name: candidate.name,
       website_url: candidate.websiteUrl,
       industry: industryBucket,
