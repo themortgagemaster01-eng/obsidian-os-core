@@ -57,7 +57,12 @@ function createFakeDeps(overrides: {
   discovered?: DiscoveredBusiness[];
   crawlsByUrl?: Record<string, CrawlRawResult>;
   existingCompanyUrls?: string[];
-}): LeadHunterServiceDeps & { insertedRows: LeadInsert[]; updatedRows: { id: string; values: LeadUpdate }[]; scanRuns: LeadScanRunRow[] } {
+}): LeadHunterServiceDeps & {
+  insertedRows: LeadInsert[];
+  updatedRows: { id: string; values: LeadUpdate }[];
+  scanRuns: LeadScanRunRow[];
+  discoverBusinessesCalls: DiscoverBusinessesInput[];
+} {
   const rows = new Map<string, LeadRow>();
   const insertedRows: LeadInsert[] = [];
   const updatedRows: { id: string; values: LeadUpdate }[] = [];
@@ -124,17 +129,23 @@ function createFakeDeps(overrides: {
     },
   };
 
+  const discoverBusinessesCalls: DiscoverBusinessesInput[] = [];
+
   return {
     client: {} as LeadHunterServiceDeps["client"],
     leadRepository,
     companyRepository,
     leadScanRepository,
     geocodeLocation: async () => FAKE_AREA,
-    discoverBusinesses: async (_input: DiscoverBusinessesInput) => overrides.discovered ?? [],
+    discoverBusinesses: async (input: DiscoverBusinessesInput) => {
+      discoverBusinessesCalls.push(input);
+      return overrides.discovered ?? [];
+    },
     runCrawlAdapter: async (url: string) => overrides.crawlsByUrl?.[url] ?? fakeCrawl({ requestedUrl: url, finalUrl: url }),
     insertedRows,
     updatedRows,
     scanRuns,
+    discoverBusinessesCalls,
   };
 }
 
@@ -406,6 +417,47 @@ describe("lead-hunter-service: runLeadHunterScan", () => {
     assert.equal(result.discoveredCount, result.skippedExistingCompanyCount + result.rejectedCount + result.qualifiedCount);
     assert.equal(deps.scanRuns[0].skipped_existing_company_count, 2);
     assert.match(result.funnelSummary, /3 businesses scanned \(2 already tracked as real companies, correctly skipped\)/);
+  });
+
+  test("repeat-scan dead-end fix (2026-09-13): a location whose nearest 5 candidates are ALL already tracked still finds genuinely new leads further down the discovery pool", async () => {
+    // Precisely reconstructs the real bug: Overpass's own fixed top-N for
+    // "mahopac, ny" happened to be 6 businesses already tracked as real
+    // companies from earlier missions. Before this fix, maxResults ===
+    // scanSize (5) meant Overpass was never even asked for a 6th result —
+    // the location was structurally capped at 0 new leads forever. Here,
+    // `discovered` stands in for a wider Overpass pool (as if
+    // DISCOVERY_POOL_SIZE were already in effect): the first 5 entries are
+    // already-tracked companies (an existing-company skip is free, doesn't
+    // consume the crawl budget), and 2 genuinely new candidates sit right
+    // after them — the crawl budget (5, the default) must still reach and
+    // qualify both.
+    const alreadyTracked = Array.from({ length: 5 }, (_, i) => ({
+      ...REAL_SHAPED_CANDIDATE,
+      externalId: `node/tracked-${i}`,
+      name: `Already Tracked ${i}`,
+      websiteUrl: `https://tracked-${i}.test/`,
+    }));
+    const newCandidates = [
+      { ...REAL_SHAPED_CANDIDATE, externalId: "node/new-1", name: "Genuinely New One", websiteUrl: "https://genuinely-new-1.test/" },
+      { ...REAL_SHAPED_CANDIDATE, externalId: "node/new-2", name: "Genuinely New Two", websiteUrl: "https://genuinely-new-2.test/" },
+    ];
+    const deps = createFakeDeps({
+      discovered: [...alreadyTracked, ...newCandidates],
+      existingCompanyUrls: alreadyTracked.map((c) => c.websiteUrl!.replace("https://", "").replace("/", "")),
+    });
+    const result = await runLeadHunterScan(deps, { organizationId: "org-1", location: "mahopac, ny", industryBuckets: ["restaurant"] });
+
+    assert.equal(result.skippedExistingCompanyCount, 5, "all 5 already-tracked candidates correctly skipped");
+    assert.equal(result.qualifiedCount, 2, "both genuinely new candidates beyond the tracked head were reached and qualified — the real fix");
+    assert.equal(result.leads.length, 2);
+    assert.equal(result.discoveredCount, 7, "examined every candidate up to the point the crawl budget was satisfied — skips didn't consume it");
+  });
+
+  test("repeat-scan dead-end fix (2026-09-13): discoverBusinesses is called with a discovery pool wider than scanSize, not scanSize itself", async () => {
+    const deps = createFakeDeps({ discovered: [] });
+    await runLeadHunterScan(deps, { organizationId: "org-1", location: "mahopac, ny", industryBuckets: ["restaurant"], scanSize: 5 });
+    assert.equal(deps.discoverBusinessesCalls.length, 1);
+    assert.equal(deps.discoverBusinessesCalls[0].maxResults, 40, "DISCOVERY_POOL_SIZE — meaningfully wider than the 5-candidate crawl budget, so a saturated location has real room to find new candidates");
   });
 
   test("a real, reachable candidate is scored and persisted as a real candidate lead with all three distinct scores set", async () => {

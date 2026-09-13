@@ -84,6 +84,30 @@ export interface RunLeadHunterScanInput {
 /** CTO Phase 3 directive: "ranking-by-opportunity-then-confidence." A qualified lead counts as a real confidence prospect once its confidence score clears this bar — a v1 threshold (see lead-scoring-service.ts's own "v1, not a final answer" disclosure), not a researched final cutoff. */
 const HIGH_CONFIDENCE_MIN_SCORE = 50;
 const DEFAULT_QUEUE_SIZE = 5;
+/** Mirrors app/api/leads/scan/route.ts's own MAX_SCAN_SIZE — the real per-scan crawl budget when a caller (a test, or any future direct caller) doesn't supply scanSize. */
+const DEFAULT_CRAWL_BUDGET = 5;
+
+/**
+ * Repeat-scan dead-end fix (2026-09-13): discoverBusinesses' own Overpass
+ * query was previously requested with maxResults === scanSize (5) — the
+ * SAME small number later used as the real per-candidate crawl budget. A
+ * given (area, industry tags) pair returns Overpass's own deterministic
+ * top matches in the same order every time, so once a location's first 5
+ * OSM results were all already tracked companies (confirmed live:
+ * "mahopac, ny" — 6 real companies from earlier missions occupy exactly
+ * that town's nearest OSM matches), that location was structurally
+ * guaranteed to return 0 new leads forever, regardless of how many
+ * genuinely new businesses exist further down Overpass's own result set.
+ * Overpass has no way to filter on "already in our own companies table" at
+ * the query level (that's our own application data, not OSM's) — so the
+ * real fix is casting a meaningfully wider discovery net than the crawl
+ * budget, well within discoverBusinesses' own MAX_RESULTS_CAP (200), so
+ * the per-org existing-company filter (already correct, see
+ * skippedExistingCompanyCount) has real headroom to find genuinely new
+ * candidates before the crawl budget is spent, instead of exhausting it on
+ * the same already-known handful every time.
+ */
+const DISCOVERY_POOL_SIZE = 40;
 
 /**
  * How long a "running" scan is trusted before it's treated as abandoned (a
@@ -158,8 +182,9 @@ export async function checkScanOverlap(
 
 export interface LeadHunterScanResult {
   location: string;
+  /** Candidates actually examined this scan (skipped + qualified + rejected — always exact). Repeat-scan dead-end fix (2026-09-13): the real Overpass discovery pool (DISCOVERY_POOL_SIZE) is now meaningfully wider than this, so a location isn't structurally capped at re-finding the same fixed handful forever — but this field intentionally reports what was examined, not the full raw pool, so the funnel's own arithmetic always adds up. */
   discoveredCount: number;
-  /** Candidates already tracked as a real company in this org — skipped, never re-discovered as a "new" lead (a business already in the real pipeline isn't a Lead Hunter candidate anymore). */
+  /** Candidates already tracked as a real company in this org — skipped, never re-discovered as a "new" lead (a business already in the real pipeline isn't a Lead Hunter candidate anymore). Does not count against the crawl budget — an existing-company check is a cheap DB lookup, so the loop keeps looking for genuinely new candidates instead of stopping here. */
   skippedExistingCompanyCount: number;
   qualifiedCount: number;
   rejectedCount: number;
@@ -309,10 +334,11 @@ export async function runLeadHunterScan(deps: LeadHunterServiceDeps, input: RunL
     const discovered = await deps.discoverBusinesses({
       area,
       industryBuckets: input.industryBuckets,
-      maxResults: input.scanSize,
+      maxResults: DISCOVERY_POOL_SIZE,
     });
 
-    const result = await runScanAgainstDiscovered(deps, input, scanRun, area, discovered, queueSize);
+    const crawlBudget = input.scanSize ?? DEFAULT_CRAWL_BUDGET;
+    const result = await runScanAgainstDiscovered(deps, input, scanRun, area, discovered, queueSize, crawlBudget);
     return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Lead Hunter scan failed for an unknown reason.";
@@ -332,16 +358,36 @@ async function runScanAgainstDiscovered(
   scanRun: LeadScanRunRow,
   area: GeocodedArea,
   discovered: DiscoveredBusiness[],
-  queueSize: number
+  queueSize: number,
+  crawlBudget: number
 ): Promise<LeadHunterScanResult> {
   let skippedExistingCompanyCount = 0;
   let qualifiedCount = 0;
   let rejectedCount = 0;
   let meaningfulOpportunityCount = 0;
   let highConfidenceCount = 0;
+  let examinedCount = 0;
+  let crawledCount = 0;
   const leads: LeadRow[] = [];
 
+  // Repeat-scan dead-end fix (2026-09-13): `discovered` is now a wider pool
+  // (DISCOVERY_POOL_SIZE) than the real per-candidate crawl budget
+  // (crawlBudget, == scanSize) — an existing-company skip is a cheap DB
+  // lookup, never counted against the budget, so the loop keeps walking
+  // past already-tracked businesses instead of stopping at whatever
+  // Overpass's own fixed top-N happened to return. The real, rate-limited
+  // work (qualifyCandidate's own crawl) still stops at exactly crawlBudget
+  // candidates (crawledCount), same "don't hammer public/target-site APIs"
+  // discipline as before — this widens WHERE the budget is spent, not how
+  // much is spent. examinedCount is deliberately a separate counter,
+  // incremented for every candidate the loop actually reaches a decision on
+  // (skip, reject, or qualify) — so it always equals skippedExistingCompany
+  // Count + qualifiedCount + rejectedCount exactly, keeping the funnel's own
+  // arithmetic self-consistent (see formatFunnelSummary).
   for (const candidate of discovered) {
+    if (crawledCount >= crawlBudget) break;
+    examinedCount += 1;
+
     if (candidate.websiteUrl) {
       const existingCompany = await deps.companyRepository.findByOrgAndUrl(
         deps.client,
@@ -354,6 +400,7 @@ async function runScanAgainstDiscovered(
       }
     }
 
+    crawledCount += 1;
     const industryBucket = industryBucketFromOsmTag(candidate.osmTag);
     const qualification = await qualifyCandidate(deps, candidate);
 
@@ -431,8 +478,14 @@ async function runScanAgainstDiscovered(
   }
 
   const queuedCount = Math.min(queueSize, highConfidenceCount);
+  // discoveredCount reports examinedCount, not discovered.length — the raw
+  // Overpass pool is now meaningfully wider than what any one scan actually
+  // looks at (see DISCOVERY_POOL_SIZE's own doc comment), so reporting the
+  // full raw pool here would just reintroduce a different "the numbers
+  // don't add up" confusion. examinedCount keeps the funnel's own arithmetic
+  // exact: discovered === skipped + qualified + rejected, always.
   const funnelCounts = {
-    discoveredCount: discovered.length,
+    discoveredCount: examinedCount,
     skippedExistingCompanyCount,
     qualifiedCount,
     meaningfulOpportunityCount,
@@ -454,7 +507,7 @@ async function runScanAgainstDiscovered(
 
   return {
     location: area.displayName,
-    discoveredCount: discovered.length,
+    discoveredCount: examinedCount,
     skippedExistingCompanyCount,
     qualifiedCount,
     rejectedCount,
