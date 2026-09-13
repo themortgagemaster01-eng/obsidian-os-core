@@ -5,6 +5,8 @@
 >
 > Purpose: Convert accumulated external design research and internal design reasoning into actionable principles that Claude can use when designing Obsidian OS prospect preview websites.
 >
+> See also: `docs/CLAUDE_DESIGN_BRIEF.md` — the operational field-guide version of this document, meant to be copied directly into a Claude session at the moment of designing one prospect preview (named X/gallery research sources, the hero-triangle heuristic, the required design-memo output format). This document is the canonical reference for what's actually built and verified; that one is the step-by-step operational script.
+>
 > Core principle:
 >
 > **Evidence determines WHAT to claim. Design intelligence determines HOW to present it.**
