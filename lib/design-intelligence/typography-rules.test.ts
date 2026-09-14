@@ -269,3 +269,78 @@ describe("typography-rules: resolveTypeScaleIntent — Fix #6 (typographicMood)"
     assert.equal(conflicting, "editorial");
   });
 });
+
+// ===========================================================================
+// Fix #11 (typography + spacing vocabulary audit, 2026-09-14).
+//
+// Audited the COMPLETE production population — all 12 real completed
+// design_briefs, not a sample — by running this exact resolver over each
+// mission's real headingFamily/bodyFamily/scaleNotes/typographicMood. Result
+// before this change: display-led 3, editorial 9, compact 0.
+//
+// Exactly ONE of those 9 editorial results was a genuine vocabulary miss:
+// Video Game Plus's own real typographicMood asks for "a larger, bolder
+// display size for headings" — unambiguous display-led intent in the same
+// "display <noun>" shape as the six phrases the list already carried. The
+// other 8 were correct classifications, not misses (they ask for hierarchy
+// clarity or larger BODY text for mobile legibility, never a dramatic
+// display register).
+//
+// compact stayed 0/12 and no compact vocabulary was added: across all 12
+// real missions the model never once asks for a tighter type scale — every
+// mission has a real measured mobile small-text finding pushing it the other
+// way. That is the "LLM never produces this intent" case, where the audit
+// spec explicitly says vocabulary expansion is NOT the correct fix.
+// ===========================================================================
+describe("typography-rules: resolveTypeScaleIntent (Fix #11 vocabulary expansion)", () => {
+  test("the real Video Game Plus production fixture — 'a larger, bolder display size for headings' — now resolves display-led instead of silently defaulting", () => {
+    const realMood =
+      "One confident, highly legible sans family used across weights — a larger, bolder display size for headings that nods to cartridge-era game branding without resorting to pixel-font cliche, and generously sized body text to directly fix the cited small-text-on-mobile problem.";
+    assert.equal(resolveTypeScaleIntent(null, realMood), "display-led");
+  });
+
+  test("'display scale' resolves display-led as the direct sibling phrase", () => {
+    assert.equal(resolveTypeScaleIntent({ scaleNotes: "A confident display scale for headings" }), "display-led");
+  });
+
+  test("a bare 'display' still does NOT match — the Playfair Display false-positive guard is unchanged", () => {
+    assert.equal(resolveTypeScaleIntent({ headingFamily: "Playfair Display" }), "editorial");
+  });
+
+  test("the eight real production fixtures that correctly resolved editorial are completely unaffected by the new entries", () => {
+    const realEditorialFixtures: string[] = [
+      // The Freight House Cafe
+      "Mobile base body size raised to at least 17-18px given the flagged small-text/zoom issue; heading scale should create one obvious dominant size per screen, not multiple competing sizes",
+      // Countryside Kitchen
+      "Body text set at minimum 16-18px with 1.5x line-height to directly counter the flagged mobile small-text problem; heading scale kept to 3-4 clear steps so hierarchy reads at a glance.",
+      // Station Plaza Wine r1
+      "Minimum 16px body size with 1.5x line-height to directly correct the mobile small-text finding; clear jump from body to a large single-line headline so the eye has one obvious resting point.",
+      // Station Plaza Wine r3
+      "Large hero heading (~40-56px desktop) stepping down through clear intervals; body text minimum 17px to stay legible on mobile without zoom, line-height 1.5",
+      // Video Game Plus A
+      "A single confident sans-serif across a deliberate weight range — a large, clear editorial headline size paired with generously sized, legible body text.",
+      // Video Game Plus C
+      "Body text set no smaller than ~17-18px equivalent with 1.5x line-height; heading scale uses clear, large jumps (not incremental) so hierarchy is visible at a glance without relying on color alone.",
+      // Joseph J. Smith Funeral Home
+      "Large but restrained heading scale (one clear dominant size for the hero line, one for section titles), generous line-height (1.5x) on body text kept to 45-65 characters per line for a calm, unhurried read.",
+    ];
+    for (const notes of realEditorialFixtures) {
+      assert.equal(resolveTypeScaleIntent({ scaleNotes: notes }), "editorial", `expected editorial for: ${notes.slice(0, 60)}...`);
+    }
+  });
+
+  test("the three real fixtures that already resolved display-led still do — purely additive, nothing reclassified", () => {
+    // Dante's Trattoria ("large serif display headline"), Carriage House
+    // ("Warm serif display"), Brooklyn Organic Kitchen ("for display headlines").
+    assert.equal(resolveTypeScaleIntent({ scaleNotes: "Clear two-step hierarchy: large serif display headline (photo-led hero)" }), "display-led");
+    assert.equal(resolveTypeScaleIntent({ headingFamily: "Warm serif display (e.g. a tavern-appropriate serif)" }), "display-led");
+    assert.equal(resolveTypeScaleIntent({ headingFamily: "A warm humanist serif for display headlines" }), "display-led");
+  });
+
+  test("compact vocabulary is unchanged — no compact entries were added, and compact still requires its own existing keywords", () => {
+    assert.equal(resolveTypeScaleIntent({ scaleNotes: "A compact, space-efficient scale" }), "compact");
+    // "restrained" was deliberately NOT added: across all 12 real missions it
+    // only ever describes the TYPEFACE ("a restrained serif"), not the scale.
+    assert.equal(resolveTypeScaleIntent({ headingFamily: "A restrained serif for headings" }), "editorial");
+  });
+});

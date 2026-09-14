@@ -124,6 +124,18 @@ const DISPLAY_LED_SCALE_KEYWORDS = [
   "display typography",
   "display type",
   "display font",
+  // Fix #11 (typography/spacing vocabulary audit, 2026-09-14): the only
+  // genuine vocabulary miss the full 12-mission production population turned
+  // up. Video Game Plus's own real typographicMood asks for "a larger,
+  // bolder DISPLAY SIZE for headings" — unambiguous display-led intent, in
+  // exactly the same "display <noun>" shape as the six phrases above, and
+  // the only one of them this list didn't already carry. "display scale" is
+  // added as its direct sibling for the same reason. Deliberately two-word
+  // phrases, like every entry above: a bare "display" would false-positive
+  // on a proper font name ("Playfair Display"), the exact regression this
+  // list's own doc comment already records.
+  "display size",
+  "display scale",
   "dramatic",
   "bold statement",
   "oversized",
