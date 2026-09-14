@@ -518,3 +518,90 @@ describe("composition-variants: isMotionRestrainedTone (Phase 11)", () => {
     assert.equal(isMotionRestrainedTone(["disquiet"], undefined), false);
   });
 });
+
+// ===========================================================================
+// Fix #12 (2026-09-14) — cross-vocabulary archetype collision.
+//
+// Proven production bug, isolated and reproduced by the Phase 5A audit:
+// "generous whitespace" was listed in MINIMAL_FORMAL_ARCHETYPE_KEYWORDS even
+// though it describes SPACING, not a layout archetype. Dante's Trattoria's
+// own real preferredLayouts reads "full-bleed photo/atmosphere sections
+// separated by generous whitespace rather than repeated icon-card rows" — one
+// coherent photo-led sentence. "full-bleed" matched PHOTO_LED and "generous
+// whitespace" matched MINIMAL_FORMAL, so the ambiguity rule discarded the
+// real signal and the mission stayed on split-media-text.
+//
+// This is a vocabulary correction only: the resolver, the ambiguity rule,
+// the other three vocabularies, candidate lists and evidence thresholds are
+// all unchanged. Genuine generous-spacing intent is unaffected — it is read
+// by design-rules.ts's resolveSpacingScaleIntent, not by this resolver.
+// ===========================================================================
+describe("composition-variants: Fix #12 — misclassified spacing phrase removed from the layout vocabulary", () => {
+  const DANTE_REAL_SIGNAL = {
+    photographyStyle:
+      "Real, unedited-feeling trattoria photography — food, interior, room atmosphere — treated large and full-bleed as the primary visual voice of the site.",
+    componentVariants: ["Full-bleed photo hero with overlay headline and immediate call/hours strip"],
+    preferredLayouts: [
+      "full-bleed photo/atmosphere sections separated by generous whitespace rather than repeated icon-card rows",
+    ],
+  };
+
+  test("THE REAL BUG: Dante's own production reasoning now resolves photo-led instead of being cancelled to the default", () => {
+    assert.equal(resolveCompositionArchetype("split-media-text", DANTE_REAL_SIGNAL), "photo-led");
+  });
+
+  test("and that carries through to the actual rendered hero pattern — image-full-bleed, not split-media-text", () => {
+    const variant = resolveCompositionVariant({
+      industryBucket: "restaurant",
+      hasRealImagery: true,
+      evidence: { ...NO_EVIDENCE, galleryCount: 20 },
+      ...DANTE_REAL_SIGNAL,
+    });
+    assert.equal(variant.heroPattern, "image-full-bleed");
+  });
+
+  test("the phrase alone no longer signals any archetype — it falls through to the default", () => {
+    // Previously this alone resolved "minimal-formal"; spacing language must
+    // not steer a layout archetype at all.
+    assert.equal(
+      resolveCompositionArchetype("split-media-text", { preferredLayouts: ["sections separated by generous whitespace"] }),
+      "split-focus" // == the default implied by split-media-text
+    );
+  });
+
+  test("every remaining minimal-formal keyword still resolves minimal-formal — the vocabulary is not gutted", () => {
+    for (const kw of [
+      "minimalist layout",
+      "restrained composition",
+      "formal simplicity",
+      "understated layout",
+      "quiet composition",
+      "spacious minimal",
+    ]) {
+      assert.equal(
+        resolveCompositionArchetype("split-media-text", { preferredLayouts: [`A ${kw} for this business`] }),
+        "minimal-formal",
+        `expected "${kw}" to still resolve minimal-formal`
+      );
+    }
+  });
+
+  test("the other three archetype vocabularies are untouched", () => {
+    assert.equal(resolveCompositionArchetype("split-media-text", { preferredLayouts: ["an editorial layout"] }), "editorial");
+    assert.equal(resolveCompositionArchetype("editorial-typographic", { preferredLayouts: ["a side-by-side treatment"] }), "split-focus");
+    assert.equal(resolveCompositionArchetype("editorial-typographic", { photographyStyle: "full-bleed imagery" }), "photo-led");
+  });
+
+  test("the ambiguity rule itself is unchanged — a genuine two-archetype collision still falls back to the default", () => {
+    assert.equal(
+      resolveCompositionArchetype("split-media-text", { preferredLayouts: ["full-bleed with a minimalist layout"] }),
+      "split-focus"
+    );
+  });
+
+  test("absent/empty signal still falls back to the hero pattern's own implied archetype, exactly as before", () => {
+    assert.equal(resolveCompositionArchetype("oversized-typographic", undefined), "minimal-formal");
+    assert.equal(resolveCompositionArchetype("editorial-typographic", null), "editorial");
+    assert.equal(resolveCompositionArchetype("image-full-bleed", { preferredLayouts: [] }), "photo-led");
+  });
+});

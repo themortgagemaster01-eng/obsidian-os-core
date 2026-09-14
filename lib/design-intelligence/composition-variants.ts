@@ -366,7 +366,23 @@ const PHOTO_LED_ARCHETYPE_KEYWORDS = [
   "image-led layout",
 ];
 const MINIMAL_FORMAL_ARCHETYPE_KEYWORDS = [
-  "generous whitespace",
+  // Fix #12 (2026-09-14): "generous whitespace" was removed from this list —
+  // it describes SPACING, not a layout archetype, and it was contaminating
+  // this layout vocabulary. Proven production collision (Phase 5A audit,
+  // isolated and reproduced): Dante's Trattoria's own real preferredLayouts
+  // reads "full-bleed photo/atmosphere sections separated by generous
+  // whitespace rather than repeated icon-card rows" — one coherent photo-led
+  // sentence. "full-bleed" matched PHOTO_LED and "generous whitespace"
+  // matched MINIMAL_FORMAL, so resolveCompositionArchetype's ambiguity rule
+  // (more than one archetype matched -> fall back to the default) discarded
+  // the real signal and left the mission on split-media-text instead of
+  // image-full-bleed. Removing the misclassified entry is narrower than
+  // adding precedence/arbitration logic, and loses nothing: genuine generous
+  // spacing intent is already read correctly by design-rules.ts's own
+  // resolveSpacingScaleIntent (GENEROUS_SPACING_KEYWORDS includes
+  // "generous"), where 13/13 real missions resolve "generous" today. The
+  // six remaining entries below are all unambiguously layout/composition
+  // descriptions, not spacing ones.
   "minimalist layout",
   "restrained composition",
   "formal simplicity",
