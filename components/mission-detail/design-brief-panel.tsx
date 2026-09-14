@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Loader2, Sparkles, CheckCircle2, XCircle, LayoutTemplate } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,6 +18,7 @@ import type { DesignBrief } from "@/lib/services/design-brief-service";
 import type { DesignMemory, SelfCritique } from "@/lib/services/design-intelligence-service";
 import type { DesignQaReport } from "@/lib/services/design-qa-service";
 import type { MissionState } from "@/lib/workflow/mission-state";
+import { isDesignSnapshotStale } from "@/lib/services/mission-service";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -74,6 +76,7 @@ export function DesignBriefPanel({
   initialPreviewScreenshotDesktopUrl: string | null;
   initialPreviewScreenshotMobileUrl: string | null;
 }) {
+  const router = useRouter();
   const [missionState, setMissionState] = useState(initialMissionState);
   const [designBrief, setDesignBrief] = useState(initialDesignBrief);
   const [websiteDesign, setWebsiteDesign] = useState(initialWebsiteDesign);
@@ -105,6 +108,75 @@ export function DesignBriefPanel({
     }, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [missionId, briefInFlight]);
+
+  // ==========================================================================
+  // Stale-snapshot reconcile (preview-refresh bug, 2026-09-14).
+  //
+  // Real reported symptom (Robert, Joseph J. Smith Funeral Home Inc.): "It
+  // wants me to refresh for the generate button to come up when I click on
+  // preview." Confirmed against that mission's real data — the pipeline
+  // genuinely succeeded end to end (WebsiteDesignReady 6 sections ->
+  // DesignQaComplete PASS, mission at `qa`), but its website_designs row had
+  // preview_screenshot_desktop_path: null with NO error: the Capture button
+  // (components/mission-detail/before-after-panel.tsx, rendered only once
+  // this panel's own client state carries a qa_result) was never reachable,
+  // so capture was never triggered at all.
+  //
+  // Root cause, and why a manual refresh "fixed" it: every value here is
+  // seeded ONCE from server props into useState, and the only thing that
+  // ever refreshes them is the poll below — which is itself gated on the
+  // client ALREADY believing something is in flight. Mount with a snapshot
+  // where websiteDesign is null (designInFlight false, needsQaPoll false,
+  // captureInFlight false) and the poll never starts, so the panel can only
+  // ever go stale, never self-correct. Next's App Router client Router Cache
+  // makes that the normal case rather than an edge case: navigating to the
+  // preview route and back re-mounts this panel from a CACHED RSC payload
+  // rendered before generation/QA finished. A hard refresh is the only thing
+  // that bypasses that cache today — which is exactly the workaround Robert
+  // found. Not specific to no-website missions; this affects every mission.
+  //
+  // Fix: reconcile with the server exactly once on mount, unconditionally,
+  // regardless of what the (possibly cached) snapshot claimed — then let the
+  // existing poll take over from real, current state. router.refresh() is
+  // also issued when the reconcile proves the snapshot WAS stale, so the
+  // server-rendered parts of the page (MissionHeader's state badge, the
+  // Opportunity Report panel) and the Router Cache entry update too rather
+  // than continuing to disagree with this panel.
+  // ==========================================================================
+  const reconciledRef = useRef(false);
+  useEffect(() => {
+    if (reconciledRef.current) return;
+    reconciledRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/missions/${missionId}/generate-design`);
+        if (!res.ok || cancelled) return;
+        const body = (await res.json()) as {
+          websiteDesign: WebsiteDesignRow | null;
+          previewScreenshotDesktopUrl: string | null;
+          previewScreenshotMobileUrl: string | null;
+        };
+        if (cancelled) return;
+        setWebsiteDesign(body.websiteDesign);
+        setPreviewScreenshotDesktopUrl(body.previewScreenshotDesktopUrl);
+        setPreviewScreenshotMobileUrl(body.previewScreenshotMobileUrl);
+        if (isDesignSnapshotStale(initialWebsiteDesign, body.websiteDesign)) {
+          // Server-rendered siblings (and the cached RSC payload this mount
+          // may have come from) are stale too — re-run them. Safe against a
+          // refresh loop: reconciledRef already prevents this effect running
+          // again, and useState ignores the new props on re-render.
+          router.refresh();
+        }
+      } catch {
+        // Network hiccup on mount is not fatal — the poll below is the retry
+        // path, and a settled mission simply keeps the snapshot it had.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [missionId, initialWebsiteDesign, router]);
 
   // Poll Generation/Refinement/QA/Preview-Capture while the design run is in
   // flight, while QA hasn't been triggered/finished yet, or while a real

@@ -256,6 +256,36 @@ export function computeMissionStageTrack(
   });
 }
 
+/**
+ * isDesignSnapshotStale — the preview-refresh bug's own decision function
+ * (2026-09-14), extracted here as a pure function for the same reason
+ * decideOverlapGuardAction/computeMissionStageTrack already live in this
+ * file rather than inside a component: it is directly unit-testable without
+ * a browser, and this repo has no component-test harness at all (npm test's
+ * globs cover lib/** only).
+ *
+ * "Stale" means: the server-rendered snapshot a mission page mounted with
+ * disagrees with current server truth in a way that changes what actually
+ * renders — a design row appearing (or disappearing), a different run, a
+ * status change, QA results arriving, or a preview screenshot arriving. Any
+ * of those means the rest of the server-rendered page (and, in App Router,
+ * the cached RSC payload this mount may have come from) is stale too and
+ * should be re-run. Field-presence comparisons only — never a deep compare
+ * of the large wireframe/components/qa_result payloads, which would be
+ * expensive and would flap on irrelevant differences.
+ */
+export function isDesignSnapshotStale(
+  snapshot: Pick<WebsiteDesignRow, "id" | "status" | "qa_result" | "preview_screenshot_desktop_path"> | null,
+  current: Pick<WebsiteDesignRow, "id" | "status" | "qa_result" | "preview_screenshot_desktop_path"> | null
+): boolean {
+  if (!snapshot && !current) return false;
+  if (!snapshot || !current) return true;
+  if (snapshot.id !== current.id) return true;
+  if (snapshot.status !== current.status) return true;
+  if (!!snapshot.qa_result !== !!current.qa_result) return true;
+  return !!snapshot.preview_screenshot_desktop_path !== !!current.preview_screenshot_desktop_path;
+}
+
 /** States that require a founder decision right now — the Design Brief Approval Gate ("reviewing") and, since Phase 8, the Prospect-to-Approval Gate ("approval": a real, complete proposal + email draft is already waiting). Both are real "a human must act" states; neither is more urgent than the other. */
 const NEEDS_REVIEW_STATES: ReadonlySet<MissionState> = new Set(["reviewing", "approval"]);
 

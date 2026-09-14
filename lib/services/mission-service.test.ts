@@ -9,6 +9,7 @@ import {
   getProductionLineStage,
   groupMissionsForDisplay,
   sortMissionsForReview,
+  isDesignSnapshotStale,
 } from "@/lib/services/mission-service";
 import type { MissionRow } from "@/lib/repositories/mission-repository";
 import type { MissionState } from "@/lib/workflow/mission-state";
@@ -276,5 +277,78 @@ describe("groupMissionsForDisplay (Studio Docket mission list)", () => {
     const total =
       groups.needsReview.length + groups.inProduction.length + groups.readyToPresent.length;
     assert.equal(total, missions.length);
+  });
+});
+
+// ===========================================================================
+// Preview-refresh bug (2026-09-14) — Robert's real report: "It wants me to
+// refresh for the generate button to come up when I click on preview."
+// Confirmed against the real Joseph J. Smith Funeral Home Inc. mission, whose
+// pipeline genuinely succeeded end to end (WebsiteDesignReady -> DesignQaComplete
+// PASS) but whose website_designs row had preview_screenshot_desktop_path: null
+// with no error — the Capture control was never reachable, so capture was never
+// triggered. Root cause: the mission panel's client state is seeded once from
+// server props and only ever refreshed by a poll gated on the client ALREADY
+// believing work is in flight, so a stale mount (App Router's client Router
+// Cache, e.g. navigating to the preview route and back) can never self-correct.
+// This is that fix's own decision function: does the mounted snapshot disagree
+// with current server truth in a way that changes what renders?
+// ===========================================================================
+type StaleCheckRow = Parameters<typeof isDesignSnapshotStale>[0];
+
+function designRow(overrides: Partial<NonNullable<StaleCheckRow>> = {}): NonNullable<StaleCheckRow> {
+  return {
+    id: "design-1",
+    status: "complete",
+    qa_result: null,
+    preview_screenshot_desktop_path: null,
+    ...overrides,
+  } as NonNullable<StaleCheckRow>;
+}
+
+describe("isDesignSnapshotStale (preview-refresh bug)", () => {
+  test("no design in either the snapshot or current truth — not stale, nothing to re-render", () => {
+    assert.equal(isDesignSnapshotStale(null, null), false);
+  });
+
+  test("THE REPORTED BUG: snapshot had no design row but one now exists — stale", () => {
+    // This is the exact dead-end: with websiteDesign null the panel's poll
+    // gate (designInFlight/needsQaPoll/captureInFlight all false) never fires,
+    // so without this reconcile the page could only be fixed by a hard refresh.
+    assert.equal(isDesignSnapshotStale(null, designRow()), true);
+  });
+
+  test("QA results arriving between the snapshot and now — stale (this is what gates the Capture button)", () => {
+    const before = designRow({ qa_result: null });
+    const after = designRow({ qa_result: { overallVerdict: "PASS" } as never });
+    assert.equal(isDesignSnapshotStale(before, after), true);
+  });
+
+  test("status advancing from pending to complete — stale", () => {
+    assert.equal(isDesignSnapshotStale(designRow({ status: "pending" }), designRow({ status: "complete" })), true);
+  });
+
+  test("a preview screenshot arriving — stale", () => {
+    const after = designRow({ preview_screenshot_desktop_path: "org/mission/design/desktop.png" });
+    assert.equal(isDesignSnapshotStale(designRow(), after), true);
+  });
+
+  test("a different design run (regeneration) — stale", () => {
+    assert.equal(isDesignSnapshotStale(designRow({ id: "design-1" }), designRow({ id: "design-2" })), true);
+  });
+
+  test("a fully settled, unchanged mission — NOT stale, so no needless router.refresh() on every page load", () => {
+    const settled = designRow({
+      status: "complete",
+      qa_result: { overallVerdict: "PASS" } as never,
+      preview_screenshot_desktop_path: "org/mission/design/desktop.png",
+    });
+    assert.equal(isDesignSnapshotStale(settled, settled), false);
+  });
+
+  test("compares field presence only — a differing qa_result payload on the same run is not treated as stale", () => {
+    const a = designRow({ qa_result: { overallVerdict: "PASS" } as never });
+    const b = designRow({ qa_result: { overallVerdict: "WARN" } as never });
+    assert.equal(isDesignSnapshotStale(a, b), false);
   });
 });
