@@ -144,3 +144,96 @@ describe("design-rules: resolveSpacingScaleIntent (Fix #4)", () => {
     assert.equal(intent, "standard");
   });
 });
+
+// ===========================================================================
+// Fix #11 spacing negation (2026-09-14).
+//
+// The full 12-mission production audit found every real mission writes
+// unambiguously generous spacing prose, yet 4 of 12 (33%) fell back to
+// "standard" — not from a vocabulary gap, but because a compact keyword
+// sitting inside an explicitly NEGATED phrase was counted as positive
+// evidence for a compact scale, which then cancelled the real generous
+// intent via the matched-and-not-the-other rule. All four fixtures below are
+// the missions' own real, unedited DesignMemory.spacingScale.notes.
+// ===========================================================================
+describe("design-rules: resolveSpacingScaleIntent (Fix #11 — negated terms are not positive evidence)", () => {
+  const REAL_REGRESSION_FIXTURES: { mission: string; notes: string }[] = [
+    {
+      mission: "Countryside Kitchen",
+      notes:
+        "Generous whitespace framing each photograph and menu highlight so the page feels like a place, not a dense listing.",
+    },
+    {
+      mission: "Station Plaza Wine r2",
+      notes:
+        "Generous whitespace around photography so images breathe; avoid cramming multiple photo grids tightly — let the shop's real images be the resting point for the eye.",
+    },
+    {
+      mission: "Video Game Plus A",
+      notes:
+        "Generous multiples (24/40/64/96px) between the two service groups and hero to give each real offering room to breathe rather than compressing them into a dense list.",
+    },
+    {
+      mission: "Joseph J. Smith Funeral Home",
+      notes:
+        "Generous vertical rhythm between the few sections that exist; whitespace itself communicates care rather than emptiness — no dense stacking of content that isn't there.",
+    },
+  ];
+
+  for (const { mission, notes } of REAL_REGRESSION_FIXTURES) {
+    test(`real production fixture — ${mission} now resolves generous instead of falling back to standard`, () => {
+      assert.equal(resolveSpacingScaleIntent({ baseUnit: "8px", notes }), "generous");
+    });
+  }
+
+  test("every negation shape present in the real evidence is recognized", () => {
+    // "not X" / "no X" / "rather than X" / "avoid ... X-ly" — the four real shapes.
+    assert.equal(resolveSpacingScaleIntent({ notes: "Generous rhythm, not a dense grid" }), "generous");
+    assert.equal(resolveSpacingScaleIntent({ notes: "Generous rhythm — no dense stacking" }), "generous");
+    assert.equal(resolveSpacingScaleIntent({ notes: "Generous rhythm rather than a dense list" }), "generous");
+    assert.equal(resolveSpacingScaleIntent({ notes: "Generous rhythm; avoid packing the grids tightly" }), "generous");
+    assert.equal(resolveSpacingScaleIntent({ notes: "Generous rhythm instead of a compact grid" }), "generous");
+    assert.equal(resolveSpacingScaleIntent({ notes: "Generous rhythm without dense stacking" }), "generous");
+  });
+
+  // -------------------------------------------------------------------------
+  // Positive matching must be completely unchanged. No real mission in the
+  // 12-record population ever asks for a compact scale (compact was 0/12), so
+  // these are deliberately synthetic — the one direction the real production
+  // data cannot cover.
+  // -------------------------------------------------------------------------
+  test("positive compact language still resolves compact — unchanged by this fix", () => {
+    assert.equal(resolveSpacingScaleIntent({ notes: "A compact, space-efficient scale" }), "compact");
+    assert.equal(resolveSpacingScaleIntent({ notes: "Tight vertical rhythm with condensed section padding" }), "compact");
+    assert.equal(resolveSpacingScaleIntent({ baseUnit: "4px", notes: "Dense, efficient use of space throughout" }), "compact");
+  });
+
+  test("positive generous language still resolves generous — unchanged by this fix", () => {
+    assert.equal(resolveSpacingScaleIntent({ notes: "Generous whitespace throughout" }), "generous");
+    assert.equal(resolveSpacingScaleIntent({ notes: "Airy, spacious sections with room to breathe" }), "generous");
+  });
+
+  test("at least one UN-negated occurrence still counts — a negated mention elsewhere never suppresses a real one", () => {
+    assert.equal(resolveSpacingScaleIntent({ notes: "Use a compact scale, not a dense grid" }), "compact");
+  });
+
+  test("a negation never carries across a clause boundary", () => {
+    // The "avoid" belongs to the next clause and must not negate "dense".
+    assert.equal(resolveSpacingScaleIntent({ notes: "Keep it dense; avoid wasted space" }), "compact");
+  });
+
+  test("a genuine both-directions conflict still resolves standard — the ambiguity rule itself is unchanged", () => {
+    assert.equal(resolveSpacingScaleIntent({ notes: "Generous hero spacing with a compact, dense footer" }), "standard");
+  });
+
+  test("negation is symmetric — a negated generous term is not positive evidence for generous either", () => {
+    assert.equal(resolveSpacingScaleIntent({ notes: "Not a generous layout — keep it dense and condensed" }), "compact");
+  });
+
+  test("empty/missing input still falls back to standard, exactly as before", () => {
+    assert.equal(resolveSpacingScaleIntent(null), "standard");
+    assert.equal(resolveSpacingScaleIntent(undefined), "standard");
+    assert.equal(resolveSpacingScaleIntent({ notes: "" }), "standard");
+    assert.equal(resolveSpacingScaleIntent({ notes: "A considered, deliberate rhythm" }), "standard");
+  });
+});

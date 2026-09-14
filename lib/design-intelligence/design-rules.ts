@@ -159,8 +159,81 @@ export const SPACING_SCALE_VARIANTS: Record<SpacingScaleIntent, SpacingScale> = 
 const COMPACT_SPACING_KEYWORDS = ["compact", "tight", "dense", "condensed", "space-efficient", "efficient use of space"];
 const GENEROUS_SPACING_KEYWORDS = ["generous", "room to breathe", "breathing room", "airy", "spacious"];
 
+/**
+ * Fix #11 (spacing negation, 2026-09-14) — the real defect the full
+ * 12-mission production audit turned up, and it was NOT a vocabulary gap.
+ *
+ * Every one of the 12 real missions writes unambiguously generous spacing
+ * prose, but 4 of them (Countryside Kitchen, Station Plaza Wine r2, Video
+ * Game Plus A, Joseph J. Smith Funeral Home) silently fell back to
+ * "standard" — because the model writes a consistent "Generous X ... rather
+ * than cramped Y" shape, and a compact keyword sitting inside the NEGATED
+ * half was being counted as positive evidence for a compact scale. The
+ * resolver's own matched-and-not-the-other rule then read that as a
+ * conflicting signal and discarded the real, stated intent:
+ *
+ *   Countryside Kitchen  "...not a dense listing."
+ *   Station Plaza r2     "...avoid cramming multiple photo grids tightly..."
+ *   Video Game Plus A    "...rather than compressing them into a dense list."
+ *   Funeral Home         "...no dense stacking of content that isn't there."
+ *
+ * Deliberately NOT general-purpose negation/sentiment NLP: this is a
+ * bounded, local lookback immediately preceding the matched keyword,
+ * stopping at the first clause boundary, against a small closed cue list —
+ * the same closed-vocabulary, never-a-parser discipline every other resolver
+ * in this file and typography-rules.ts already holds to.
+ */
+const NEGATION_CUES = ["not", "no", "never", "avoid", "avoids", "avoiding", "rather than", "instead of", "without"];
+
+/**
+ * How far back to look for a negation cue. 40 characters covers every real
+ * negated occurrence in the production population with margin (the longest,
+ * Station Plaza r2's "avoid cramming multiple photo grids tightly", spans 36)
+ * while staying local enough that a cue from an unrelated earlier statement
+ * can't reach forward and suppress a genuine one.
+ */
+const MAX_NEGATION_LOOKBACK_CHARS = 40;
+
+/**
+ * A negation never carries across a clause boundary — "keep it dense; avoid
+ * wasted space" must not read as negated "dense". Commas are deliberately
+ * NOT boundaries: the real Countryside Kitchen phrasing ("...feels like a
+ * place, not a dense listing") puts the cue after a comma, and treating a
+ * comma as a hard stop would miss it.
+ */
+const CLAUSE_BOUNDARY_CHARS = /[.;:—–!?]/g;
+
+/** True when the keyword occurrence at `matchIndex` sits inside a negated phrase — see NEGATION_CUES above. */
+function isNegatedOccurrence(haystack: string, matchIndex: number): boolean {
+  const lookbackStart = Math.max(0, matchIndex - MAX_NEGATION_LOOKBACK_CHARS);
+  let window = haystack.slice(lookbackStart, matchIndex);
+
+  // Trim anything before the most recent clause boundary inside the window.
+  let lastBoundary = -1;
+  CLAUSE_BOUNDARY_CHARS.lastIndex = 0;
+  for (let m = CLAUSE_BOUNDARY_CHARS.exec(window); m !== null; m = CLAUSE_BOUNDARY_CHARS.exec(window)) {
+    lastBoundary = m.index;
+  }
+  if (lastBoundary >= 0) window = window.slice(lastBoundary + 1);
+
+  return NEGATION_CUES.some((cue) => new RegExp(`\\b${cue}\\b`).test(window));
+}
+
+/**
+ * True when the text contains at least one UN-NEGATED occurrence of any
+ * keyword in the set. Positive matching is unchanged: a plainly stated
+ * "compact, space-efficient scale" or "generous whitespace" still matches
+ * exactly as before — only occurrences that are explicitly negated stop
+ * counting as evidence for their own direction.
+ */
 function textContainsAnySpacingKeyword(haystack: string, keywords: string[]): boolean {
-  return keywords.some((kw) => new RegExp(`\\b${kw}`).test(haystack));
+  return keywords.some((kw) => {
+    const pattern = new RegExp(`\\b${kw}`, "g");
+    for (let match = pattern.exec(haystack); match !== null; match = pattern.exec(haystack)) {
+      if (!isNegatedOccurrence(haystack, match.index)) return true;
+    }
+    return false;
+  });
 }
 
 /**
